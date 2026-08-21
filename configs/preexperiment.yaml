@@ -1,0 +1,172 @@
+﻿pipeline:
+  name: attention-pipeline-v2
+  version: 0.2.0-behavior-evidence
+  timezone: Asia/Shanghai
+  approval_gate: 2
+  random_seed: 20260813
+
+approvals:
+  gate1_skeleton: approved
+  gate1_review_package: pending
+  behavior_evidence_run: approved
+  gate2_nir_algorithm_admission: pending
+  gate3_attention_definition: pending
+  formal_experiment_code_changes: pending
+  full_multimodal_run: pending
+
+paths:
+  raw_root: "E:/预实验"
+  formal_experiment_root: "D:/aaawork/07-竞赛/厚璨杯/020-Experiment/_AttentionTest"
+  legacy_pipeline_root: "D:/aaawork/07-竞赛/厚璨杯/021-analysisplan/NIR-RGB-extraction"
+  output_root: "D:/_AttentionData/output-v2/040-pre-experiment"
+  gate1_artifact_root: "finish/gate1-24eyes"
+  preview_artifact_root: "finish/preview"
+  truth_artifact_root: "artifacts/truth-528"
+  benchmark_artifact_root: "artifacts/benchmark-axis-fix-review"
+  sequence_artifact_root: "artifacts/sequence-adapter-review"
+  historical_benchmark_artifact_root: "artifacts/benchmark-single"
+  historical_sequence_artifact_root: "artifacts/sequence-44x121"
+  legacy_crop_root: "D:/_AttentionData/output/040-pre-experiment/040-nir/crops"
+  face_landmarker_model: "D:/aaawork/07-竞赛/厚璨杯/021-analysisplan/NIR/models/face_landmarker.task"
+
+subjects:
+  include: [sub-000, sub-001, sub-002, sub-003, sub-004, sub-005, sub-006, sub-007, sub-008, sub-009, sub-010]
+  known_missing_semantics: "功能性缺失/不可用于正式分析；磁盘上可能保留截断文件"
+  known_missing:
+    sub-003: [rgb_video, rgb_timestamps]
+  known_issues:
+    sub-003:
+      rgb: "磁盘文件可打开但仅144帧，远短于完整实验，按RGB缺失处理"
+
+runtimes:
+  main_python: "D:/Code/python/python.exe"
+  pypupilext_python: "D:/aaawork/07-竞赛/厚璨杯/venv-pupil/Scripts/python.exe"
+
+stages:
+  validate: true
+  behavior_extract: true
+  behavior_evidence: true
+  behavior_report: true
+  nir_build_review_preview: true
+  nir_build_review_full: false
+  nir_benchmark: true
+  nir_evaluate: true
+  nir_sequence_build: true
+  nir_sequence_detect: true
+  nir_sequence_evaluate: true
+  nir_extract: false
+  nir_report: false
+  rgb: false
+  cross_modal: false
+  attention_score: false
+
+protocol:
+  block_order: [A, B, C, C, B, A]
+  trials_per_cycle: 18
+  cycles_per_block: 12
+  nominal_trial_ms: 1150
+  probe_after_trials: [30, 82, 137, 191]
+  probe_labels:
+    1: 完全专注
+    2: 关注实验但未聚焦任务
+    3: 任务无关思维
+    4: 大脑空白
+
+# 正式实验程序当前权威声明：BBB、每Block 24 cycles/432试次、每Block 10个双问题探针。
+# 该节只供validate_protocol核对正式程序；11人预实验数据仍使用上方历史protocol。
+formal_protocol:
+  block_order: [B, B, B]
+  trials_per_cycle: 18
+  cycles_per_block: 24
+  nominal_trial_ms: 1150
+  schedule_version: "sched-v1.0-4cat-vig-20260814"
+  probe_scale: "attention-4cat+vigilance-4point"
+  probe_positions:
+    1: [31, 73, 117, 162, 204, 251, 293, 338, 380, 424]
+    2: [32, 75, 118, 162, 205, 247, 295, 339, 381, 424]
+    3: [32, 76, 119, 161, 204, 248, 292, 335, 382, 425]
+
+behavior:
+  time_windows_sec: [30, 60, 90, 120]
+  step_sec: 10
+  probe_pre_windows_sec: [30, 60, 90]
+  nogo_opportunity_windows: [6, 8, 12]
+  rt_qc_ms:
+    very_early: 100
+    early: 150
+    long: 1000
+    beyond_nominal: 1150
+    timestamp_tolerance: 25
+  window_statuses: [insufficient_rt, insufficient_nogo, response_only, full_evidence]
+
+nir:
+  fps_nominal: 30
+  wavelength_nm: 940
+  review:
+    subjects: 11
+    blocks_per_subject: 6
+    temporal_strata_per_block: 4
+    eyes_per_frame: 2
+    expected_eye_samples: 528
+    second_reviewer_fraction: 0.20
+    roi_size: [320, 160]
+    corner_span_fraction: 0.50
+  interpolation_gaps_ms: [0, 100, 200]
+  frame_statuses: [no_face, roi_missing, pupil_invisible, detector_missing, detector_rejected, observed, interpolated]
+  usable_fit:
+    ellipse_iou_min: 0.70
+    center_error_corner_span_max: 0.10
+    equivalent_diameter_relative_error_max: 0.20
+  admission:
+    visible_end_to_end_usable_rate_min: 0.85
+    invisible_false_positive_rate_max: 0.05
+    wrong_among_returned_rate_max: 0.05
+    subjects_passing_min: 9
+    per_subject_usable_rate_min: 0.75
+    per_subject_invisible_false_positive_rate_max: 0.10
+  annotation_reliability:
+    visibility_kappa_min: 0.70
+    median_center_difference_corner_span_max: 0.05
+    median_diameter_difference_max: 0.10
+  pypupilext_algorithms: [ElSe, ExCuSe, PuRe, PuReST, Starburst, Swirski2D]
+  preprocessing: [raw, clahe]
+  fallback_order: [DeepVOG, RITnet]
+  benchmark:
+    clahe_clip: 2.0
+    clahe_grid: 8
+    smoke_eyes: 12
+    photometric_threshold: 0.02
+    # 阶段4b 参数调优网格：预指定候选（默认值 vs 320×160 紧 ROI 几何失配），raw 扫描
+    tuning:
+      - {algorithm: Swirski2D, config: S1, params: {Radius_Min: 15, Radius_Max: 45}}
+      - {algorithm: Swirski2D, config: S2, params: {Radius_Min: 10, Radius_Max: 30}}
+      - {algorithm: Swirski2D, config: S3, params: {Radius_Min: 20, Radius_Max: 60}}
+      - {algorithm: PuRe, config: P1, params: {minPupilDiameterMM: 0.6, maxPupilDiameterMM: 3.1}}
+      - {algorithm: PuRe, config: P2, params: {minPupilDiameterMM: 0.9, maxPupilDiameterMM: 4.6}}
+      - {algorithm: PuRe, config: P3, params: {minPupilDiameterMM: 0.4, maxPupilDiameterMM: 2.7}}
+      - {algorithm: PuReST, config: P1, params: {minPupilDiameterMM: 0.6, maxPupilDiameterMM: 3.1}}
+      - {algorithm: PuReST, config: P2, params: {minPupilDiameterMM: 0.9, maxPupilDiameterMM: 4.6}}
+      - {algorithm: PuReST, config: P3, params: {minPupilDiameterMM: 0.4, maxPupilDiameterMM: 2.7}}
+      - {algorithm: ElSe, config: E1, params: {}}
+      - {algorithm: ElSe, config: E2, params: {minAreaRatio: 0.002, maxAreaRatio: 0.3}}
+      - {algorithm: ElSe, config: E3, params: {minAreaRatio: 0.001, maxAreaRatio: 0.25}}
+      - {algorithm: ExCuSe, config: X1, params: {}}
+      - {algorithm: ExCuSe, config: X2, params: {max_ellipse_radi: 30, good_ellipse_threshold: 12}}
+      - {algorithm: ExCuSe, config: X3, params: {max_ellipse_radi: 40, good_ellipse_threshold: 10}}
+      - {algorithm: Starburst, config: ST1, params: {}}
+      - {algorithm: Starburst, config: ST2, params: {edge_threshold: 20, rays: 24, min_feature_candidates: 15}}
+      - {algorithm: Starburst, config: ST3, params: {edge_threshold: 24, rays: 32, min_feature_candidates: 20}}
+  sequence:
+    segments_per_subject: 4
+    frames_per_sequence: 121
+    px_min: 6
+    px_max: 50
+    pupil_min_mm: 0.5
+    openness_visible: 0.55
+    openness_closed: 0.20
+    endpoint_diameter_tol: 0.20
+    endpoint_center_tol_norm: 0.12
+    center_span_px: 160.0
+    max_session_gap_ms: 200.0
+    reset_after_quality_rejects: 3
+    outline_min: 0.5

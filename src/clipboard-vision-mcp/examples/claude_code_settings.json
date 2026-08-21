@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "clipboard-vision": {
+      "command": "python",
+      "args": ["-m", "clipboard_vision_mcp"],
+      "env": {
+        "GROQ_API_KEY": "gsk_your_key_here"
+      }
+    }
+  }
+}

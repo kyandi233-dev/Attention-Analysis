@@ -1,0 +1,8 @@
+# 合并 batch1 + batch2 的 NIR 眼睛检测数据集；按被试划分，避免相邻帧泄漏。
+path: D:/AAAWORK/07-竞赛/厚璨杯/021-analysisplan/attention-pipeline-v2/yolotrain
+train: images/train
+val: images/val
+test: images/test
+
+names:
+  0: eye

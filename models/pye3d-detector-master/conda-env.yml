@@ -1,0 +1,9 @@
+name: pye3d-conda
+channels:
+  - conda-forge
+dependencies:
+  - python=3.9
+  - eigen
+  - pip
+  - pip:
+    - -e ".[docs,testing]"

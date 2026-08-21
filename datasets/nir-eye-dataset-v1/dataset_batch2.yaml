@@ -1,0 +1,7 @@
+# batch2：NIR 眼框单类检测（train/val/test 按被试划分，见 manifests/split_subject.csv）
+path: D:/AAAWORK/07-竞赛/厚璨杯/021-analysisplan/attention-pipeline-v2/datasets/nir-eye-dataset-v1
+train: D:/AAAWORK/07-竞赛/厚璨杯/021-analysisplan/attention-pipeline-v2/datasets/nir-eye-dataset-v1/manifests/split_batch2_train.txt
+val: D:/AAAWORK/07-竞赛/厚璨杯/021-analysisplan/attention-pipeline-v2/datasets/nir-eye-dataset-v1/manifests/split_batch2_val.txt
+test: D:/AAAWORK/07-竞赛/厚璨杯/021-analysisplan/attention-pipeline-v2/datasets/nir-eye-dataset-v1/manifests/split_batch2_test.txt
+names:
+  0: eye
