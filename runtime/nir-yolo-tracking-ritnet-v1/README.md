@@ -2,6 +2,9 @@
 
 > 开发分支：`codex/nir-formal-gpu-v3`。正式实验时间语义以 FocusWave release `v3.1.3` 为准。
 
+**新电脑从零配置、CUDA/PyTorch/OpenCV/RITnet 排错、Git 拉取、YAML 选人和正式批处理的完整说明，请优先看：**  
+[docs/010-nir/08-22-04-NIR新电脑GPU环境配置与正式批处理运行指南.md](../../docs/010-nir/08-22-04-NIR新电脑GPU环境配置与正式批处理运行指南.md)
+
 这个目录同时保留两条入口：
 
 - `run`：原短视频诊断模式，仍可复现 `none / KCF / CSRT`；
