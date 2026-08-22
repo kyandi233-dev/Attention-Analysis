@@ -1,6 +1,6 @@
 package:
-  name: nir-yolo-tracking-ritnet-v1
-  purpose: GPU formal NIR analysis candidate; diagnostic runner retained
+  name: nir-formal
+  purpose: GPU formal NIR analysis runtime; diagnostic runner retained
 
 data:
   roots:
