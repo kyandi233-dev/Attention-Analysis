@@ -1,0 +1,42 @@
+package:
+  name: nir-yolo-tracking-ritnet-v1
+  purpose: GPU short-video admission trial; not frozen production
+
+data:
+  roots:
+    - "F:/正式实验"
+    - "E:/Data"
+  subject_pattern: "sub-*_/nir/*_nir.avi"
+  default_duration_sec: 60
+
+models:
+  yolo: "models/nir-eye-yolo26n-best.pt"
+  ritnet: "models/ritnet-best_model.pkl"
+
+yolo:
+  confidence: 0.40
+  imgsz: 640
+  nms_iou: 0.70
+  max_det: 20
+
+tracking:
+  method: csrt
+  redetect_interval: 10
+  center_jump_width_fraction: 0.50
+
+roi:
+  width: 320
+  height: 160
+  expand_horizontal_each_side: 0.30
+  expand_vertical_each_side: 0.45
+
+ritnet:
+  enabled: true
+  input_width: 640
+  input_height: 400
+  pupil_confidence_min: null
+
+output:
+  root: "outputs"
+  overlay_stride: 30
+  save_rois: false
