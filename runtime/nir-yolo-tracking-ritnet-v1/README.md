@@ -1,129 +1,183 @@
-# NIR YOLO + Tracking + RITnet GPU 试跑包
+# NIR YOLO + RITnet GPU 分析包
 
-> 2026-08-22（Asia/Shanghai）｜用于另一台 GPU 电脑的短视频准入测试；当前权重已通过静态 test，但 tracking、ROI 扩展和 RITnet 视频质量尚未冻结。
+> 开发分支：`codex/nir-formal-gpu-v3`。正式实验时间语义以 FocusWave release `v3.1.3` 为准。
 
-## 这个包能做什么
+这个目录同时保留两条入口：
 
-流程为：
+- `run`：原短视频诊断模式，仍可复现 `none / KCF / CSRT`；
+- `formal`：正式分析候选，默认逐帧 YOLO + RITnet batch + phase 时间窗。
 
-```text
-NIR AVI → YOLO26n 眼框 → CSRT/KCF 或逐帧 YOLO
-        → 横坐标排序为 frame_left/frame_right
-        → 扩展并缩放到 320×160 单眼 ROI
-        → RITnet GPU 分割
-        → frames.csv + eyes.csv + overlays + summary.json
-```
+## 正式分析范围
 
-支持两种已知目录：
+`formal` 默认只接受 **sub-031 及以后**。sub-030 及以前属于旧三 Block 结构，目前不进入这套正式分析。
 
-```text
-F:\正式实验\sub-011_\nir\sub-011_nir.avi
-E:\Data\sub-056_\nir\sub-056_nir.avi
-```
+FocusWave v3.1.3 默认分析阶段：
 
-`frame_left/frame_right`仅表示画面横坐标左右，不是解剖学左右眼。默认只跑 60 秒；整段视频必须显式使用 `--full-video`。
+1. `baseline`：真正静息的 180 秒。`baseline_start` 在确认页出现前记录，因此实际窗口按 `baseline_stop - duration → baseline_stop` 计算；
+2. `instructions`：`instructions → practice_start`，包括两张实验说明页面，可作为额外放松/基线候选状态独立保存；
+3. `practice`：优先使用 `SART_*_Practice_run*.csv` 的 `absolute_onset_time` 定位真实练习 trial，排除 321 倒计时和练习结果页；
+4. `block1`：`Block1` 的 `block_start → block_stop`；
+5. `block2`：`Block2` 的 `block_start → block_stop`。
 
-## 目录
+初始摄像头/坐姿调整、cover、Block 间强制休息、休息后的 NIR 重新调整、结算页和尾部空录默认不分析。
+
+正式 phase 必须同时依赖：
 
 ```text
-nir-yolo-tracking-ritnet-v1/
-├── config.yaml
-├── run_pipeline.py
-├── ritnet_runtime.py
-├── run_examples.ps1
-├── requirements.txt
-├── SHA256SUMS.txt
-├── models/
-│   ├── nir-eye-yolo26n-best.pt
-│   └── ritnet-best_model.pkl
-└── ritnet/
-    └── densenet.py
+sub-XXX_/beh/master_timeline.csv
+sub-XXX_/nir/sub-XXX_nir_timestamps.csv
 ```
 
-## 第一次运行
+Practice 精确定位还会读取 `beh/*Practice_run*.csv`。如果 Practice CSV 缺失，会显式记录 timeline fallback，而不是伪装成 trial 精确对齐。
 
-在已经配置好 GPU 版 PyTorch、Ultralytics 和 RITnet 的环境中进入本目录：
+## 正式 GPU 流程
+
+```text
+选取 baseline / instructions / practice / block1 / block2 帧
+        ↓
+每帧 YOLO26n 眼框（GPU，不使用 tracker）
+        ↓
+按画面 x 坐标排序 frame_left / frame_right
+        ↓
+扩展原始眼 ROI（不先缩到 320×160）
+        ↓
+多个 ROI 组成 RITnet batch
+        ↓
+每个 raw crop 直接一次 resize 到 640×400
+        ↓
+RITnet 分割
+        ↓
+mask 映射到稳定的 320×160 分析坐标
+        ↓
+瞳孔 ellipse / area / confidence / QC
+```
+
+因此删除的是旧流程中的 **320×160 → 640×400 二次图像缩放**，不是删除 320×160 的分析坐标标准。新旧 pupil center / diameter 仍以同一 320×160 坐标体系输出。
+
+## Batch 与 FP32 / FP16
+
+默认配置：
+
+```yaml
+ritnet:
+  batch_size: 16
+  precision: fp32
+```
+
+`batch_size=16` 表示一次最多把约 16 个眼 ROI 交给 RITnet GPU；它和 `FP16` 名字里的 16 没有关系。
+
+`FP` 是 floating point（浮点数）：
+
+- `FP32`：32-bit 浮点，数值精度更高，作为默认科研基准；
+- `FP16`：16-bit 浮点，数值精度较低，但 RTX GPU 通常能更快、占更少显存。本实现使用 CUDA autocast mixed precision，不把整个模型永久强制 `.half()`。
+
+默认不写精度参数就是 FP32：
+
+```powershell
+python .\run_pipeline.py formal --video "F:\正式实验\sub-033_\nir\sub-033_nir.avi"
+```
+
+测试 FP16：
+
+```powershell
+python .\run_pipeline.py formal `
+  --video "F:\正式实验\sub-033_\nir\sub-033_nir.avi" `
+  --ritnet-precision fp16
+```
+
+测试 batch 32：
+
+```powershell
+python .\run_pipeline.py formal `
+  --video "F:\正式实验\sub-033_\nir\sub-033_nir.avi" `
+  --ritnet-batch-size 32
+```
+
+本 pipeline 不把 `CPU + FP16` 当作正式运行组合。如果显式写：
+
+```powershell
+--device cpu --ritnet-precision fp16
+```
+
+程序会直接报错，要求使用 CPU+FP32 或 CUDA+FP16。这样避免科研运行中发生静默精度回退。CPU 不是“只能 FP32”，而是这里没有把 CPU half-precision 当作需要验证和支持的优化目标。
+
+## Formal 命令
+
+先检查环境：
 
 ```powershell
 python .\run_pipeline.py check-env
-python .\run_pipeline.py discover
 ```
 
-`check-env`应显示：
+只查看当前正式分析范围内（sub-031+）的视频：
 
-- `cuda_available: true`；
-- `models_exist: true`；
-- `tracker_csrt: true`、`tracker_kcf: true`。
+```powershell
+python .\run_pipeline.py discover --formal-only
+```
 
-如果 tracker 不可用，安装的是普通 `opencv-python` 而不是 contrib 版本；在你现有环境允许的前提下改用 `opencv-contrib-python`。不要在未确认环境前直接卸载已有 OpenCV。
+正式单被试，默认 `batch=16 + FP32`：
 
-## 建议的运行顺序
+```powershell
+python .\run_pipeline.py formal `
+  --video "F:\正式实验\sub-033_\nir\sub-033_nir.avi"
+```
 
-先做 20 秒 YOLO-only 冒烟，不加载 RITnet：
+只测试部分 phase：
+
+```powershell
+python .\run_pipeline.py formal `
+  --video "F:\正式实验\sub-033_\nir\sub-033_nir.avi" `
+  --phases baseline,instructions,block1
+```
+
+`formal` 默认 `tracker=none`，即每帧 YOLO。KCF/CSRT 仍保留在 `run` 中用于复现实验：
 
 ```powershell
 python .\run_pipeline.py run `
-  --subject sub-056 --root "E:\Data" `
-  --duration-sec 20 --tracker none --skip-ritnet
+  --video "F:\正式实验\sub-033_\nir\sub-033_nir.avi" `
+  --duration-sec 60 --tracker kcf --redetect-interval 10
 ```
 
-确认框的位置后，再做 60 秒联调：
+## 输出
 
-```powershell
-python .\run_pipeline.py run `
-  --subject sub-056 --root "E:\Data" `
-  --duration-sec 60 --tracker csrt --redetect-interval 10
+正式输出仍保留原有主要文件：
+
+```text
+frames.csv
+eyes.csv
+summary.json
+run_manifest.json
+overlays/
 ```
 
-默认 `--device 0`，YOLO 与 RITnet 都使用第一张 GPU；如需第二张 GPU 使用 `--device 1`，CPU 诊断可使用 `--device cpu`。
+并新增：
 
-也可直接给视频：
-
-```powershell
-python .\run_pipeline.py run `
-  --video "F:\正式实验\sub-011_\nir\sub-011_nir.avi" `
-  --duration-sec 60 --tracker csrt
+```text
+phase_windows.json
 ```
 
-比较 tracking 时依次运行：
+`frames.csv` / `eyes.csv` 增加 `phase`、`phase_segment`、`phase_time_ms` 等字段。`summary.json` 增加每个 phase 的状态统计；`run_manifest.json` 明确保存最终生效的 phase、batch、precision、device、YOLO-every-frame 等参数，避免 YAML 与命令行覆盖后产生复现歧义。
 
-```powershell
-python .\run_pipeline.py run --subject sub-056 --root "E:\Data" --duration-sec 60 --tracker none
-python .\run_pipeline.py run --subject sub-056 --root "E:\Data" --duration-sec 60 --tracker csrt --redetect-interval 5
-python .\run_pipeline.py run --subject sub-056 --root "E:\Data" --duration-sec 60 --tracker csrt --redetect-interval 10
-python .\run_pipeline.py run --subject sub-056 --root "E:\Data" --duration-sec 60 --tracker kcf --redetect-interval 10
+正式模式增加分阶段耗时字段，包括 `decode_ms`、`yolo_ms`、`roi_crop_ms`、`ritnet_attributed_ms`、`overlay_write_ms`。RITnet 是跨帧 batch，因此 `frame_processing_ms` 是批量成本按眼睛分摊后的成本归因；真实性能以整段 `elapsed_sec / processing_fps` 为准。
+
+## Overlay
+
+正式默认：
+
+```yaml
+output:
+  overlay_stride: 3000
 ```
 
-## 输出解释
+30 FPS 下约每 100 秒保存一张，并且每个 phase 的第一帧也会保存一张 QC 图。默认不保存 ROI；只有显式 `--save-rois` 才写出 ROI 文件。
 
-- `frames.csv`：每帧是 YOLO 还是 tracker、原始框数、选中眼数、处理耗时和失败状态；
-- `eyes.csv`：每帧×眼睛的框、扩展 ROI、RITnet 瞳孔椭圆、置信度和状态；
-- `overlays/`：默认每 30 帧一张眼框叠加图；
-- `summary.json`：速度和状态计数；
-- `run_manifest.json`：命令、环境、配置和两个权重 SHA256；
-- `rois/`：仅在 `--save-rois` 时保存，避免默认产生大量文件。
+## 当前冻结状态
 
-状态语义：
+这仍是 production candidate，不应在完成同一视频的以下回归前直接全量：
 
-- `yolo_missing`：YOLO 没有眼框；
-- `single_eye`：只有一个框；
-- `extra_boxes`：YOLO 返回多于两个框；
-- `roi_clipped`：扩展 ROI 碰到画面边界；
-- `ritnet_missing`：ROI 存在但 RITnet 没有形成有效瞳孔椭圆；
-- `observed`：当前帧有直接观测到的 RITnet 椭圆；
-- `roi_only`：使用了 `--skip-ritnet`。
+- batch16 FP32 与旧 scalar FP32 的 pupil / missing 一致性；
+- batch16 FP16 与 batch16 FP32 的 pupil center、diameter、missing 差异；
+- phase_windows 与 FocusWave v3.1.3 的 timeline / Practice CSV 对齐；
+- 一名完整被试的显存稳定性、速度和输出完整性。
 
-本包不做插值，也不把失败帧补成成功帧。
-
-如果视频同目录存在 `sub-xxx_nir_timestamps.csv`，脚本会按 `frame_idx` 读取第二列 `unix_ms` 并写入两个 CSV；如果不存在，仍保留 `video_time_ms`，`unix_ms` 留空。`redetect_reason` 会区分计划重检测、tracker 失败回退和上一帧缺失后的重检测。
-
-## 当前参数和边界
-
-- YOLO 阈值 0.40 来自 val，不使用 test 调参；
-- 默认 `imgsz=640`、NMS IoU=0.70；
-- 默认 CSRT，每 10 帧 YOLO 重检测；
-- 默认眼框每侧横向扩展 30%、纵向扩展 45%；这些扩展比例仍需在正式视频上比较；
-- RITnet 原始 `pupil_confidence` 只输出，不设生产拒绝阈值；
-- 左右眼身份、tracking 方案、扩展比例和 RITnet 门控均未冻结。
-
-不要只因为脚本能跑完就直接处理全部被试。先检查 20 秒、60 秒、不同 tracking 配置和 overlay，再做一段完整视频试点。
+上述验证通过后再决定 FP16 是否成为默认值；目前默认保持 FP32。
