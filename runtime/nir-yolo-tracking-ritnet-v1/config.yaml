@@ -54,6 +54,19 @@ formal:
   practice_trial_duration_ms: 1150
   expected_formal_blocks: 2
 
+# Multi-subject formal batch runner settings.
+# `include: []` means: analyze every discovered subject >= min_subject_number,
+# after applying `exclude`. To run only selected people, list them explicitly,
+# e.g. ["sub-031", "sub-033", "sub-056"].
+batch:
+  subjects:
+    include: []
+    exclude: []
+  device: "0"
+  continue_on_error: true
+  skip_completed: true
+  output_root: "outputs/formal"
+
 output:
   root: "outputs"
   overlay_stride: 3000
