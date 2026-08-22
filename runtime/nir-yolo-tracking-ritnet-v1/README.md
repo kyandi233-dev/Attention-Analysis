@@ -122,6 +122,12 @@ python .\run_pipeline.py formal `
   --video "F:\正式实验\sub-033_\nir\sub-033_nir.avi"
 ```
 
+也可以按被试编号 + 数据根目录指定，不用手写完整视频路径：
+
+```powershell
+python .\run_pipeline.py formal --subject sub-033 --root "F:\正式实验"
+```
+
 只测试部分 phase：
 
 ```powershell
@@ -137,6 +143,83 @@ python .\run_pipeline.py run `
   --video "F:\正式实验\sub-033_\nir\sub-033_nir.avi" `
   --duration-sec 60 --tracker kcf --redetect-interval 10
 ```
+
+## 多被试批处理：用 YAML 指定谁要跑
+
+`config.yaml` 已包含：
+
+```yaml
+batch:
+  subjects:
+    include: []
+    exclude: []
+  device: "0"
+  continue_on_error: true
+  skip_completed: true
+  output_root: "outputs/formal"
+```
+
+选择规则：
+
+- `include: []`：处理 `F:/正式实验` 和 `E:/Data` 下发现的全部 **sub-031+**；
+- `include` 非空：只处理列出的被试；
+- `exclude`：无论 include 是否为空，都排除这里列出的被试。
+
+例如只跑 031、033、056：
+
+```yaml
+batch:
+  subjects:
+    include:
+      - "sub-031"
+      - "sub-033"
+      - "sub-056"
+    exclude: []
+  device: "0"
+  continue_on_error: true
+  skip_completed: true
+  output_root: "outputs/formal"
+```
+
+然后先预览，不真正运行：
+
+```powershell
+python .\run_formal_batch.py --dry-run
+```
+
+确认后正式顺序运行：
+
+```powershell
+python .\run_formal_batch.py
+```
+
+也可临时覆盖 YAML，不改文件：
+
+```powershell
+python .\run_formal_batch.py --subjects sub-031,sub-033,sub-056
+```
+
+批处理是**串行**的，同一时间只跑一个被试，避免两个任务争抢同一张 GPU。默认 `skip_completed: true`：如果对应运行目录已有 `summary.json`，会跳过该被试；失败时默认记录错误并继续下一名。批次结果写到 `outputs/formal/batch_run_summary.json`。
+
+## 另一台已配置 GPU 电脑
+
+如果该电脑已经有之前验证过的 `eye-ai` Conda 环境，优先沿用它，不要先重新安装/覆盖 PyTorch 或 OpenCV。拉取开发分支后进入 runtime 目录：
+
+```cmd
+conda activate D:\conda_envs\eye-ai
+cd /d D:\NIR_Analysis\attention-pipeline-v2
+git fetch origin
+git switch codex/nir-formal-gpu-v3
+git pull
+cd /d D:\NIR_Analysis\attention-pipeline-v2\runtime\nir-yolo-tracking-ritnet-v1
+python run_pipeline.py check-env
+python run_pipeline.py discover --formal-only
+python run_formal_batch.py --dry-run
+```
+
+如果仓库放在其他目录，只需要改 `cd` 路径。数据路径仍来自 `config.yaml`：`F:/正式实验` 和 `E:/Data`。
+
+模型权重随这个 runtime 目录保存在 `models/` 中；正常 Git clone/pull 会一并得到 YOLO 与 RITnet 权重。只有 `check-env` 通过后才开始正式运行。
 
 ## 输出
 
