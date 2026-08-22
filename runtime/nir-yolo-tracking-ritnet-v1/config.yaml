@@ -1,6 +1,6 @@
 package:
   name: nir-yolo-tracking-ritnet-v1
-  purpose: GPU short-video admission trial; not frozen production
+  purpose: GPU formal NIR analysis candidate; diagnostic runner retained
 
 data:
   roots:
@@ -19,12 +19,15 @@ yolo:
   nms_iou: 0.70
   max_det: 20
 
+# Tracking remains available for diagnostic reproduction, but formal analysis
+# defaults to per-frame YOLO because KCF/CSRT were slower on the target RTX host.
 tracking:
-  method: csrt
+  method: none
   redetect_interval: 10
   center_jump_width_fraction: 0.50
 
 roi:
+  # Stable analysis coordinate system used for pupil ellipse outputs.
   width: 320
   height: 160
   expand_horizontal_each_side: 0.30
@@ -34,9 +37,24 @@ ritnet:
   enabled: true
   input_width: 640
   input_height: 400
+  batch_size: 16
+  precision: fp32
   pupil_confidence_min: null
+
+formal:
+  focuswave_release: "v3.1.3"
+  min_subject_number: 31
+  phases:
+    - baseline
+    - instructions
+    - practice
+    - block1
+    - block2
+  baseline_duration_sec: 180
+  practice_trial_duration_ms: 1150
+  expected_formal_blocks: 2
 
 output:
   root: "outputs"
-  overlay_stride: 30
+  overlay_stride: 3000
   save_rois: false
