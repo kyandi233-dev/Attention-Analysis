@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sys
 import time
+from contextlib import nullcontext
 from pathlib import Path
 
 import cv2
@@ -125,12 +126,13 @@ class RitnetRuntime:
 
         gpu_started = time.perf_counter()
         use_fp16 = self.precision == "fp16"
+        autocast_context = (
+            torch.autocast(device_type="cuda", dtype=torch.float16)
+            if use_fp16
+            else nullcontext()
+        )
         with torch.inference_mode():
-            with torch.autocast(
-                device_type="cuda",
-                dtype=torch.float16,
-                enabled=use_fp16,
-            ):
+            with autocast_context:
                 logits = self.model(tensor)
                 pred_tensor = logits.argmax(dim=1)
                 pupil_prob_tensor = torch.softmax(logits, dim=1)[:, 3]
