@@ -1,6 +1,8 @@
-# NIR YOLO + RITnet GPU 分析包
+# NIR Formal GPU 分析包
 
-> 开发分支：`codex/nir-formal-gpu-v3`。正式实验时间语义以 FocusWave release `v3.1.3` 为准。
+> 当前结构整理主线：`main`。原 GPU 开发分支 `codex/nir-formal-gpu-v3` 保留作为开发历史；正式实验时间语义以 FocusWave release `v3.1.3` 为准。
+
+> 2026-08-23：该 runtime 已用于正式全量分析。目录由历史名称 `nir-yolo-tracking-ritnet-v1` 重命名为 `nir-formal`；正式模式默认逐帧 YOLO，不使用 tracker。
 
 **新电脑从零配置、CUDA/PyTorch/OpenCV/RITnet 排错、Git 拉取、YAML 选人和正式批处理的完整说明，请优先看：**  
 [docs/010-nir/08-22-04-NIR新电脑GPU环境配置与正式批处理运行指南.md](../../docs/010-nir/08-22-04-NIR新电脑GPU环境配置与正式批处理运行指南.md)
@@ -8,7 +10,7 @@
 这个目录同时保留两条入口：
 
 - `run`：原短视频诊断模式，仍可复现 `none / KCF / CSRT`；
-- `formal`：正式分析候选，默认逐帧 YOLO + RITnet batch + phase 时间窗。
+- `formal`：正式分析模式，默认逐帧 YOLO + RITnet batch + phase 时间窗。
 
 ## 正式分析范围
 
@@ -206,15 +208,15 @@ python .\run_formal_batch.py --subjects sub-031,sub-033,sub-056
 
 ## 另一台已配置 GPU 电脑
 
-如果该电脑已经有之前验证过的 `eye-ai` Conda 环境，优先沿用它，不要先重新安装/覆盖 PyTorch 或 OpenCV。拉取开发分支后进入 runtime 目录：
+如果该电脑已经有之前验证过的 `eye-ai` Conda 环境，优先沿用它，不要先重新安装/覆盖 PyTorch 或 OpenCV。拉取当前整理主线后进入 runtime 目录：
 
 ```cmd
 conda activate D:\conda_envs\eye-ai
 cd /d D:\NIR_Analysis\attention-pipeline-v2
 git fetch origin
-git switch codex/nir-formal-gpu-v3
+git switch main
 git pull
-cd /d D:\NIR_Analysis\attention-pipeline-v2\runtime\nir-yolo-tracking-ritnet-v1
+cd /d D:\NIR_Analysis\attention-pipeline-v2\runtime\nir-formal
 python run_pipeline.py check-env
 python run_pipeline.py discover --formal-only
 python run_formal_batch.py --dry-run
@@ -222,11 +224,11 @@ python run_formal_batch.py --dry-run
 
 如果仓库放在其他目录，只需要改 `cd` 路径。数据路径仍来自 `config.yaml`：`F:/正式实验` 和 `E:/Data`。
 
-模型权重随这个 runtime 目录保存在 `models/` 中；正常 Git clone/pull 会一并得到 YOLO 与 RITnet 权重。只有 `check-env` 通过后才开始正式运行。
+模型权重随这个 runtime 目录保存在 `models/` 中；正常 Git clone/pull 会一并得到 YOLO 与 RITnet 权重。
 
 ## 输出
 
-正式输出仍保留原有主要文件：
+正式输出保留主要文件：
 
 ```text
 frames.csv
@@ -234,17 +236,12 @@ eyes.csv
 summary.json
 run_manifest.json
 overlays/
-```
-
-并新增：
-
-```text
 phase_windows.json
 ```
 
-`frames.csv` / `eyes.csv` 增加 `phase`、`phase_segment`、`phase_time_ms` 等字段。`summary.json` 增加每个 phase 的状态统计；`run_manifest.json` 明确保存最终生效的 phase、batch、precision、device、YOLO-every-frame 等参数，避免 YAML 与命令行覆盖后产生复现歧义。
+`frames.csv` / `eyes.csv` 包含 `phase`、`phase_segment`、`phase_time_ms` 等字段。`summary.json` 包含每个 phase 的状态统计；`run_manifest.json` 明确保存最终生效的 phase、batch、precision、device、YOLO-every-frame 等参数，避免 YAML 与命令行覆盖后产生复现歧义。
 
-正式模式增加分阶段耗时字段，包括 `decode_ms`、`yolo_ms`、`roi_crop_ms`、`ritnet_attributed_ms`、`overlay_write_ms`。RITnet 是跨帧 batch，因此 `frame_processing_ms` 是批量成本按眼睛分摊后的成本归因；真实性能以整段 `elapsed_sec / processing_fps` 为准。
+正式模式包含分阶段耗时字段，包括 `decode_ms`、`yolo_ms`、`roi_crop_ms`、`ritnet_attributed_ms`、`overlay_write_ms`。RITnet 是跨帧 batch，因此 `frame_processing_ms` 是批量成本按眼睛分摊后的成本归因；真实性能以整段 `elapsed_sec / processing_fps` 为准。
 
 ## Overlay
 
@@ -257,13 +254,15 @@ output:
 
 30 FPS 下约每 100 秒保存一张，并且每个 phase 的第一帧也会保存一张 QC 图。默认不保存 ROI；只有显式 `--save-rois` 才写出 ROI 文件。
 
-## 当前冻结状态
+## 当前运行状态与历史准入检查
 
-这仍是 production candidate，不应在完成同一视频的以下回归前直接全量：
+截至 2026-08-23，这套 runtime 已执行正式全量分析。当前整理工作不把它重新描述为“production candidate”。
+
+08-22 开发阶段曾设定以下准入/回归检查，作为历史技术核对项继续保留：
 
 - batch16 FP32 与旧 scalar FP32 的 pupil / missing 一致性；
 - batch16 FP16 与 batch16 FP32 的 pupil center、diameter、missing 差异；
 - phase_windows 与 FocusWave v3.1.3 的 timeline / Practice CSV 对齐；
 - 一名完整被试的显存稳定性、速度和输出完整性。
 
-上述验证通过后再决定 FP16 是否成为默认值；目前默认保持 FP32。
+这些条目用于保留开发过程和后续复核依据，不再作为“是否允许启动全量分析”的当前状态描述。默认正式精度仍为 FP32。
