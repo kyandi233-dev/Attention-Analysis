@@ -1,19 +1,33 @@
-$PythonExe = "python"
+# Run from runtime/nir-yolo-tracking-ritnet-v1 in the validated eye-ai environment.
 
-# 1. Check GPU, models and OpenCV trackers.
-& $PythonExe .\run_pipeline.py check-env
+python .\run_pipeline.py check-env
+python .\run_pipeline.py discover --formal-only
 
-# 2. Discover formal NIR videos under F:\正式实验 and E:\Data.
-& $PythonExe .\run_pipeline.py discover
+# Formal default: sub-031+, FocusWave v3.1.3 phases,
+# per-frame YOLO, RITnet batch=16, FP32, overlay every 3000 frames.
+python .\run_pipeline.py formal `
+  --video "F:\正式实验\sub-033_\nir\sub-033_nir.avi"
 
-# 3. Recommended first smoke: 20 seconds, YOLO only, no RITnet.
-& $PythonExe .\run_pipeline.py run --subject sub-056 --root "E:\Data" --duration-sec 20 --tracker none --skip-ritnet
+# Same data, CUDA mixed-precision comparison.
+python .\run_pipeline.py formal `
+  --video "F:\正式实验\sub-033_\nir\sub-033_nir.avi" `
+  --ritnet-precision fp16
 
-# 4. One-minute integrated trial: YOLO every 10 frames + CSRT + RITnet on GPU.
-& $PythonExe .\run_pipeline.py run --subject sub-056 --root "E:\Data" --duration-sec 60 --tracker csrt --redetect-interval 10
+# Batch-size comparison while keeping FP32 fixed.
+python .\run_pipeline.py formal `
+  --video "F:\正式实验\sub-033_\nir\sub-033_nir.avi" `
+  --ritnet-batch-size 32 --ritnet-precision fp32
 
-# 5. Direct video path is also supported.
-& $PythonExe .\run_pipeline.py run --video "E:\Data\sub-056_\nir\sub-056_nir.avi" --duration-sec 60 --tracker csrt
+# Analyze only selected phases if needed.
+python .\run_pipeline.py formal `
+  --video "F:\正式实验\sub-033_\nir\sub-033_nir.avi" `
+  --phases baseline,instructions,block1
 
-# Full video requires an explicit safety flag. Do not use before short-video review.
-# & $PythonExe .\run_pipeline.py run --subject sub-056 --root "E:\Data" --full-video --tracker csrt
+# Legacy diagnostic reproduction remains available.
+python .\run_pipeline.py run `
+  --video "F:\正式实验\sub-033_\nir\sub-033_nir.avi" `
+  --duration-sec 60 --tracker none
+
+python .\run_pipeline.py run `
+  --video "F:\正式实验\sub-033_\nir\sub-033_nir.avi" `
+  --duration-sec 60 --tracker kcf --redetect-interval 10
