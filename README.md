@@ -1,4 +1,17 @@
-﻿# attention-pipeline-v2
+﻿# Attention-Analysis
+
+> GitHub 仓库当前仍使用历史名称 `attention-pipeline-v2`；项目文档开始统一使用 `Attention-Analysis`。
+
+## 2026-08-23 当前项目状态
+
+- NIR 眼框 YOLO26n 已完成 100 epochs 训练；训练产物保留在 `yolotrain/runs/yolo26n_eye_100epoch/`，`best.pt` 已复制进入正式 runtime。
+- 正式 NIR pipeline 已完成全量运行，不再处于“准备正式分析 / 等待全量推理”的阶段。
+- 当前正式 runtime 为 `runtime/nir-yolo-tracking-ritnet-v1/`。该目录名是历史名称；正式模式实际采用逐帧 YOLO，tracking 仅保留用于诊断和历史复现。
+- 当前正式配置以 FocusWave v3.1.3 时间语义为准，分析 `baseline / instructions / practice / block1 / block2`；RITnet 使用 batch 推理，当前配置为 `batch_size=16`、`fp32`。
+- 当前工作重点已经转为：仓库结构整理、正式资产归档、历史记录保留与可复现性维护。
+- 结构整理以 `main` 为当前工作主线；原 `codex/v2-YOLO+Tracking+RInet` 与 `codex/nir-formal-gpu-v3` 分支暂时保留，不删除。
+
+> 下方 2026-08-21 及更早内容属于当时的阶段性记录。为保留研究过程，不删除、不改写其历史语境；判断当前状态时以上述 2026-08-23 状态为准。
 
 ## 2026-08-21 当前项目状态
 
