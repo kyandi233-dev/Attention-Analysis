@@ -12,6 +12,10 @@
 | `roi-selection-smoke-sub011/` | Block1 起始约 0.2 秒冒烟 | 历史 ROI 输入域检查 |
 | `roi-selection-smoke3s-sub011/` | Block1 前 3 秒三后端冒烟与源图检查 | 历史 ROI 失败证据 |
 
+## 结构原则
+
+本目录**有意保持扁平**。当前历史证据数量不多，而且原目录名已经表达 Gate / preview / compare / smoke 的用途；再套 `qc/`、`benchmark/`、`selection/` 等层级会增加路径深度，并破坏历史文档中的引用，收益很低。
+
 这些内容原先位于 `finish/`。本次只做目录语义重命名，没有删除其中任何研究证据。
 
 当前正式 NIR pipeline 已转为 YOLO26n 眼框 + RITnet；正式全量分析结果仍应保存在仓库外的独立输出目录。
