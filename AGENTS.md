@@ -19,8 +19,9 @@
 2. `项目总览与架构.md`
 3. `docs/README.md`
 4. 对应模块目录的 `README.md`
-5. `runtime/nir-formal/README.md`（涉及正式 NIR 运行时）
-6. 最新日期型工作记录（仅在需要追溯决策时）
+5. `runtime/nir-formal/README.md`（涉及正式 NIR 运行口径）
+6. `runtime/nir-formal/INSTALL.md`（涉及新电脑安装/迁移）
+7. 最新日期型工作记录（仅在需要追溯决策时）
 
 历史文档中的“候选 / 待准入 / 准备全量 / 尚未冻结”等表述只代表当时状态；当前状态以上述入口为准。
 
@@ -43,20 +44,22 @@
 
 - `src/attention_pipeline/`：项目自身可复用 Python 源码。
 - `scripts/`：命令入口、诊断与历史比较脚本。
-- `tools/`：独立辅助工具，不属于 `attention_pipeline` Python 包。
+- `tools/`：独立辅助工具，不属于 `attention_pipeline` Python 包；`tools/labelimg/` 保存可重建的 LabelImg 标注环境定义与补丁。
 - `datasets/`：原始训练/标注数据资产。
 - `training/nir-eye-yolo/`：YOLO 眼框训练工作区、固定划分与训练结果。
 - `models/external/`：第三方源码/算法仓库。
-- `models/pretrained/`：独立预训练模型文件。
+- `models/historical/`：曾参与历史候选/比较、但不属于当前正式 NIR pipeline 的独立模型文件。
 - `runtime/nir-formal/`：当前正式可迁移 NIR 运行包，包含正式冻结权重和运行依赖说明。
 - `runtime/legacy/`：旧环境快照，仅供历史复现，不作为当前正式 runtime 依赖。
-- `artifacts/`：已提交的历史评估/QC/审批证据，不是正式全量输出。
+- `artifacts/`：已提交的历史评估/QC/审批证据，不是正式全量输出；当前有意保持扁平。
 - `docs/`：方法、架构、决策、模态文档和历史工作记录。
-- `configs/`：仓库级配置；当前正式 NIR runtime 使用自身 `config.yaml`。
+- `configs/`：仓库级行为/历史配置；当前正式 NIR 使用 `runtime/nir-formal/config.yaml`，`configs/formal.yaml` 仅为历史兼容配置。
+- `tests/`：仓库级回归；`runtime/nir-formal/tests/`：正式运行包内部最小自检。
+- `venv-labelimg/`：当前暂保留的本机历史虚拟环境；不视为长期可移植资产，未经用户明确许可不得删除。
 
 ## 运行与复现原则
 
-- 当前正式 NIR runtime 必须尽量自包含，换电脑时应能够从 `runtime/nir-formal/README.md` 和 `requirements.txt` 重建环境。
+- 当前正式 NIR runtime 必须尽量自包含；换电脑时以 `runtime/nir-formal/INSTALL.md` 为安装入口，以 `runtime/nir-formal/README.md` 为运行与科研口径入口。
 - 不依赖个人电脑绝对路径作为唯一可复现机制；绝对数据根目录应由配置或命令行覆盖。
 - 运行参数、模型权重和 phase 语义变化必须显式记录，不允许静默改变科研口径。
 - 准确率/QC 阶段不得用插值掩盖失败；观测、缺失、拒绝和插值保持可区分。
