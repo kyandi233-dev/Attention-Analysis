@@ -6,11 +6,12 @@ pipeline:
   random_seed: 20260824
 
 data:
-  # 已确认的正式实验数据根：本机 E: 与 GPU 机器 F: 使用相同目录结构。
+  # 已确认的数据根：E: 本机可见 E:/正式实验 与 E:/Data；GPU 机器为 F:/Data。
   # reader 同时接受每个根目录下的 sub-XXX_/ 与 sub-XXX/。
   roots:
     - "E:/正式实验"
-    - "F:/正式实验"
+    - "E:/Data"
+    - "F:/Data"
   min_subject_number: 31
   include: []
   exclude: []
