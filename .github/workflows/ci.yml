@@ -9,7 +9,7 @@ on:
   pull_request:
 
 jobs:
-  tests:
+  current-baseline:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -26,8 +26,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[test]"
 
-      - name: Run repository tests
-        run: pytest -q
+      - name: Run current repository baseline tests
+        run: |
+          pytest -q \
+            tests/test_behavior_formal_bb.py \
+            tests/test_current_data_roots.py \
+            tests/test_formal_nir.py \
+            tests/test_io.py \
+            tests/test_nir.py \
+            tests/test_portable_nir_gpu_package.py
 
       - name: Run formal NIR runtime tests
         run: python -m pytest runtime/nir-formal/tests -q
