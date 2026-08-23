@@ -116,16 +116,48 @@ batch2: sub-032, sub-041, sub-051, sub-055
 
 这里的数值属于训练过程中对 **validation split** 的记录，不应与 held-out test 指标混淆。
 
-## 最终 test 记录
+## 最终 held-out test
 
-项目运行记录中已记录最终 held-out test 结果：
+2026-08-22 的工作记录明确记载：使用 val 选择运行阈值后，冻结 `confidence=0.40` 对 held-out test 进行正式评价。test 为 **7 名被试 / 85 张图片 / 169 个标注眼框**。
+
+Ultralytics 原生 test 指标为：
 
 | 指标 | test |
 | --- | ---: |
-| mAP50 | ≈ 0.9913 |
-| mAP50-95 | ≈ 0.6589 |
+| Precision | 0.9754 |
+| Recall | 0.9645 |
+| mAP50 | 0.9913 |
+| mAP50-95 | 0.6589 |
 
-需要注意：截至当前 GitHub 分支核验，仓库中尚未找到一个独立提交的、使用 `best.pt` 对 `split=test` 运行后生成的机器可读评估文件。现有 `runs/test_yolo26n/` 实际是早期 2-epoch **train** run，而不是上述最终 test 评估。因此，上述两个 test 数值目前作为项目运行记录保留；若后续找到当时的 test 输出日志或重新导出 machine-readable evaluation artifact，应把它补充到本目录以完善 provenance。
+另一个按置信度排序的一对一匹配评价记录为：`TP=166`、`FP=8`、`FN=3`、`precision=0.9540`、`recall=0.9822`、`F1=0.9679`；这些数值与 Ultralytics 原生 AP 统计口径不同，不应混为一套指标。
+
+### Test artifact provenance
+
+工作记录记载当时生成的完整评价产物位于：
+
+```text
+artifacts/yolo-eye-evaluation/yolo26n_eye_100epoch/
+```
+
+其中包括：
+
+```text
+overall_metrics.json/csv
+per_image_predictions.csv
+per_image_summary.csv
+per_subject_metrics.csv
+failure_index.csv
+native_test/
+native_subject/
+per_subject_metrics.png
+run_manifest.json
+```
+
+但是截至 2026-08-23 当前分支核验，`artifacts/` 顶层实际上只保留 `README.md`，上述 `yolo-eye-evaluation/` 路径当前不存在。因此应准确表述为：
+
+> **最终 held-out test 已经实际执行并在 2026-08-22 工作记录中完整记载；机器可读评价产物曾生成，但当前 GitHub 分支未保留在其原记录路径。**
+
+现有 `runs/test_yolo26n/` 仍只是早期 2-epoch **train** run，不能用它替代正式 held-out test provenance。后续如果找回原评价目录，应优先按原路径恢复归档，而不是重新把早期 run 改名成 test 结果。
 
 ## 历史记录：2026-08-21 建立训练工作区时的说明
 
