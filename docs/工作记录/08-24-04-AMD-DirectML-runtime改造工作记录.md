@@ -4,7 +4,7 @@
 
 ## 总结
 
-AMD runtime 代码、模型、配置、测试与当前文档已完成改造，等待 Git 提交、远端推送和 `amd-v0.1` tag 发布。实现使用 ONNX Runtime DirectML 执行 YOLO26n 和 RITnet，强制 RITnet FP32 batch=16，尾批复制最后一个真实 ROI 补位并丢弃补位输出，默认输出进入 `amd-directml` 隔离层。
+AMD runtime 代码、模型、配置、测试与当前文档已完成改造和发布。实现使用 ONNX Runtime DirectML 执行 YOLO26n 和 RITnet，强制 RITnet FP32 batch=16，尾批复制最后一个真实 ROI 补位并丢弃补位输出，默认输出进入 `amd-directml` 隔离层。实现提交 `d75456acf62df7a00876add22ae426f4d48ea902` 已推送到远端 `amd-DirectML`；annotated tag `amd-v0.1` 已创建并推送，指向该实现提交。
 
 RX 6750 GRE 上的 `sub-031` block1 轻量端到端验证已完成：20 秒视频、600 帧、1187 只眼；压缩 RITnet 输出后的最终版本用时 44.66 秒、13.44 FPS。其中 581 帧双眼、13 帧单眼、6 帧额外框；RITnet 1079 个 observed、108 个显式 missing。CSV 中 1187 行的 `ritnet_batch_size` 全为 16；1187 对 16 余 3，证明尾批为 3 个真实 ROI + 13 个补位 slot，且 CSV 没有写入补位行。
 
@@ -109,6 +109,7 @@ ORT 的 `session.disable_cpu_ep_fallback=1` 会使当前两个图因少量默认
 
 - `py_compile`：4 个 runtime 主要 Python 文件通过。
 - 回归测试：29 passed，1 skipped；skip 原因为历史 preexperiment dataset 未挂载，与 AMD 改造无关。
+- 两个 ONNX 均再次通过 full checker，`SHA256SUMS.txt` 与全部 runtime 文件逐项核验一致，`git diff --check` 通过。
 - DirectML `check-env`：YOLO 和 RITnet 都以 `DmlExecutionProvider` 为首选 provider。
 - batch dry-run：`sub-031`、FP32、batch=16、AMD 隔离输出和实际 E 盘视频路径均正确。
 
@@ -123,6 +124,6 @@ ORT 的 `session.disable_cpu_ep_fallback=1` 会使当前两个图因少量默认
 ## 已完成 / 未完成 / 待确认事项
 
 - 已完成：克隆/分支起点、DirectML 后端、模型替换、旧 runtime 权重删除、固定 batch/FP32/尾批、输出隔离、文档、哈希、单元/回归测试、DirectML 硬件检查、batch dry-run 与 20 秒真实数据端到端验证。
-- 未完成：Git commit、推送 `amd-DirectML`、创建/推送 `amd-v0.1`。
+- 已完成发布：实现提交 `d75456a`、远端分支 `amd-DirectML`、annotated tag `amd-v0.1`；tag 保持指向通过上述测试的 runtime 实现提交。本记录的发布事实更新作为后续 docs-only 提交，不移动 release tag。
 - 待本次收尾核验：更新 runtime SHA 清单并执行最终回归、Git commit、分支/tag 推送。
 - 待后续独立研究：从完整四分类图验证 RITnet-derived openness、blink 与 PERCLOS；在人工时序验证和 schema/version 迁移前，不进入 AMD `0.1.0` 正式 CSV。
