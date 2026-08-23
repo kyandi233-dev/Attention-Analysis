@@ -6,8 +6,8 @@
 
 ```text
 models/
-├── external/      # 第三方源码/算法仓库
-├── pretrained/    # 独立预训练模型文件
+├── external/      # 第三方完整源码/算法仓库
+├── historical/    # 曾参与候选/比较、但不属于当前正式 NIR pipeline 的独立模型文件
 └── README.md
 ```
 
@@ -19,11 +19,13 @@ models/
 - `pye3d-detector/`：pye3d 第三方检测资源。
 - `yolo-face-parts-detector/`：历史 face-parts ROI 检测资源。
 
-### `pretrained/`
+### `historical/`
 
-- `face_landmarker.task`：MediaPipe Face Landmarker 模型。
+这些文件都是外部获取、已经训练好的独立模型资产，但在本项目中的关键语义是“历史候选”，而不是“当前正式预训练模型”：
+
+- `face_landmarker.task`：MediaPipe Face Landmarker；历史完整人脸 ROI 候选。
 - `yolov8n-face.onnx`：历史 YOLO-face ROI 候选模型。
-- `yunet_2023mar.onnx`：YuNet 人脸检测模型。
+- `yunet_2023mar.onnx`：历史 YuNet 人脸检测候选模型。
 
 ## 当前正式分析权重
 
@@ -51,5 +53,5 @@ RITnet 正式 runtime 权重：
 
 - 根 `models/` 主要服务历史比较、诊断和方法复现，不作为正式 NIR runtime 的运行时依赖。
 - 当前正式权重不从 runtime 中抽走。
-- `configs/formal.yaml` 已同步到新的 `external/` 与 `pretrained/` 路径，以保持历史诊断脚本可运行。
+- `configs/formal.yaml` 已同步到新的 `external/` 与 `historical/` 路径，以保持历史诊断脚本可运行。
 - 后续新增本项目训练模型时，应明确区分训练工作区产物与正式 runtime 冻结副本。
