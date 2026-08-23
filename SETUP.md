@@ -1,6 +1,73 @@
 # SETUP｜环境配置与可移植部署说明
 
-> 08-16（Asia/Shanghai）｜本仓库封装了 4 个 ROI 后端 + 4 个瞳孔算法，目标是**自包含可移植**：把 v2 目录拷到另一台设备，按本文装好依赖即可跑全算法（本机不选最优，新设备跑完再选型）。
+## 2026-08-23 当前 NIR 路线
+
+正式 NIR 全量分析已经完成。当前仓库中已核验的完整 YOLO26n + tracking + RITnet portable 实现位于：
+
+```text
+runtime/nir-yolo-tracking-ritnet-v1/
+```
+
+当前需要在另一台 GPU 电脑复现这条路线时，应优先使用该 package，而不是从下方 08-16 的“4 ROI × 4 pupil 算法候选环境”重新开始选型。
+
+### 当前 portable package 内容
+
+```text
+runtime/nir-yolo-tracking-ritnet-v1/
+├── README.md
+├── config.yaml
+├── run_pipeline.py
+├── ritnet_runtime.py
+├── run_examples.ps1
+├── requirements.txt
+├── SHA256SUMS.txt
+├── models/
+│   ├── nir-eye-yolo26n-best.pt
+│   └── ritnet-best_model.pkl
+└── ritnet/
+    └── densenet.py
+```
+
+包内 YOLO 权重与 `yolotrain/runs/yolo26n_eye_100epoch/weights/best.pt` 为同一 Git blob；RITnet 权重与 `models/RITnet-master/best_model.pkl` 也为同一 Git blob。
+
+### 当前环境依赖
+
+package 自带 `requirements.txt`：
+
+```text
+ultralytics==8.4.120
+opencv-contrib-python>=4.10
+numpy>=1.26
+pandas>=2.2
+PyYAML>=6.0
+torch
+torchvision
+```
+
+GPU 机器需要安装与本机 CUDA/驱动匹配的 PyTorch。CSRT/KCF tracker 需要 `opencv-contrib-python`，普通 `opencv-python` 可能没有对应 tracker API。
+
+### 当前运行入口
+
+进入 package 目录后先检查环境：
+
+```powershell
+python .\run_pipeline.py check-env
+python .\run_pipeline.py discover
+```
+
+检查项包括 CUDA、两个模型文件以及 CSRT/KCF 是否可用。运行脚本支持 `--subject` / `--video`、`--tracker none|csrt|kcf`、`--redetect-interval`、`--device`、`--skip-ritnet` 和 `--full-video`。
+
+portable package 在 2026-08-22 创建时默认只跑 60 秒，并要求显式 `--full-video` 才处理整段。这是当时的准入保护，不代表代码只能处理短视频。
+
+### provenance 注意
+
+当前 Git 分支没有保存正式全量运行时最终生成的 `run_manifest.json`，因此 package 内默认配置只能用于复现 08-22 portable version，不能自动视为后来 full-run 的最终冻结参数。若要严格复现已经完成的那次全量分析，应优先从实际输出电脑找到当时的 `run_manifest.json`、`summary.json` 或运行命令。
+
+---
+
+# 历史兼容部署说明｜08-16 多后端/多算法阶段
+
+> 08-16（Asia/Shanghai）｜本仓库当时封装了 4 个 ROI 后端 + 4 个瞳孔算法，目标是**自包含可移植**：把 v2 目录拷到另一台设备，按本文装好依赖即可跑全算法（本机不选最优，新设备跑完再选型）。以下内容保留用于历史路线复现，不再表示 2026-08-23 当前正式 NIR 主线。
 
 ## 1. 目录自包含说明
 
@@ -14,21 +81,21 @@
 
 ### 第 1 步：拷贝文件
 
-| 东西                              | 说明                                                                  |
-| --------------------------------- | --------------------------------------------------------------------- |
-| `attention-pipeline-v2/` 整目录 | 已自包含：代码 + 模型权重 +`runtime/`(wheel+依赖清单) + 配置 + 测试 |
-| 数据盘                            | `E:\正式实验`（+ 需要的预实验数据）                                 |
+| 东西 | 说明 |
+|---|---|
+| `attention-pipeline-v2/` 整目录 | 已自包含：代码 + 模型权重 + `runtime/`(wheel+依赖清单) + 配置 + 测试 |
+| 数据盘 | `E:\正式实验`（+ 需要的预实验数据） |
 
 ### 第 2 步：装主环境（Python 3.13）
 
 ```powershell
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-pip install -r runtime/requirements-main.txt   # 全量冻结；或按下方「主环境依赖」精简清单
+pip install -r runtime/requirements-main.txt
 ```
 
-### 第 3 步：装 venv-pupil（Python 3.10 ⚠️）
+### 第 3 步：装 venv-pupil（Python 3.10）
 
-PyPupilEXT wheel 是 `cp310-win_amd64`，**只能用 Python 3.10 + Windows 64 位**（3.11+ 装不上）：
+PyPupilEXT wheel 是 `cp310-win_amd64`，只能用 Python 3.10 + Windows 64 位：
 
 ```powershell
 python3.10 -m venv venv-pupil
@@ -43,7 +110,7 @@ venv-pupil/Scripts/pip install numpy pandas opencv-python matplotlib
 2. `runtimes.main_python` → 新主环境 python.exe
 3. `runtimes.pypupilext_python` → 新 venv-pupil/Scripts/python.exe
 
-其余模型路径是相对 `models/...`，`config.path_value` 自动解析到 v2 根，**不用改**。
+其余模型路径是相对 `models/...`，`config.path_value` 自动解析到 v2 根，不用改。
 
 ### 第 5 步：验证
 
@@ -55,100 +122,85 @@ python scripts/run_all_backends.py --subject sub-011 --roi-backends faceparts,me
 
 ### 迁移易错点
 
-- **PyPupilEXT 锁 Python 3.10**（`cp310`），3.11+ 装不上——venv-pupil 必须用 3.10。
-- **ultralytics 用 ≥8.3**（主环境 8.4.120），勿装 faceparts 仓库锁的 8.2.27（不兼容 Python 3.13）。
-- **v2 建议放纯 ASCII 路径**（如 `D:/attention-pipeline-v2`），规避 `cv2.dnn` 中文路径（代码已兜底，但更省心）。
-- **DeepVOG 单独 venv**，别与 torch 混装。
+- PyPupilEXT 锁 Python 3.10（`cp310`），3.11+ 装不上；venv-pupil 必须用 3.10。
+- ultralytics 用 ≥8.3（当时主环境 8.4.120），勿装 faceparts 仓库锁的 8.2.27。
+- v2 建议放纯 ASCII 路径（如 `D:/attention-pipeline-v2`），规避 `cv2.dnn` 中文路径问题。
+- DeepVOG 单独 venv，避免与 torch 环境混装。
 
 ## 2. 两个解释器 + 依赖
 
-| 解释器                    | 用途                               | 必需依赖               |
-| ------------------------- | ---------------------------------- | ---------------------- |
-| 主环境（Python 3.13+）    | ROI 定位、RITnet、Iris、统计、测试 | 见下「主环境依赖」     |
-| venv-pupil（Python 3.10） | PyPupilEXT 的 PuRe/PuReST          | 见下「pupil 环境依赖」 |
+| 解释器 | 用途 | 必需依赖 |
+|---|---|---|
+| 主环境（Python 3.13+） | ROI 定位、RITnet、Iris、统计、测试 | 见下“主环境依赖” |
+| venv-pupil（Python 3.10） | PyPupilEXT 的 PuRe/PuReST | 见下“pupil 环境依赖” |
 
 ### 主环境依赖
 
 ```powershell
-# 主环境（本项目当前为 D:/Code/python/python.exe，Python 3.13）
-python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu   # torch（RITnet）
-python -m pip install ultralytics onnxruntime opencv-python numpy pandas pyyaml            # faceparts / yolo / 通用
-python -m pip install mediapipe                                                             # mediapipe ROI + Iris
-python -m pip install pytest                                                                # 测试
+python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+python -m pip install ultralytics onnxruntime opencv-python numpy pandas pyyaml
+python -m pip install mediapipe
+python -m pip install pytest
 ```
 
-- `torch`：RITnet 推理（`best_model.pkl` 是 torch state_dict）。CPU 版即可。
-- `ultralytics` ≥8.3（兼容 Python 3.13；**不要**装 faceparts 仓库锁的 8.2.27，那是 Python 3.11 时代）。
+- `torch`：RITnet 推理。
+- `ultralytics` ≥8.3：faceparts / YOLO 路线。
 - `mediapipe`：`face_landmarker.task` 的 FaceLandmarker（ROI + Iris 关键点）。
 - `onnxruntime`：YuNet / YOLO-face 的 ONNX 推理。
-- 不需要 `supervision`（faceparts 官方 `run.py` 用它画框，本管线直接读 `result.boxes`）。
+- 不需要 `supervision`；历史 faceparts 官方脚本使用它画框，本管线直接读 `result.boxes`。
 
 ### pupil 环境依赖（venv-pupil）
 
-PuRe/PuReST 走 `venv-pupil/Scripts/python.exe`，依赖 PyPupilEXT（`pypupilext`）。此环境需在原机复现（含 pypupilext 及其 C++ 绑定）；本仓库不重打包 wheel，部署时从原 venv 复制或按 PyPupilEXT 官方安装。
+PuRe/PuReST 走 `venv-pupil/Scripts/python.exe`，依赖 PyPupilEXT（`pypupilext`）。此环境用于历史 PuRe/PuReST 路线复现；当前 YOLO + tracking + RITnet portable runtime 不要求 PyPupilEXT。
 
-### DeepVOG 附加依赖（可选，部署时另装）
+### DeepVOG 附加依赖（可选，历史比较）
 
-DeepVOG 是 **Keras/TensorFlow 1.x 时代**代码（`DeepVOG_model.py` 用 standalone `keras`，权重 `.h5`），与主环境 torch 共存有冲突风险。建议**单独建一个 venv**：
+DeepVOG 是 Keras/TensorFlow 时代代码，与主环境 torch 共存有冲突风险。建议单独 venv：
 
 ```powershell
 python -m venv venv-deepvog
 venv-deepvog/Scripts/pip install tensorflow==2.x keras==2.x scikit-image scikit-video numpy
-# DeepVOG 原始依赖：keras、tensorflow、skvideo、skimage、urwid
 ```
 
-`scripts/deepvog_pupil.py` 已做延迟导入：未装 keras 时 `import` 不报错，只有实际调用 `load_model()` 才失败。装好 keras 后即可跑。
+`scripts/deepvog_pupil.py` 已做延迟导入：未装 keras 时 import 不报错，只有实际调用 `load_model()` 才失败。
 
-## 3. 模型权重清单（均已内置 v2，无需额外下载）
+## 3. 历史模型权重清单
 
-| 模型                      | v2 内路径                                                   | 大小   | 用途                   |
-| ------------------------- | ----------------------------------------------------------- | ------ | ---------------------- |
-| `face_landmarker.task`  | `models/face_landmarker.task`                             | 3.8MB  | MediaPipe ROI + Iris   |
-| `yunet_2023mar.onnx`    | `models/yunet_2023mar.onnx`                               | 233KB  | YuNet ROI              |
-| `yolov8n-face.onnx`     | `models/yolov8n-face.onnx`                                | 12MB   | YOLO-face ROI          |
-| `yolov8n.pt`            | `models/yolo-face-parts-detector-main/weights/yolov8n.pt` | 6.2MB  | faceparts ROI（nano）  |
-| `yolov8s.pt`            | `models/yolo-face-parts-detector-main/weights/yolov8s.pt` | 22.5MB | faceparts ROI（small） |
-| `best_model.pkl`        | `models/RITnet-master/best_model.pkl`                     | ~1MB   | RITnet 瞳孔分割        |
-| `DeepVOG_weights.h5` 等 | `models/DeepVOG-master/deepvog/model/`                    | ~94MB  | DeepVOG 分割           |
+| 模型 | v2 内路径 | 用途 |
+|---|---|---|
+| `face_landmarker.task` | `models/face_landmarker.task` | MediaPipe ROI + Iris |
+| `yunet_2023mar.onnx` | `models/yunet_2023mar.onnx` | YuNet ROI |
+| `yolov8n-face.onnx` | `models/yolov8n-face.onnx` | YOLO-face ROI |
+| `yolov8n.pt` | `models/yolo-face-parts-detector-main/weights/yolov8n.pt` | faceparts ROI（nano） |
+| `yolov8s.pt` | `models/yolo-face-parts-detector-main/weights/yolov8s.pt` | faceparts ROI（small） |
+| `best_model.pkl` | `models/RITnet-master/best_model.pkl` | RITnet 瞳孔分割 |
+| `DeepVOG_weights.h5` 等 | `models/DeepVOG-master/deepvog/model/` | DeepVOG 分割 |
 
-**faceparts 权重下载 URL**（若缺失需重下）：
-
-```
-https://github.com/ignaciohrdz/yolo-face-parts-detector/releases/download/v1.0.0/yolov8n.pt
-https://github.com/ignaciohrdz/yolo-face-parts-detector/releases/download/v1.0.0/yolov8s.pt
-```
-
-类别映射必须为 `{0: eye, 1: nose, 2: mouth, 3: eyebrow}`（`roi_faceparts.py` 加载时校验）。
+faceparts 类别映射必须为 `{0: eye, 1: nose, 2: mouth, 3: eyebrow}`。
 
 ## 4. 中文路径注意事项
 
-- `cv2.dnn` 读 ONNX（YuNet / YOLO-face）**不支持非 ASCII 路径** → 已用 `roi_common.ascii_model_path()` 自动复制到临时 ASCII 路径。
-- `face_landmarker.task` 同理，`FaceLandmarkerSession` 内部已处理中文路径。
-- `.pt`（ultralytics torch 加载）对中文路径 OK，但权重统一放 v2 内 ASCII 子路径最稳。
-- **新设备建议把 v2 放在纯 ASCII 路径**（如 `D:/attention-pipeline-v2`），可完全规避上述问题。
+- `cv2.dnn` 读 ONNX（YuNet / YOLO-face）对非 ASCII 路径存在兼容问题，历史代码使用 `roi_common.ascii_model_path()` 处理。
+- `face_landmarker.task` 同理，`FaceLandmarkerSession` 内部有对应处理。
+- `.pt` 的 torch/Ultralytics 路径兼容性相对更好，但新设备仍建议把仓库放在纯 ASCII 路径。
 
-## 5. 运行示例
+## 5. 历史运行示例
 
 ```powershell
-$env:PYTHONPATH='src'   # 或把 src 加入 PYTHONPATH
+$env:PYTHONPATH='src'
 
-# 单 ROI 后端（faceparts 特写）
 D:/Code/python/python.exe scripts/roi_faceparts.py --subject sub-011 --conf 0.3 --imgsz 1280
 
-# 全算法统一入口：faceparts+mediapipe ROI × PuReST+RITnet 瞳孔
 D:/Code/python/python.exe scripts/run_all_backends.py `
   --subject sub-011 --roi-backends faceparts,mediapipe --pupil-algos PuReST,RITnet
 
-# DeepVOG（单独 venv 装好 keras 后）
 venv-deepvog/Scripts/python.exe scripts/deepvog_pupil.py --roi_dir <平铺ROI目录> --out deepvog.csv
 
-# Iris（整帧，仅全脸画面）
 D:/Code/python/python.exe scripts/iris_landmark.py --image_dir <整帧图片目录> --out iris.csv
 
-# 全仓回归
 D:/Code/python/python.exe -m pytest -q
 ```
 
 ## 6. 许可证提示
 
-`models/yolo-face-parts-detector-main/` 为 **AGPL-3.0**。研究/内部评估无碍；若未来对外发布或提供网络服务，需单独评估 AGPL 的源代码公开义务（当前不阻塞研究）。
+`models/yolo-face-parts-detector-main/` 为 AGPL-3.0。研究/内部评估与未来对外发布的许可义务需分别评估；当前仓库继续把其作为历史比较资产保留。
