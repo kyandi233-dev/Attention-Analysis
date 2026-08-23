@@ -48,10 +48,10 @@ run_pipeline.py
 run_formal_batch.py
 ```
 
-然后执行：
+然后执行 runtime 自包含测试与环境检查：
 
 ```powershell
-pytest -q
+python -m pytest tests -q
 python run_pipeline.py check-env
 ```
 
@@ -111,6 +111,6 @@ python run_pipeline.py formal --video "<实际盘符>:\<数据根>\sub-033_\nir\
 
 ## 7. NVIDIA 基线与 AMD 分支边界
 
-本目录当前记录的是已经运行过的 NVIDIA/CUDA 正式口径。准备 AMD/DirectML 适配时，应先确认 NVIDIA 基线测试和环境检查通过并冻结版本，再从该节点创建 `amd-DirectML`。
+NVIDIA/CUDA 仓库基线已经冻结为 package version `1.0.0`。仓库级 current baseline tests 与 runtime tests 的具体集合见根 `.github/workflows/ci.yml` 和 `tests/README.md`；新 NVIDIA 机器还应额外运行本页的 `check-env`、数据发现和 dry-run，确认该机器的 CUDA 与数据挂载环境。
 
-AMD 分支可以修改设备后端、依赖和必要的 inference 适配，但不得反向改写已冻结 NVIDIA 正式分析参数和历史结果。
+AMD/DirectML 适配应从该 `1.0.0` NVIDIA 基线节点创建 `amd-DirectML`。AMD 分支可以修改设备后端、依赖和必要的 inference 适配，但不得反向改写已冻结 NVIDIA 正式分析参数和历史结果。
