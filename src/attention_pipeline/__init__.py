@@ -1,3 +1,3 @@
 """Auditable attention measurement pipeline."""
 
-__version__ = "0.2.0-behavior-evidence"
+__version__ = "1.0.0"
