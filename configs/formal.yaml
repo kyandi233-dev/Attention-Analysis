@@ -1,4 +1,9 @@
-﻿pipeline:
+# HISTORICAL CONFIG ONLY
+# 该文件保留 2026-08-16 前后 NIR ROI / PuReST 候选链的历史配置与兼容路径。
+# 当前正式 NIR 全量分析配置：runtime/nir-formal/config.yaml
+# 不要把本文件用于当前 YOLO26n + RITnet 正式运行。
+
+pipeline:
   name: attention-pipeline-v2-formal
   version: 0.1.0-candidate
   timezone: Asia/Shanghai
@@ -62,4 +67,3 @@ production:
   roi_backend: null
   parameters_frozen: false
   note: "60时点显示正式输入为双眼特写；MediaPipe、YuNet和当时YOLO-face正确双眼ROI均为0。该配置保留用于历史诊断，不代表当前 runtime/nir-formal 正式路线。"
-
