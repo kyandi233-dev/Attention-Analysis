@@ -1,4 +1,4 @@
-# 070｜Architecture 架构说明
+# Architecture｜架构说明
 
 本目录用于说明 Attention-Analysis 的整体系统结构，回答“各模块如何组织和连接”。
 
