@@ -65,9 +65,19 @@ nir-eye-v1/
 
 ## 标注方法记录（LabelImg）
 
-当时使用 LabelImg 1.8.6 + Python 3.10 的专用 Windows venv。为解决中文路径和 Qt 问题，环境内增加了 `labelimg_launch.py`；同时对 LabelImg 的滚轮/缩放 `setValue(float)` 问题做了 4 处 `int(...)` 修正。
+当时使用 LabelImg 1.8.6 + Python 3.10 的专用 Windows venv。为解决中文路径和 Qt 问题，环境内增加了自定义启动器；同时对 LabelImg 的滚轮/缩放 `setValue(float)` 问题做了 4 处 `int(...)` 修正。
 
-当前仓库仍暂时保留 `venv-labelimg/` 以保护这段历史环境；它正在整理为可重建工具配置，在获得删除许可前不会直接删除整个 venv。
+这些真正需要长期保留的兼容逻辑已经抽取到：
+
+```text
+tools/labelimg/
+├── README.md
+├── requirements.txt
+├── launch.py
+└── patch_labelimg.py
+```
+
+以后重建标注环境按 `tools/labelimg/README.md` 执行，不需要依赖原机器的完整 venv。仓库根 `venv-labelimg/` 目前只作为待清理的历史环境暂存；在获得删除许可前不会直接删除。
 
 历史标注规则：
 
