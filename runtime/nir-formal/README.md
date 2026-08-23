@@ -21,9 +21,12 @@ frames.csv / eyes.csv / summary.json / run_manifest.json / phase_windows.json / 
 ```text
 models/nir-eye-yolo26n-best.pt
 models/ritnet-best_model.pkl
+models/nir-eye-yolo26n-best.onnx
+models/ritnet-b16-fp32.onnx
+models/ritnet-b16-fp32.onnx.data
 ```
 
-当前 NVIDIA/CUDA 维护分支为 `nvidia-cuda`，仓库基线版本为 `1.0.0`。AMD/DirectML 版本应从该冻结 NVIDIA 基线节点创建独立 `amd-DirectML` 分支，不直接修改本 runtime 的既有 CUDA 复现口径。
+当前 NVIDIA/CUDA 维护分支为 `nvidia-cuda`，package 版本为 `1.0.1`。历史全量 `1.0.0` 基线由 tag `nvidia-v1.0.0` 冻结；默认 `pytorch-cuda` 继续使用原 `.pt/.pkl`，新增 `ort-cuda` 只是显式可选的 FP32 高速 profile。
 
 ## 正式原始数据发现
 
@@ -65,6 +68,14 @@ python run_formal_batch.py --dry-run
 ```powershell
 python run_formal_batch.py
 ```
+
+默认仍是冻结的 PyTorch CUDA 路径。在目标 NVIDIA 机器安装 `onnxruntime-gpu`、通过 parity 和短测后，可显式选择：
+
+```powershell
+python run_formal_batch.py --backend ort-cuda
+```
+
+`ort-cuda` 固定 FP32、RITnet batch=16、尾批用最后一个真实 ROI 补位并丢弃补位输出。它只注册 `CUDAExecutionProvider`，禁用 CPU EP fallback 与运行期 fallback，并关闭 TF32；CUDA EP 不可用或任一节点不能在 CUDA 执行时直接失败。
 
 `batch.subjects.include: []` 表示发现所有编号不低于 `formal.min_subject_number` 的完整正式被试；`exclude` 用于显式排除。命令行 `--subjects sub-031,sub-033` 可临时覆盖 include。
 
@@ -110,7 +121,7 @@ outputs/formal
 
 实际全量结果应保存在仓库外独立分析目录；仓库中的相对输出设置主要用于 runtime 自检和可复现说明。
 
-单次运行目录名包含 subject、FocusWave release、RITnet batch size 和 precision。`skip_completed: true` 时，如果预期 run directory 已存在 `summary.json`，批处理会跳过该被试；使用 `--force` 可显式重跑。
+单次运行目录名包含 subject、FocusWave release、RITnet batch size、precision，ORT profile 另带 `ort-cuda`。`skip_completed: true` 只会跳过通过身份、phase、帧集合、计数和产物校验的 `completion.json: complete`；只有 `summary.json`、smoke、partial、读帧失败或损坏 marker 都会重跑。`--max-frames` 或非完整 phase 只会发布 `smoke_complete`，读帧失败发布 `failed` 并返回非零码。
 
 ## 代码边界
 
@@ -120,7 +131,7 @@ outputs/formal
 
 ## 最小验收
 
-准备从 NVIDIA `1.0.0` 基线创建平台分支，或在新机器上复现时，仓库级 current baseline 与 runtime 自检应分开执行。根仓库 current baseline 使用与 `.github/workflows/ci.yml` 相同的可移植测试集合：
+准备复现 NVIDIA `1.0.1` 或在新机器上短测 profile 时，仓库级 current baseline 与 runtime 自检应分开执行。根仓库 current baseline 使用与 `.github/workflows/ci.yml` 相同的可移植测试集合：
 
 ```powershell
 # repo root

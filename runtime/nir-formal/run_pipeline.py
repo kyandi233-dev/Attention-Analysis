@@ -26,7 +26,16 @@ import numpy as np
 import yaml
 from ultralytics import YOLO
 
+from formal_completion import (
+    REQUIRED_ARTIFACTS,
+    SCHEMA_VERSION as COMPLETION_SCHEMA_VERSION,
+    expected_frame_keys,
+    validate_completion,
+    write_completion,
+)
+from onnx_cuda_runtime import YoloCudaRuntime
 from phase_windows import PhaseWindow, resolve_phase_windows
+from ritnet_onnx_runtime import RitnetOnnxRuntime
 from ritnet_runtime import RitnetRuntime
 
 
@@ -230,8 +239,15 @@ def expand_crop_raw(
     return np.ascontiguousarray(gray), crop_box, clipped
 
 
-def yolo_detect(model: YOLO, frame: np.ndarray, config: dict[str, Any], device: str) -> list[Detection]:
+def yolo_detect(model: Any, frame: np.ndarray, config: dict[str, Any], device: str) -> list[Detection]:
     cfg = config["yolo"]
+    if hasattr(model, "detect"):
+        rows = model.detect(
+            frame,
+            confidence=float(cfg["confidence"]),
+            max_det=int(cfg["max_det"]),
+        )
+        return [Detection(box, confidence) for box, confidence, class_id in rows if class_id == 0]
     result = model.predict(
         frame,
         conf=float(cfg["confidence"]),
@@ -321,9 +337,14 @@ def _make_ritnet(
     device: str,
     *,
     precision: str | None = None,
-) -> RitnetRuntime:
-    ritnet_path = resolve_package_path(config["models"]["ritnet"])
-    return RitnetRuntime(
+    backend: str = "pytorch-cuda",
+) -> Any:
+    is_ort = backend == "ort-cuda"
+    ritnet_path = resolve_package_path(
+        config["models"]["ritnet_onnx"] if is_ort else config["models"]["ritnet"]
+    )
+    runtime_class = RitnetOnnxRuntime if is_ort else RitnetRuntime
+    return runtime_class(
         PACKAGE_ROOT,
         ritnet_path,
         (int(config["ritnet"]["input_width"]), int(config["ritnet"]["input_height"])),
@@ -331,6 +352,18 @@ def _make_ritnet(
         analysis_size=(int(config["roi"]["width"]), int(config["roi"]["height"])),
         precision=precision or str(config["ritnet"].get("precision", "fp32")),
     )
+
+
+def _require_pytorch_cuda(device: str) -> None:
+    import torch
+
+    requested = str(device).strip().lower()
+    if requested == "cpu" or not torch.cuda.is_available():
+        raise RuntimeError(
+            "Formal PyTorch inference requires CUDA; refusing silent CPU fallback"
+        )
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
 
 
 def run(args: argparse.Namespace, config: dict[str, Any]) -> int:
@@ -676,9 +709,19 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
         )
 
     device = args.device
-    model_path = resolve_package_path(config["models"]["yolo"])
-    ritnet_path = resolve_package_path(config["models"]["ritnet"])
-    model = YOLO(str(model_path))
+    backend = str(args.backend or config.get("inference", {}).get("backend", "pytorch-cuda"))
+    if backend not in {"pytorch-cuda", "ort-cuda"}:
+        raise ValueError(f"Unsupported formal inference backend: {backend}")
+    is_ort = backend == "ort-cuda"
+    if not is_ort:
+        _require_pytorch_cuda(device)
+    model_path = resolve_package_path(
+        config["models"]["yolo_onnx"] if is_ort else config["models"]["yolo"]
+    )
+    ritnet_path = resolve_package_path(
+        config["models"]["ritnet_onnx"] if is_ort else config["models"]["ritnet"]
+    )
+    model = YoloCudaRuntime(model_path, device=device) if is_ort else YOLO(str(model_path))
     if model.names != {0: "eye"}:
         raise ValueError(f"Unexpected YOLO classes: {model.names}")
 
@@ -687,7 +730,15 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
     batch_size = args.ritnet_batch_size or int(config["ritnet"].get("batch_size", 16))
     if batch_size <= 0:
         raise ValueError("RITnet batch size must be positive")
-    ritnet = _make_ritnet(config, device, precision=precision) if use_ritnet else None
+    if is_ort and (precision != "fp32" or batch_size != 16):
+        raise ValueError("ORT CUDA profile is frozen to FP32 and RITnet batch=16")
+    ritnet = (
+        _make_ritnet(config, device, precision=precision, backend=backend)
+        if use_ritnet
+        else None
+    )
+    if ritnet and not is_ort and getattr(ritnet.device, "type", None) != "cuda":
+        raise RuntimeError("RITnet did not initialize on CUDA; refusing CPU fallback")
 
     timestamp_path, unix_by_frame = load_timestamp_map(video)
     if timestamp_path is None or not unix_by_frame:
@@ -696,6 +747,8 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
         )
 
     phases = _phase_names(args, config)
+    configured_phases = [str(value) for value in config["formal"].get("phases", [])]
+    is_full_phase_run = phases == configured_phases
     windows = resolve_phase_windows(
         video,
         unix_by_frame,
@@ -722,7 +775,15 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
 
     release = str(config["formal"].get("focuswave_release", "v3.1.3"))
     output_root = Path(args.output) if args.output else resolve_package_path(config["output"]["root"])
-    run_name = f"{subject}_formal_{release}_yolo_b{batch_size}_{precision}"
+    suffixes: list[str] = []
+    if is_ort:
+        suffixes.append("ort-cuda")
+    if not is_full_phase_run:
+        suffixes.append("partial-" + "-".join(phases))
+    if args.max_frames is not None:
+        suffixes.append(f"smoke{args.max_frames}")
+    run_suffix = "_" + "_".join(suffixes) if suffixes else ""
+    run_name = f"{subject}_formal_{release}_yolo_b{batch_size}_{precision}{run_suffix}"
     out = output_root / run_name
     overlays = out / "overlays"
     overlays.mkdir(parents=True, exist_ok=True)
@@ -731,8 +792,50 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
         rois_path = out / "rois"
         rois_path.mkdir(parents=True, exist_ok=True)
 
+    window_dicts = [window.to_dict() for window in windows]
+    expected_keys = expected_frame_keys(window_dicts)
+    started_at_utc = datetime.now(timezone.utc).isoformat()
+    video_identity = str(video.resolve())
+    run_identity = {
+        "subject": subject,
+        "video": video_identity,
+        "package_version": str(config["package"]["version"]),
+        "focuswave_release": release,
+        "inference_backend": backend,
+        "phases": phases,
+        "ritnet_enabled": bool(ritnet),
+        "ritnet_precision": ritnet.precision if ritnet else "disabled",
+        "ritnet_batch_size": batch_size if ritnet else 0,
+        "max_frames": args.max_frames,
+    }
+    run_id = hashlib.sha256(
+        json.dumps(
+            {"identity": run_identity, "phase_windows": window_dicts},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    completion_base = {
+        "schema_version": COMPLETION_SCHEMA_VERSION,
+        "run_id": run_id,
+        **run_identity,
+        "expected_frames": len(expected_keys),
+        "processed_frames": 0,
+        "decoded_frames": 0,
+        "video_read_failure_count": 0,
+        "missing_expected_frame_count": len(expected_keys),
+        "unexpected_frame_count": 0,
+        "truncated_for_smoke_test": False,
+        "partial_phase_selection": not is_full_phase_run,
+        "required_artifacts": list(REQUIRED_ARTIFACTS),
+        "started_at_utc": started_at_utc,
+        "finished_at_utc": None,
+    }
+    write_completion(out, {**completion_base, "status": "running"})
+
     (out / "phase_windows.json").write_text(
-        json.dumps([window.to_dict() for window in windows], ensure_ascii=False, indent=2),
+        json.dumps(window_dicts, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
@@ -746,6 +849,8 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
 
     wall_started = time.perf_counter()
     read_failed = False
+    stop_requested = False
+    decoded_frames = 0
 
     try:
         for window in windows:
@@ -789,6 +894,8 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
                     frame_lookup[frame_key] = frame_row
                     read_failed = True
                     break
+
+                decoded_frames += 1
 
                 yolo_started = time.perf_counter()
                 detections = yolo_detect(model, frame, config, device)
@@ -919,6 +1026,10 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
                         analysis_size=analysis_size,
                     )
 
+                if args.max_frames and len(frame_rows) >= args.max_frames:
+                    stop_requested = True
+                    break
+
             _flush_formal_batch(
                 pending,
                 ritnet=ritnet,
@@ -929,7 +1040,7 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
                 rois=rois_path,
                 analysis_size=analysis_size,
             )
-            if read_failed:
+            if read_failed or stop_requested:
                 break
     finally:
         cap.release()
@@ -964,8 +1075,9 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
 
     summary = {
         "subject": subject,
-        "video": str(video),
+        "video": video_identity,
         "mode": "formal",
+        "inference_backend": backend,
         "focuswave_release": release,
         "phases": phases,
         "processed_frames": len(frame_rows),
@@ -981,6 +1093,7 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
         "frame_status_counts": _counts(row.get("status") for row in frame_rows),
         "eye_status_counts": _counts(row.get("status") for row in eye_rows),
         "phase_summary": phase_summary,
+        "truncated_for_smoke_test": bool(args.max_frames is not None),
     }
     (out / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2),
@@ -995,6 +1108,7 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
                 "config": config,
                 "effective_parameters": {
                     "mode": "formal",
+                    "inference_backend": backend,
                     "focuswave_release": release,
                     "min_subject_number": minimum,
                     "phases": phases,
@@ -1009,13 +1123,19 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
                     ],
                     "overlay_stride": overlay_stride,
                     "device": device,
+                    "max_frames": args.max_frames,
                 },
-                "phase_windows": [window.to_dict() for window in windows],
+                "phase_windows": window_dicts,
                 "python": sys.version,
                 "platform": platform.platform(),
                 "opencv": cv2.__version__,
                 "yolo_sha256": sha256(model_path),
                 "ritnet_sha256": sha256(ritnet_path),
+                "ritnet_external_data_sha256": (
+                    sha256(resolve_package_path(config["models"]["ritnet_onnx_external_data"]))
+                    if is_ort
+                    else None
+                ),
                 "cuda_available": _cuda_available(),
                 "timestamp_file": str(timestamp_path),
             },
@@ -1024,6 +1144,72 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
         ),
         encoding="utf-8",
     )
+
+    actual_keys = {
+        (str(row["phase"]), int(row["phase_segment"]), int(row["frame_idx"]))
+        for row in frame_rows
+    }
+    missing_expected = expected_keys - actual_keys
+    unexpected = actual_keys - expected_keys
+    failure_count = sum(row.get("status") == "video_read_failed" for row in frame_rows)
+    artifact_complete = (
+        not read_failed
+        and not stop_requested
+        and is_full_phase_run
+        and decoded_frames == len(expected_keys)
+        and len(frame_rows) == len(expected_keys)
+        and not missing_expected
+        and not unexpected
+        and failure_count == 0
+    )
+    final_payload = {
+        **completion_base,
+        "status": "running",
+        "processed_frames": len(frame_rows),
+        "decoded_frames": decoded_frames,
+        "video_read_failure_count": failure_count,
+        "missing_expected_frame_count": len(missing_expected),
+        "unexpected_frame_count": len(unexpected),
+        "truncated_for_smoke_test": bool(args.max_frames is not None),
+        "finished_at_utc": datetime.now(timezone.utc).isoformat(),
+    }
+
+    if read_failed:
+        final_payload["status"] = "failed"
+        write_completion(out, final_payload)
+        print(json.dumps({"output": str(out.resolve()), **summary}, ensure_ascii=False, indent=2))
+        return 3
+
+    if args.max_frames is not None or not is_full_phase_run:
+        final_payload["status"] = "smoke_complete"
+        write_completion(out, final_payload)
+        print(json.dumps({"output": str(out.resolve()), **summary}, ensure_ascii=False, indent=2))
+        return 0
+
+    if not artifact_complete:
+        final_payload["status"] = "failed"
+        write_completion(out, final_payload)
+        print(json.dumps({"output": str(out.resolve()), **summary}, ensure_ascii=False, indent=2))
+        return 4
+
+    write_completion(out, final_payload)
+    preflight = validate_completion(out, run_identity, accepted_statuses=("running",))
+    if not preflight.valid:
+        final_payload["status"] = "failed"
+        final_payload["validation_error"] = preflight.reason
+        write_completion(out, final_payload)
+        print(json.dumps({"output": str(out.resolve()), **summary}, ensure_ascii=False, indent=2))
+        return 4
+
+    final_payload["status"] = "complete"
+    write_completion(out, final_payload)
+    published = validate_completion(out, run_identity)
+    if not published.valid:
+        final_payload["status"] = "failed"
+        final_payload["validation_error"] = published.reason
+        write_completion(out, final_payload)
+        print(json.dumps({"output": str(out.resolve()), **summary}, ensure_ascii=False, indent=2))
+        return 4
     print(json.dumps({"output": str(out.resolve()), **summary}, ensure_ascii=False, indent=2))
     return 0
 
@@ -1067,6 +1253,8 @@ def check_environment(config: dict[str, Any]) -> int:
         "cuda_device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
         "yolo_model": str(resolve_package_path(config["models"]["yolo"])),
         "ritnet_model": str(resolve_package_path(config["models"]["ritnet"])),
+        "yolo_onnx_model": str(resolve_package_path(config["models"]["yolo_onnx"])),
+        "ritnet_onnx_model": str(resolve_package_path(config["models"]["ritnet_onnx"])),
         "formal_min_subject_number": int(config.get("formal", {}).get("min_subject_number", 31)),
         "formal_phases": config.get("formal", {}).get("phases", []),
         "ritnet_default_precision": config.get("ritnet", {}).get("precision", "fp32"),
@@ -1081,8 +1269,22 @@ def check_environment(config: dict[str, Any]) -> int:
     checks["models_exist"] = all(
         resolve_package_path(config["models"][key]).exists() for key in ("yolo", "ritnet")
     )
+    checks["onnx_models_exist"] = all(
+        resolve_package_path(config["models"][key]).exists()
+        for key in ("yolo_onnx", "ritnet_onnx", "ritnet_onnx_external_data")
+    )
+    try:
+        from onnx_cuda_runtime import _import_onnxruntime
+
+        ort = _import_onnxruntime()
+        checks["onnxruntime"] = ort.__version__
+        checks["onnxruntime_providers"] = list(ort.get_available_providers())
+    except Exception as exc:
+        checks["onnxruntime"] = str(exc)
     print(json.dumps(checks, ensure_ascii=False, indent=2))
-    return 0 if checks["models_exist"] else 2
+    if not checks["models_exist"]:
+        return 2
+    return 0 if checks["cuda_available"] else 3
 
 
 def _add_common_target_args(parser: argparse.ArgumentParser) -> None:
@@ -1114,7 +1316,13 @@ def parse_args() -> argparse.Namespace:
 
     formal_parser = sub.add_parser("formal")
     _add_common_target_args(formal_parser)
+    formal_parser.add_argument("--backend", choices=("pytorch-cuda", "ort-cuda"))
     formal_parser.add_argument("--ritnet-batch-size", type=int)
+    formal_parser.add_argument(
+        "--max-frames",
+        type=int,
+        help="Smoke-test limit; output is never accepted as a complete formal run",
+    )
     formal_parser.add_argument(
         "--phases",
         help="Comma-separated phases; default comes from config.yaml",

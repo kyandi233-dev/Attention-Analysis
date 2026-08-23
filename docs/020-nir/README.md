@@ -19,7 +19,7 @@ runtime/nir-formal/
 | 入口 | 作用 | 当前状态 |
 |---|---|---|
 | [08-23-01-NIR正式分析当前入口与资产映射.md](08-23-01-NIR正式分析当前入口与资产映射.md) | 当前 branch、runtime、模型、配置、运行命令与历史路径映射 | **当前正式入口** |
-| `runtime/nir-formal/` | 已用于正式全量分析的自包含 NVIDIA/CUDA runtime | **当前正式 runtime** |
+| `runtime/nir-formal/` | NVIDIA/CUDA package `1.0.1`；默认复现 PyTorch CUDA，可选 ORT CUDA FP32 短测 | **当前正式 runtime** |
 | `runtime/nir-formal/INSTALL.md` | 新电脑从零配置当前正式 runtime | **当前安装入口** |
 | `src/attention_pipeline/nir/` | 项目级 NIR 可复用源码及保留的历史评价逻辑 | 保留；不等同于正式 runtime |
 | `scripts/` | 仓库级可执行脚本 | 当前脚本入口见目录实际文件与根 README |

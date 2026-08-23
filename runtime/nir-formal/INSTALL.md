@@ -1,6 +1,6 @@
 # INSTALL｜NIR Formal Runtime
 
-本文件是 `runtime/nir-formal/` 在新的 NVIDIA/CUDA Windows 机器上的安装入口。当前正式分支为 `nvidia-cuda`；正式全量分析已经完成，本安装流程用于复现与迁移。
+本文件是 `runtime/nir-formal/` 在新的 NVIDIA/CUDA Windows 机器上的安装入口。当前正式分支为 `nvidia-cuda`，package version 为 `1.0.1`。
 
 ## 1. 获取当前分支
 
@@ -33,6 +33,12 @@ cd runtime\nir-formal
 pip install -r requirements.txt
 ```
 
+若需短测可选 ORT CUDA FP32 profile，另安装与当前 CUDA/PyTorch 兼容的 GPU 包：
+
+```powershell
+pip install onnxruntime-gpu==1.24.4
+```
+
 不要把根 `pyproject.toml` 的通用 Python 依赖误认为正式 CUDA runtime 的完整环境声明；GPU/PyTorch 后端由本 runtime 和目标机器共同决定。
 
 ## 3. 检查冻结资产
@@ -42,6 +48,9 @@ pip install -r requirements.txt
 ```text
 models/nir-eye-yolo26n-best.pt
 models/ritnet-best_model.pkl
+models/nir-eye-yolo26n-best.onnx
+models/ritnet-b16-fp32.onnx
+models/ritnet-b16-fp32.onnx.data
 ritnet/
 config.yaml
 run_pipeline.py
@@ -87,6 +96,12 @@ python run_formal_batch.py --dry-run
 python run_formal_batch.py
 ```
 
+仅在目标 NVIDIA 机器完成 CUDA EP 环境验收、短测和 parity 后才选择高速 profile：
+
+```powershell
+python run_formal_batch.py --backend ort-cuda
+```
+
 需要只跑少量被试时：
 
 ```powershell
@@ -111,6 +126,6 @@ python run_pipeline.py formal --video "<实际盘符>:\<数据根>\sub-033_\nir\
 
 ## 7. NVIDIA 基线与 AMD 分支边界
 
-NVIDIA/CUDA 仓库基线已经冻结为 package version `1.0.0`。仓库级 current baseline tests 与 runtime tests 的具体集合见根 `.github/workflows/ci.yml` 和 `tests/README.md`；新 NVIDIA 机器还应额外运行本页的 `check-env`、数据发现和 dry-run，确认该机器的 CUDA 与数据挂载环境。
+NVIDIA/CUDA 历史全量基线已由 `nvidia-v1.0.0` 冻结；当前完整性修复版为 `1.0.1`。仓库级 current baseline tests 与 runtime tests 的具体集合见根 `.github/workflows/ci.yml` 和 `tests/README.md`；新 NVIDIA 机器还应额外运行本页的 `check-env`、数据发现和 dry-run。
 
 AMD/DirectML 适配应从该 `1.0.0` NVIDIA 基线节点创建 `amd-DirectML`。AMD 分支可以修改设备后端、依赖和必要的 inference 适配，但不得反向改写已冻结 NVIDIA 正式分析参数和历史结果。

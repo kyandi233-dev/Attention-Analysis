@@ -1,5 +1,6 @@
 package:
   name: nir-formal
+  version: 1.0.1
   purpose: GPU formal NIR analysis runtime; diagnostic runner retained
 
 data:
@@ -17,6 +18,14 @@ data:
 models:
   yolo: "models/nir-eye-yolo26n-best.pt"
   ritnet: "models/ritnet-best_model.pkl"
+  yolo_onnx: "models/nir-eye-yolo26n-best.onnx"
+  ritnet_onnx: "models/ritnet-b16-fp32.onnx"
+  ritnet_onnx_external_data: "models/ritnet-b16-fp32.onnx.data"
+
+inference:
+  # Preserve the frozen CUDA/PyTorch baseline by default. Select ort-cuda
+  # explicitly only after parity and speed validation on the target NVIDIA GPU.
+  backend: pytorch-cuda
 
 yolo:
   confidence: 0.40
@@ -66,7 +75,8 @@ formal:
 batch:
   subjects:
     include: []
-    exclude: []
+    exclude:
+      - "sub-9504"
   device: "0"
   continue_on_error: true
   skip_completed: true

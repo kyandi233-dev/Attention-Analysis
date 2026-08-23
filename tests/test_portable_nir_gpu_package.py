@@ -13,11 +13,17 @@ def test_formal_runtime_has_required_entrypoints_and_assets():
         "config.yaml",
         "run_pipeline.py",
         "run_formal_batch.py",
+        "formal_completion.py",
+        "onnx_cuda_runtime.py",
+        "ritnet_onnx_runtime.py",
         "phase_windows.py",
         "ritnet_runtime.py",
         "requirements.txt",
         "models/nir-eye-yolo26n-best.pt",
         "models/ritnet-best_model.pkl",
+        "models/nir-eye-yolo26n-best.onnx",
+        "models/ritnet-b16-fp32.onnx",
+        "models/ritnet-b16-fp32.onnx.data",
     ]
     missing = [item for item in required if not (RUNTIME / item).exists()]
     assert not missing, f"formal NIR runtime is missing required assets: {missing}"
@@ -31,6 +37,11 @@ def test_formal_runtime_config_is_current_nvidia_baseline():
     assert config["tracking"]["method"] == "none"
     assert config["ritnet"]["batch_size"] == 16
     assert config["ritnet"]["precision"] == "fp32"
+    assert config["package"]["version"] == "1.0.1"
+    assert config["batch"]["subjects"]["exclude"] == ["sub-9504"]
+    assert config["inference"]["backend"] == "pytorch-cuda"
+    assert config["models"]["yolo_onnx"].endswith(".onnx")
+    assert config["models"]["ritnet_onnx"].endswith(".onnx")
 
 
 def test_deleted_tracking_runtime_is_not_current_package():
