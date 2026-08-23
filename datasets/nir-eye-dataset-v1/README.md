@@ -1,6 +1,54 @@
 # nir-eye-dataset-v1｜NIR 眼框训练数据集（两批分开）
 
-## 2026-08-21 训练与正式分析状态
+## 当前状态（2026-08-23）
+
+`nir-eye-dataset-v1` 是 NIR 眼框数据集 v1 的**冻结源数据 / 标注数据版本**，用于保留原始抽帧、两批实验环境、YOLO 标注及数据 provenance。
+
+当前状态：
+
+- 数据集 v1 已完成抽帧与眼框标注，共约 **47 个被试 / 575 张抽帧图片**。
+- `batch1` / `batch2` 的环境划分继续保留，用于记录不同采集条件，不因后续合并训练而删除。
+- 本数据集已经派生出仓库顶层的 `yolotrain/` 训练工作区；后者将两批数据合并，并按被试进行固定的 train / val / test 划分。
+- `datasets/nir-eye-dataset-v1/manifests/split_subject.csv` 与 `yolotrain/split_subjects.csv` 当前内容一致，Git blob SHA 均为 `38a48242d46ab40997e95664f3b22f593f8622e8`，说明训练工作区继承了 dataset v1 的被试级划分，而不是另行随机划分。
+- YOLO26n 眼睛检测器已经完成训练；最终权重位于 `yolotrain/weights/best.pt`。
+- 该 YOLO26n 模型已经进入后续 NIR pipeline，并已完成正式 NIR 全量分析。
+
+因此，本目录当前的主要职责不是继续充当“待训练工作区”，而是作为：
+
+```text
+冻结源数据 + 原始标注 + 环境批次信息 + 数据划分 provenance
+```
+
+训练过程、训练产物和最终权重由 `yolotrain/` 负责保存。
+
+## 与 `yolotrain/` 的关系
+
+```text
+datasets/nir-eye-dataset-v1/
+        ↓
+冻结源数据 + 原始标注 + batch provenance
+        ↓
+yolotrain/
+        ↓
+合并 batch1 / batch2
+按被试划分 train / val / test
+生成训练 manifest
+YOLO26n 训练
+        ↓
+yolotrain/weights/best.pt
+        ↓
+后续正式 NIR pipeline
+```
+
+`v1` 表示的是**数据集版本**，不是项目版本。后续如增加困难样本，可以建立新的数据集版本或追加版本，但不应覆盖本目录所记录的 v1 provenance。
+
+---
+
+# 历史记录
+
+以下内容保留 2026-08-19 至 2026-08-21 的数据构建、标注和训练规划记录。其计划性表述反映当时的研究阶段，**不代表当前项目仍处于训练准备或正式分析准备阶段**。
+
+## 2026-08-21 训练与正式分析状态（历史）
 
 > 2026-08-21 17:30（Asia/Shanghai）｜数据集 v1 已进入模型训练阶段；正式视频分析计划在 2026-08-23 晚回珠海后启动准备。
 
@@ -72,7 +120,7 @@ LabelImg 专用环境：`venv-labelimg`（Python 3.10，base=`D:\psychopy`）。
 4. 规则（08-17-02 §1）：单类 `eye`、不区分左右；框含眼裂/上下眼睑+少量眼周；闭眼仍标；无眼不标框并在 `annotations.csv` 记 `no_eye`。
 5. 完成后把 `images/ + labels_yolo/` 回传本机（或整目录拷回）。
 
-## 训练（后续审批）
+## 训练（当时规划，历史）
 
 - 两批各自训练：`yolo11n.pt`（对照 `yolov8n.pt`），`data=dataset_batch{1,2}.yaml`，NIR 灰度复制 3 通道，`imgsz` 先试 1280（CPU 慢可降 640/960）。
 - 按 `split_subject.csv` 的被试划分评测；最终按 mAP + PuReST 下游（检出率/连续性）选模型。
