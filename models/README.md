@@ -30,7 +30,7 @@ models/
 YOLO26n 眼框训练产物：
 
 ```text
-../yolotrain/runs/yolo26n_eye_100epoch/weights/best.pt
+../training/nir-eye-yolo/runs/yolo26n_eye_100epoch/weights/best.pt
 ```
 
 正式 runtime 使用的冻结副本：
