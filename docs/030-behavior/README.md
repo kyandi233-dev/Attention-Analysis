@@ -10,10 +10,21 @@
 
 ## 当前数据位置
 
-正式数据在两台机器上使用相同目录结构，已确认数据根为 `E:/正式实验` 与 `F:/正式实验`。典型最终 BB 被试目录如下：
+正式原始数据在逻辑上位于两个目录：`正式实验` 与 `Data`。它们位于两块外接存储设备上，而 Windows 可能根据连接顺序把两块盘分配为 `E:` 或 `F:`，因此 current Behavior 配置不把逻辑目录与固定盘符绑定，而是声明四个候选根：
 
 ```text
-E:/正式实验/sub-031_/
+E:/正式实验
+F:/正式实验
+E:/Data
+F:/Data
+```
+
+reader 会忽略不存在的候选根，并在所有有效根中发现正式被试。若同一被试的 `beh/` 目录同时存在于多个有效根，程序会直接报告重复数据，而不是按 roots 顺序静默选择一份。
+
+典型最终 BB 被试目录如下；前缀 `<active-root>` 表示当次实际挂载后有效的任一候选根：
+
+```text
+<active-root>/sub-031_/
 ├── beh/
 │   ├── esc_keypresses.csv
 │   ├── master_timeline.csv
@@ -26,7 +37,7 @@ E:/正式实验/sub-031_/
     └── sub-031_nir_timestamps.csv
 ```
 
-GPU 机器只把根目录换成 `F:/正式实验`，被试目录与内部文件结构保持相同。当前 BB behavior reader 直接使用两个正式 block CSV；`master_timeline.csv`、practice、summary 与 NIR timestamps 是后续时序对齐、QC 和跨模态分析的重要辅助数据，但不是当前 block-level SART 指标提取的替代文件。
+当前 BB behavior reader 直接使用两个正式 block CSV；`master_timeline.csv`、practice、summary 与 NIR timestamps 是后续时序对齐、QC 和跨模态分析的重要辅助数据，但不是当前 block-level SART 指标提取的替代文件。
 
 ## 历史 BBB
 
