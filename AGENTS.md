@@ -1,13 +1,13 @@
 # AGENTS.md｜Attention-Analysis 仓库规则
 
-> 2026-08-24 02:16（Asia/Shanghai）｜仓库已改名为 Attention-Analysis；当前默认维护分支为 `nvidia-cuda`，未来 AMD/DirectML 路线预留分支名 `amd-DirectML`。
+> 2026-08-24（Asia/Shanghai）｜仓库已改名为 Attention-Analysis；当前默认维护分支为 `nvidia-cuda`，后续 AMD/DirectML 路线使用 `amd-DirectML`。
 
 本文件是仓库级长期工作约束。项目当前已完成正式 NIR 全量分析；后续默认任务是结构整理、可复现维护、结果复核与必要的增量开发，不得重新把项目描述为“准备进入正式分析”。
 
 ## 当前状态
 
 - 当前唯一维护分支与 GitHub default：`nvidia-cuda`。
-- 未来 AMD/DirectML 路线预留分支名：`amd-DirectML`；实际开发开始前不创建空分支，也不把它描述为已实现。
+- AMD/DirectML 路线使用 `amd-DirectML`；从经过最终检查并冻结的 NVIDIA 基线节点创建，不从 tracking 历史路线继续。
 - 正式 NIR runtime：`runtime/nir-formal/`。
 - 正式 NIR 流程已经全量运行：FocusWave v3.1.3 phase windows → 逐帧 YOLO26n 眼框 → ROI → RITnet batch inference → 指标/QC 输出。
 - CSRT/KCF 等 ROI tracking 不属于当前正式主链；tracking 时代通过 Git 历史和 tag `v0.8-tracking` 追溯。
@@ -16,7 +16,7 @@
 - 正式 runtime 冻结最终实验阶段：FocusWave v3.1.3、正式被试编号下限 31、两个正式 B block。
 - 当前正式 Behavior 已按最终 v3.1.3 BB 建立：`configs/behavior_formal.yaml`、`scripts/sart_formal_analysis.py`、`src/attention_pipeline/behavior_formal/`。
 - 旧 v3.0 BBB SART 分析为历史版本，但用户要求保留可执行复现：`configs/sart_bbb_v3_0.yaml`、`scripts/sart_bbb_v3_0_analysis.py`、`src/attention_pipeline/behavior_bbb_v3_0/`。不得把它解释为当前正式口径。
-- 已确认正式实验数据根为 `E:/正式实验` 与 `F:/正式实验`，两台机器使用相同 `sub-XXX_/beh|nir|rgb|mmwave` 目录结构。
+- 正式原始数据分布在两个逻辑目录 `正式实验` 与 `Data`。由于两块外接存储设备在 Windows 下可能被分配为 `E:` 或 `F:`，current configs 使用 `E:/正式实验`、`F:/正式实验`、`E:/Data`、`F:/Data` 四个候选根，并在运行时忽略不存在的路径。
 - 正式分析输出放在仓库外独立分析目录，不把全量结果堆回 Git 仓库。
 
 ## 必读入口
@@ -73,8 +73,8 @@
 - `datasets/`：训练/标注数据资产与 provenance。
 - `training/nir-eye-yolo/`：YOLO 眼框训练工作区、固定划分与训练结果。
 - `runtime/nir-formal/`：当前正式可迁移 NIR 运行包，包含正式冻结权重、RITnet 运行源码和运行依赖说明。
-- `runtime/legacy/`：旧环境快照，仅供历史复现，不作为当前正式 runtime 依赖。
-- `configs/`：当前 BB 行为配置、历史 BBB 可执行配置和其他兼容配置；当前正式 NIR 使用 `runtime/nir-formal/config.yaml`。
+- `runtime/legacy/`：旧环境快照，仅供历史复现，不作为当前正式 runtime 依赖；未经用户针对性授权不删除。
+- `configs/`：当前 BB 行为配置、历史 BBB 可执行配置和其他历史兼容配置；当前正式 NIR 使用 `runtime/nir-formal/config.yaml`。
 - `tests/`：仓库级回归；`runtime/nir-formal/tests/`：正式运行包内部最小自检。
 - `venv-labelimg/`：当前暂保留的本机历史虚拟环境；未经用户明确许可不得删除。
 
@@ -83,7 +83,8 @@
 ## 运行与复现原则
 
 - 当前正式 NIR runtime 必须尽量自包含；换电脑时以 `runtime/nir-formal/INSTALL.md` 为安装入口，以 `runtime/nir-formal/README.md` 为运行与科研口径入口。
-- 不依赖个人电脑绝对路径作为唯一可复现机制；当前已确认 E/F 正式实验根可写在配置中，也应允许命令行/配置覆盖。
+- 不依赖个人电脑绝对路径作为唯一可复现机制；current configs 用四候选根解决 E/F 动态盘符，并允许命令行/配置覆盖。
+- 同一被试若在多个有效数据根中出现重复正式数据，不允许静默选取其中一份；应中止并明确报告重复位置。
 - 运行参数、模型权重和 phase 语义变化必须显式记录，不允许静默改变科研口径。
 - 准确率/QC 阶段不得用插值掩盖失败；观测、缺失、拒绝和插值保持可区分。
 - 当前行为分析必须与最终 v3.1.3 BB 实验数据一致；旧 BBB 仅用于历史复现，不能混入当前结果解释。
