@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from attention_pipeline.io import block_windows, load_timestamps, nearest_written_frame
 
@@ -19,6 +20,8 @@ def test_dropped_rows_do_not_consume_avi_position(tmp_path: Path):
 
 def test_historical_timeline_keeps_six_unbuffered_blocks(config):
     timeline = config.path_value("raw_root") / "sub-000_" / "beh" / "master_timeline.csv"
+    if not timeline.exists():
+        pytest.skip("historical preexperiment dataset is not mounted")
     windows = block_windows(timeline)
     assert [x["condition"] for x in windows] == ["A", "B", "C", "C", "B", "A"]
     assert all(x["start_ms"] < x["end_ms"] for x in windows)
