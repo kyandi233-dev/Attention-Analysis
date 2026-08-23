@@ -1,6 +1,6 @@
 ﻿# NIR
 
-## 2026-08-23 当前 NIR 状态
+## 2026-08-24 当前 NIR 状态
 
 正式 NIR 全量分析已经执行。当前有效入口不是早期 PuReST / faceparts 候选链，而是已经运行过的：
 
@@ -12,33 +12,32 @@ runtime/nir-formal/
 
 **当前首要入口：** [08-23-01-NIR正式分析当前入口与资产映射.md](08-23-01-NIR正式分析当前入口与资产映射.md)
 
-> 下方 08-16、08-17、08-21、08-22 内容按当时研究阶段保留。其中“候选 / 待实测 / 停止门 / 尚未全量”等措辞是历史状态，不代表 08-23 当前状态。
+> 下方 08-16、08-17、08-21、08-22 内容按当时研究阶段保留。其中“候选 / 待实测 / 停止门 / 尚未全量”等措辞是历史状态，不代表当前状态。
 
 ## 当前入口
 
 | 入口 | 作用 | 当前状态 |
 |---|---|---|
 | [08-23-01-NIR正式分析当前入口与资产映射.md](08-23-01-NIR正式分析当前入口与资产映射.md) | 当前 branch、runtime、模型、配置、运行命令与历史路径映射 | **当前正式入口** |
-| `runtime/nir-formal/` | 已用于正式全量分析的自包含 GPU runtime | **当前正式 runtime** |
+| `runtime/nir-formal/` | 已用于正式全量分析的自包含 NVIDIA/CUDA runtime | **当前正式 runtime** |
 | `runtime/nir-formal/INSTALL.md` | 新电脑从零配置当前正式 runtime | **当前安装入口** |
-| `src/attention_pipeline/nir/` | 项目级 NIR 可复用源码、历史评价与相关核心逻辑 | 保留 |
-| `scripts/00-目录与映射.md` | 可运行脚本、环境和入口→核心跳转 | 保留；本轮不整理 scripts |
+| `src/attention_pipeline/nir/` | 项目级 NIR 可复用源码及保留的历史评价逻辑 | 保留；不等同于正式 runtime |
+| `scripts/` | 仓库级可执行脚本 | 当前脚本入口见目录实际文件与根 README |
 | [08-22-04-NIR新电脑GPU环境配置与正式批处理运行指南.md](08-22-04-NIR新电脑GPU环境配置与正式批处理运行指南.md) | RTX 新电脑从零配置、CUDA/PyTorch/OpenCV/RITnet 排错过程 | 历史环境配置手册 |
 | [08-16-03-NIR历史多算法环境与迁移说明.md](08-16-03-NIR历史多算法环境与迁移说明.md) | 4 ROI × 4 pupil 阶段的环境/迁移说明 | 历史多算法部署手册 |
 
 ## 历史 08-16 核心入口
 
-| 入口 | 作用 | 当时状态 |
+以下内容描述 08-16 当时的研究状态。部分脚本、`artifacts/` 和候选模型后来已经从当前 `nvidia-cuda` 删除；表中路径用于理解历史记录，不表示 current branch 仍应存在这些资产。
+
+| 入口 | 作用 | 当时状态 / 当前追溯方式 |
 |---|---|---|
-| `scripts/roi_faceparts.py` | 特写专用 ROI：直接检测 eye bbox（不依赖完整人脸） | 当时新候选，待数据实测 |
+| `scripts/roi_faceparts.py` | 特写专用 ROI：直接检测 eye bbox（不依赖完整人脸） | 当时新候选；当前通过 Git/tag 追溯 |
 | [08-16-01-NIR特写ROI调研与选型.md](08-16-01-NIR特写ROI调研与选型.md) | 三后端全灭后调研 RITnet/DeepVOG/Iris/faceparts/自训练，选定 faceparts | 历史总结 |
 | [08-16-02-NIR算法封装与可移植.md](08-16-02-NIR算法封装与可移植.md) | 4 ROI + 4 瞳孔封装、画面分型、模型归集、迁移 | 历史总结 |
 | [08-16-03-NIR历史多算法环境与迁移说明.md](08-16-03-NIR历史多算法环境与迁移说明.md) | 当时完整多算法环境与跨机迁移说明 | 历史环境说明 |
-| `configs/formal.yaml` | 当时正式ROI与PuReST候选配置 | 历史配置；当时未冻结生产参数 |
-| `artifacts/truth-528/` | 528眼人工真值 | 保留供复测 |
-| `artifacts/benchmark-axis-fix-review/` | 轴角修复后的阶段4/4b复核 | 历史单帧复核 |
-| `artifacts/sequence-adapter-review/` | 新PuReST适配层历史序列复核 | 历史连续复核 |
-| `artifacts/roi-selection-sub011-block1-2min/` | 正式60时点与12组入围图 | 历史阻断证据 |
+| `configs/formal.yaml` | 当时正式 ROI 与 PuReST 候选配置 | 历史兼容配置；不是 current NIR config |
+| `artifacts/truth-528/` 等 | 当时人工真值、benchmark、sequence、ROI selection 阶段产物 | 当前 branch 已删除；由工作记录和 Git 历史追溯 |
 
 ## 工作记录跳转
 
@@ -57,11 +56,11 @@ runtime/nir-formal/
 
 ## 历史算法判断｜08-16
 
-- PuReST当时是瞳孔连续检测候选，PuRe用于抽样质控/诊断。
-- PuReST内部搜索不等于严格px控制；正式接受范围由Python后置门执行。
-- 原始椭圆`size/angle`用于绘图、mask和光度；canonical长短轴交换时角度同步旋转90°。
+- PuReST 当时是瞳孔连续检测候选，PuRe 用于抽样质控/诊断。
+- PuReST 内部搜索不等于严格 px 控制；正式接受范围由 Python 后置门执行。
+- 原始椭圆 `size/angle` 用于绘图、mask 和光度；canonical 长短轴交换时角度同步旋转 90°。
 - 每帧×眼别保留完整成功/失败行；插值只写副轨，不跨闭眼、无脸、ROI失败或断点。
-- 当时三种ROI失败的原因是输入域为双眼特写，而候选模型都以完整人脸为前提。
+- 当时三种 ROI 失败的原因是输入域为双眼特写，而候选模型都以完整人脸为前提。
 - faceparts 当时作为特写 ROI 新候选；训练域 RGB，与 NIR 存在域差。
 - 当时比较的瞳孔算法包括 PuReST / RITnet / DeepVOG / Iris。
 
