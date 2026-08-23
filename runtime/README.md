@@ -8,19 +8,27 @@
 runtime/nir-formal/
 ```
 
-`nir-formal/` 是已经用于正式全量 NIR 分析的自包含 GPU 运行包。换电脑时，优先直接复制或拉取这个目录，并按照其中的 `README.md` 和 `requirements.txt` 重新配置环境。
+`nir-formal/` 是已经用于正式全量 NIR 分析的自包含 GPU 运行包。换电脑时，优先直接复制或拉取这个目录。
+
+新电脑配置优先阅读：
+
+1. `nir-formal/INSTALL.md`：从零配置、PyTorch/CUDA 前置安装、迁移检查；
+2. `nir-formal/README.md`：正式分析口径、命令、phase、batch/precision 和输出说明。
 
 包内主要内容：
 
-- `README.md`：完整运行说明；
+- `INSTALL.md`：新电脑安装与迁移入口；
+- `README.md`：完整运行与科研口径说明；
 - `config.yaml`：FocusWave v3.1.3、YOLO26n、RITnet 与 batch 参数；
 - `run_pipeline.py`：单被试/诊断/正式分析入口；
 - `run_formal_batch.py`：多被试正式批处理；
 - `phase_windows.py`：正式 phase 时间窗；
 - `ritnet_runtime.py` 与 `ritnet/`：RITnet 运行逻辑；
 - `models/`：冻结的 YOLO26n 与 RITnet 权重；
-- `requirements.txt`：当前正式运行包依赖；
+- `requirements.txt`：除 GPU PyTorch/torchvision 外的当前运行依赖；
 - `tests/`、`SHA256SUMS.txt`：运行包校验与测试。
+
+PyTorch/torchvision 因 GPU 与 CUDA 构建相关，按 `INSTALL.md` 单独安装，不交给普通 `requirements.txt` 自动选择。
 
 ## Legacy
 
