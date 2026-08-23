@@ -9,20 +9,23 @@ runtime/nir-formal/config.yaml
 | 文件 | 用途 | 当前定位 |
 |---|---|---|
 | `preexperiment.yaml` | 预实验 v2 路径、被试、窗口、审批门与早期 NIR 门槛 | 历史预实验配置 |
-| `formal.yaml` | 08-16 阶段 NIR ROI / PuReST 候选链参数 | **历史兼容配置**；保留旧脚本/工作记录路径，不是当前正式 NIR 配置 |
-| `sart_formal.yaml` | 正式 SART 行为分析配置 | 当前行为分析配置 |
-| `../runtime/nir-formal/config.yaml` | FocusWave v3.1.3 + YOLO26n + RITnet 正式 NIR 运行配置 | **当前正式 NIR 配置** |
+| `formal.yaml` | 08-16 阶段 NIR ROI / PuReST 候选链参数 | 历史兼容配置，不是当前正式 NIR 配置 |
+| `sart_formal.yaml` | 2026-08-16 的 v3.0 BBB / sub-011~030 SART 分析配置 | **历史行为分析配置；不是最终 v3.1.3 BB 配置** |
+| `../runtime/nir-formal/config.yaml` | FocusWave v3.1.3 + YOLO26n + RITnet 正式 NIR 运行配置，并冻结最终正式阶段结构 | **当前正式运行配置** |
 
-## 为什么仍保留 `formal.yaml`
+## 当前行为版本边界
 
-`formal.yaml` 的文件名确实容易与当前正式 runtime 混淆，但仓库中的历史脚本、命令和工作记录已经大量引用 `configs/formal.yaml`。为保持研究过程可复现，本轮不强行重命名它，而是在文件头加入醒目的历史配置警告。
-
-判断当前 NIR 配置时，不看文件名中的 `formal`，而看运行入口：
+最终正式实验已在 runtime 中明确冻结：
 
 ```text
-当前正式 NIR  → runtime/nir-formal/config.yaml
-历史 ROI 诊断 → configs/formal.yaml
-正式 SART     → configs/sart_formal.yaml
+FocusWave v3.1.3
+min_subject_number: 31
+expected_formal_blocks: 2
+block1 + block2
 ```
 
-配置文件保留研究阶段差异；不要为了统一格式把历史参数改写成当前参数。
+因此当前没有一个已经完成审计的“最终 BB 行为分析配置”可以直接等同于旧 `sart_formal.yaml`。后续应先以最终数据核实每 block 试次数、No-Go 数、探针位置、实际被试集合与异常被试，再建立新的 current behavior config；不能只把旧配置中的 `BBB` 文本改成 `BB`。
+
+## 历史配置原则
+
+配置文件保留研究阶段差异，不为了统一格式追溯改写历史参数。历史脚本被删除后，旧配置仍可作为当时研究设计和工作记录的结构化 provenance；当前运行入口始终以对应模块 README 与 runtime 为准。
