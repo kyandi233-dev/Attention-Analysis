@@ -11,7 +11,9 @@
 - YOLO26n 100 epochs 训练产物：`training/nir-eye-yolo/runs/yolo26n_eye_100epoch/weights/best.pt`。
 - 正式 runtime 冻结模型：`runtime/nir-formal/models/nir-eye-yolo26n-best.pt` 与 `runtime/nir-formal/models/ritnet-best_model.pkl`。
 - 正式 runtime 冻结最终实验阶段：FocusWave v3.1.3、正式被试编号下限 31、两个正式 B block。
-- 旧 v3.0 BBB SART 分析包是历史结果，不是当前最终行为分析口径。
+- 当前正式 Behavior 已按最终 v3.1.3 BB 建立：`configs/behavior_formal.yaml`、`scripts/sart_formal_analysis.py`、`src/attention_pipeline/behavior_formal/`。
+- 旧 v3.0 BBB SART 分析为历史版本，但用户要求保留可执行复现：`configs/sart_bbb_v3_0.yaml`、`scripts/sart_bbb_v3_0_analysis.py`、`src/attention_pipeline/behavior_bbb_v3_0/`。不得把它解释为当前正式口径。
+- 已确认正式实验数据根为 `E:/正式实验` 与 `F:/正式实验`，两台机器使用相同 `sub-XXX_/beh|nir|rgb|mmwave` 目录结构。
 - 正式分析输出放在仓库外独立分析目录，不把全量结果堆回 Git 仓库。
 
 ## 必读入口
@@ -37,6 +39,7 @@
 - 移动、重命名和补充当前索引可以执行，但必须同步当前有效引用。
 - 删除、合并或覆盖其他历史内容必须先获得用户明确许可；已经单独授权的删除项除外。
 - 不为了目录“整齐”而改动算法逻辑、参数或正式分析结果。
+- 历史 BBB 可执行实现是用户明确要求保留的复现资产，不得在普通清理中删除；若未来确需删除，必须再次获得针对这些文件的明确授权。
 
 ## 命名与编号规则
 
@@ -52,7 +55,7 @@
 
 - `docs/010-overview/`：当前系统架构、模态关系、仓库资产与复现关系。
 - `docs/020-nir/`：NIR 当前方法、运行入口和该模态需要保留的历史说明。
-- `docs/030-behavior/`：行为分析入口；旧 v3.0 BBB SART 包作为历史结果保留，当前 BB 分析需按最终版本重建。
+- `docs/030-behavior/`：当前 v3.1.3 BB 行为分析入口；旧 v3.0 BBB 的报告、图和可执行复现边界在该目录的 `history/` 中说明。
 - `docs/040-rgb/`：RGB 保留接口与状态；当前关闭。
 - `docs/050-decisions/`：关键技术/研究决策。
 - `docs/工作记录/`：日期型实际执行过程与 provenance；原则上不追溯改写。
@@ -61,14 +64,14 @@
 
 ## 当前一级目录职责
 
-- `src/attention_pipeline/`：项目自身可复用 Python 源码。
-- `scripts/`：当前仓库级任务入口；已淘汰候选脚本不继续堆在主线。
+- `src/attention_pipeline/`：项目自身可复用 Python 源码；其中 `behavior_formal/` 是当前 BB，`behavior_bbb_v3_0/` 是明确冻结的历史 BBB 复现实现。
+- `scripts/`：当前仓库级任务入口，以及用户明确要求保留的少量历史可执行入口；已淘汰算法候选脚本不继续堆在主线。
 - `tools/`：独立辅助工具，不属于 `attention_pipeline` Python 包。
 - `datasets/`：训练/标注数据资产与 provenance。
 - `training/nir-eye-yolo/`：YOLO 眼框训练工作区、固定划分与训练结果。
 - `runtime/nir-formal/`：当前正式可迁移 NIR 运行包，包含正式冻结权重、RITnet 运行源码和运行依赖说明。
 - `runtime/legacy/`：旧环境快照，仅供历史复现，不作为当前正式 runtime 依赖。
-- `configs/`：仓库级预实验/历史配置；当前正式 NIR 使用 `runtime/nir-formal/config.yaml`。
+- `configs/`：当前 BB 行为配置、历史 BBB 可执行配置和其他兼容配置；当前正式 NIR 使用 `runtime/nir-formal/config.yaml`。
 - `tests/`：仓库级回归；`runtime/nir-formal/tests/`：正式运行包内部最小自检。
 - `venv-labelimg/`：当前暂保留的本机历史虚拟环境；未经用户明确许可不得删除。
 
@@ -77,7 +80,7 @@
 ## 运行与复现原则
 
 - 当前正式 NIR runtime 必须尽量自包含；换电脑时以 `runtime/nir-formal/INSTALL.md` 为安装入口，以 `runtime/nir-formal/README.md` 为运行与科研口径入口。
-- 不依赖个人电脑绝对路径作为唯一可复现机制；绝对数据根目录应由配置或命令行覆盖。
+- 不依赖个人电脑绝对路径作为唯一可复现机制；当前已确认 E/F 正式实验根可写在配置中，也应允许命令行/配置覆盖。
 - 运行参数、模型权重和 phase 语义变化必须显式记录，不允许静默改变科研口径。
 - 准确率/QC 阶段不得用插值掩盖失败；观测、缺失、拒绝和插值保持可区分。
-- 当前行为分析必须与最终 v3.1.3 BB 实验数据一致；在重新审计前，不得把旧 BBB 分析结果冒充最终正式行为分析。
+- 当前行为分析必须与最终 v3.1.3 BB 实验数据一致；旧 BBB 仅用于历史复现，不能混入当前结果解释。

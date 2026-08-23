@@ -8,7 +8,7 @@
 |---|---|
 | 整个项目现在是什么、模块如何连接 | [010-overview/](010-overview/) |
 | NIR 当前方法、运行入口与历史路线 | [020-nir/](020-nir/) |
-| 行为分析与正式 SART 报告 | [030-behavior/](030-behavior/) |
+| 当前 BB 行为分析与历史 BBB | [030-behavior/](030-behavior/) |
 | RGB 保留接口与当前状态 | [040-rgb/](040-rgb/) |
 | 为什么采纳/放弃某条技术路线 | [050-decisions/](050-decisions/) |
 | 某一天实际做了什么 | [工作记录/](工作记录/) |
@@ -16,7 +16,7 @@
 ## 当前模块状态
 
 - **NIR**：正式全量分析已完成；正式主链为 FocusWave v3.1.3 phase windows → 逐帧 YOLO26n → ROI → RITnet batch inference。
-- **Behavior**：正式 SART 分析资产统一归到 `030-behavior/`；原正式报告包完整保留在其 `sart-formal/` 子目录。
+- **Behavior**：当前正式实现已经按 FocusWave v3.1.3 的 B1/B2 两-block 结构建立；旧 v3.0 BBB 报告与可执行复现独立保存在 `030-behavior/history/BBB-v3.0/` 及对应历史脚本/源码中。
 - **RGB**：接口保留但当前关闭。
 - **Cross-modal**：不再单独建立空壳目录；当前状态记录在 `010-overview/012-模态结构与当前状态.md`，真正形成独立实现后再升级为模块。
 
