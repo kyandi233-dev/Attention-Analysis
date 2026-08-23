@@ -7,7 +7,7 @@
 - 当前整理主线：`main`。
 - 正式 NIR runtime：`runtime/nir-formal/`。
 - 正式 NIR 流程已经全量运行：FocusWave v3.1.3 phase windows → 逐帧 YOLO26n 眼框 → ROI → RITnet batch inference → 指标/QC 输出。
-- YOLO26n 100 epochs 训练产物：`yolotrain/runs/yolo26n_eye_100epoch/weights/best.pt`。
+- YOLO26n 100 epochs 训练产物：`training/nir-eye-yolo/runs/yolo26n_eye_100epoch/weights/best.pt`。
 - 正式 runtime 内冻结副本：`runtime/nir-formal/models/nir-eye-yolo26n-best.pt`。
 - 正式分析输出放在仓库外独立分析目录，不把全量结果堆回 Git 仓库。
 
@@ -44,9 +44,10 @@
 - `src/attention_pipeline/`：项目自身可复用 Python 源码。
 - `scripts/`：命令入口、诊断与历史比较脚本。
 - `tools/`：独立辅助工具，不属于 `attention_pipeline` Python 包。
-- `datasets/`：训练/标注数据资产。
-- `yolotrain/`：YOLO 训练工作区与训练结果。
-- `models/`：第三方、历史和候选模型资源。
+- `datasets/`：原始训练/标注数据资产。
+- `training/nir-eye-yolo/`：YOLO 眼框训练工作区、固定划分与训练结果。
+- `models/external/`：第三方源码/算法仓库。
+- `models/pretrained/`：独立预训练模型文件。
 - `runtime/nir-formal/`：当前正式可迁移 NIR 运行包，包含正式冻结权重和运行依赖说明。
 - `runtime/legacy/`：旧环境快照，仅供历史复现，不作为当前正式 runtime 依赖。
 - `artifacts/`：已提交的历史评估/QC/审批证据，不是正式全量输出。
