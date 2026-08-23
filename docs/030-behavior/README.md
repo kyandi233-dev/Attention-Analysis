@@ -4,56 +4,34 @@
 
 ## 当前正式版本
 
-当前正式实验以 FocusWave **v3.1.3** 为准，正式任务结构为两个 B block：
+当前正式实验以 FocusWave **v3.1.3** 为准，正式 SART 结构为两个 B block：
 
 ```text
 B1 → B2
 ```
 
-行为分析代码位于：
+当前代码与配置：
 
-```text
-src/attention_pipeline/behavior_formal/
-```
+- `configs/behavior_formal.yaml`
+- `scripts/sart_formal_analysis.py`
+- `src/attention_pipeline/behavior_formal/`
 
-运行入口：
-
-```text
-scripts/sart_formal_analysis.py
-```
-
-当前配置：
-
-```text
-configs/behavior_formal.yaml
-```
-
-详细说明按顺序阅读：
+当前说明按顺序阅读：
 
 - `031-正式BB行为分析流程.md`
 - `032-行为指标定义.md`
 - `033-统计分析方法.md`
 - `034-行为QC与输出.md`
 
-## 历史版本
+旧 v3.0 BBB 的三 block 统计、B1↔B3、sub-011~030 队列和旧结果均不属于当前正式分析。
 
-`history-bbb-v3.0/` 保存 2026-08-16 阶段的 v3.0 BBB 分析 bundle，包括旧计划、旧报告、PDF、图和当时的工作记录。它们用于历史追溯，不是当前正式分析入口。
+## 历史材料
 
-旧 BBB 可执行状态另外冻结在 Git 分支：
+历史材料统一放在 `history/`，不再与当前说明并排竞争：
 
-```text
-history/behavior-bbb-v3.0
-```
+- `history/BBB-v3.0/`：2026-08-16 的 BBB 分析计划、报告、图和冻结旧配置；
+- `history/preformal/`：最终正式实验确定前的行为实验修改建议、图和统计审计。
 
-因此 current `main` 不需要同时维护 BBB 和 BB 两套可执行分析。
+旧 BBB 的原工作记录已经移入统一的 `docs/工作记录/08-16-08-SART-v3.0-BBB行为分析工作记录.md`，正文保持原样。完整旧 BBB 可执行代码另由 `history/behavior-bbb-v3.0` 分支冻结。
 
-## 版本边界
-
-当前正式 BB cohort 与 NIR formal runtime 使用同一版本边界：
-
-- FocusWave release：v3.1.3
-- 被试编号下限：31
-- formal blocks：2
-- block：B1、B2
-
-仓库当前没有提交正式行为 CSV，因此被试总数、异常被试、实际每 block trial / No-Go / probe 数不在配置中凭旧 BBB 结果写死。runner 会从正式数据根目录发现被试，并从实际文件做一致性校验。
+因此本目录不再设置 `sart-formal/` 子层：`030-behavior/` 本身就是行为模块，当前正式文档直接放在这里；只有退出当前主线的材料进入 `history/`。
