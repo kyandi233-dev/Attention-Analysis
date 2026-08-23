@@ -4,9 +4,10 @@
 
 ## 当前状态
 
-- 当前整理主线：`main`。
+- 当前唯一维护主线：`main`。
 - 正式 NIR runtime：`runtime/nir-formal/`。
 - 正式 NIR 流程已经全量运行：FocusWave v3.1.3 phase windows → 逐帧 YOLO26n 眼框 → ROI → RITnet batch inference → 指标/QC 输出。
+- CSRT/KCF 等 ROI tracking 仅保留用于诊断与历史复现，不属于当前正式主链。
 - YOLO26n 100 epochs 训练产物：`training/nir-eye-yolo/runs/yolo26n_eye_100epoch/weights/best.pt`。
 - 正式 runtime 内冻结副本：`runtime/nir-formal/models/nir-eye-yolo26n-best.pt`。
 - 正式分析输出放在仓库外独立分析目录，不把全量结果堆回 Git 仓库。
@@ -16,12 +17,13 @@
 开始仓库工作前优先读取：
 
 1. `README.md`
-2. `项目总览与架构.md`
-3. `docs/README.md`
+2. `docs/README.md`
+3. `docs/010-overview/README.md`
 4. 对应模块目录的 `README.md`
 5. `runtime/nir-formal/README.md`（涉及正式 NIR 运行口径）
 6. `runtime/nir-formal/INSTALL.md`（涉及新电脑安装/迁移）
-7. 最新日期型工作记录（仅在需要追溯决策时）
+7. `docs/050-decisions/`（涉及路线变化或采纳/放弃理由）
+8. 最新日期型工作记录（仅在需要追溯执行过程时）
 
 历史文档中的“候选 / 待准入 / 准备全量 / 尚未冻结”等表述只代表当时状态；当前状态以上述入口为准。
 
@@ -32,30 +34,42 @@
 - 删除、合并或覆盖历史内容必须先获得用户明确许可；已经单独授权的删除项除外。
 - 不为了目录“整齐”而改动算法逻辑、参数或正式分析结果。
 
-## 命名规则
+## 命名与编号规则
 
-- 仓库和子目录的导航/说明文件统一使用 `README.md`，不再用 `00-目录与映射.md` 只为排序。
-- 独立文档不使用无语义的 `000-` / `00-` 前缀。
-- 只有确实表达阶段、阅读顺序、实验顺序或日期的文件才保留数字前缀。
-- 日期型历史工作记录保持既有命名，不批量美化。
+- 数字编号主要用于 `docs/` 中需要人工阅读的说明文档，用来表达所属模块、阅读顺序、来源位置和快速定位。例如 `021-...` 属于 NIR，`051-...` 属于 decisions。
+- `README.md` 是目录入口，不编号。
+- 日期型历史工作记录保留日期命名；日期本身就是其时间顺序和 provenance，不批量改成模块编号。
+- Python、PowerShell、配置、测试、模型、数据文件和普通运行脚本默认**不加数字前缀**。只有文件本身存在真实运行顺序、阶段顺序或明确重要性顺序时才编号。
+- 不使用 `00-`、`000-` 仅仅为了让文件排在前面；无顺序逻辑的目录说明统一使用 `README.md`。
 - `scripts/` 当前保持扁平，不为分类而拆目录。
 
-## 目录职责
+## docs 结构与职责
+
+- `docs/010-overview/`：当前系统架构、模态关系、仓库资产与复现关系；回答“现在是什么、怎么连接”。
+- `docs/020-nir/`：NIR 当前方法、运行入口和该模态需要保留的历史说明。
+- `docs/030-behavior/`：行为分析入口；正式 SART 报告包统一挂在该模块下。
+- `docs/040-rgb/`：RGB 保留接口与状态；当前关闭。
+- `docs/050-decisions/`：关键技术/研究决策；回答“为什么这样选、后来为什么替代”。
+- `docs/工作记录/`：日期型实际执行过程与 provenance；原则上不追溯改写。
+- Cross-modal 当前只作为系统关系与未来接口记录在 overview；真正形成独立实现、配置和多份说明后再升级为独立模块。
+
+当前方法只保留一个 canonical 说明位置；其他文档需要提及时链接过去，不复制第二份“当前版本”。
+
+## 其他目录职责
 
 - `src/attention_pipeline/`：项目自身可复用 Python 源码。
 - `scripts/`：命令入口、诊断与历史比较脚本。
-- `tools/`：独立辅助工具，不属于 `attention_pipeline` Python 包；`tools/labelimg/` 保存可重建的 LabelImg 标注环境定义与补丁。
-- `datasets/`：原始训练/标注数据资产。
+- `tools/`：独立辅助工具，不属于 `attention_pipeline` Python 包。
+- `datasets/`：原始训练/标注数据资产与 provenance。
 - `training/nir-eye-yolo/`：YOLO 眼框训练工作区、固定划分与训练结果。
-- `models/external/`：第三方源码/算法仓库。
+- `models/external/`：第三方完整源码/算法仓库。
 - `models/historical/`：曾参与历史候选/比较、但不属于当前正式 NIR pipeline 的独立模型文件。
 - `runtime/nir-formal/`：当前正式可迁移 NIR 运行包，包含正式冻结权重和运行依赖说明。
 - `runtime/legacy/`：旧环境快照，仅供历史复现，不作为当前正式 runtime 依赖。
-- `artifacts/`：已提交的历史评估/QC/审批证据，不是正式全量输出；当前有意保持扁平。
-- `docs/`：方法、架构、决策、模态文档和历史工作记录。
-- `configs/`：仓库级行为/历史配置；当前正式 NIR 使用 `runtime/nir-formal/config.yaml`，`configs/formal.yaml` 仅为历史兼容配置。
+- `artifacts/`：已提交的历史评估/QC/审批证据，不是正式全量输出。
+- `configs/`：仓库级行为/历史配置；当前正式 NIR 使用 `runtime/nir-formal/config.yaml`。
 - `tests/`：仓库级回归；`runtime/nir-formal/tests/`：正式运行包内部最小自检。
-- `venv-labelimg/`：当前暂保留的本机历史虚拟环境；不视为长期可移植资产，未经用户明确许可不得删除。
+- `venv-labelimg/`：当前暂保留的本机历史虚拟环境；未经用户明确许可不得删除。
 
 ## 运行与复现原则
 
