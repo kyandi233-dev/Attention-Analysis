@@ -1,0 +1,59 @@
+pipeline:
+  name: attention-analysis-behavior-formal
+  version: 1.0.0
+  focuswave_release: "v3.1.3"
+  timezone: Asia/Shanghai
+  random_seed: 20260824
+
+data:
+  roots:
+    - "F:/正式实验"
+    - "E:/Data"
+  min_subject_number: 31
+  include: []
+  exclude: []
+  behavior_dir: "beh"
+
+paths:
+  output_root: "outputs/behavior-formal"
+
+formal:
+  expected_blocks: 2
+  blocks:
+    - number: 1
+      condition: "B"
+    - number: 2
+      condition: "B"
+
+validation:
+  expected_trials_per_block: null
+  expected_nogo_per_block: null
+  expected_probes_per_block: null
+  require_cross_subject_count_consistency: true
+  require_probe_position_consistency: false
+  timestamp_tolerance_ms: 25
+
+behavior:
+  cycle_bins: 6
+  rt_cv_min_n: 20
+  rt_qc_ms:
+    very_early: 100
+    early: 150
+    long: 1000
+    beyond_nominal: 1150
+  # Preserve raw probe codes. Final v3.1.3 label text must be verified
+  # against the final task source before adding semantic labels here.
+  probe_preceding_go_trials: 8
+
+stats:
+  bootstrap_iterations: 20000
+  seed: 20260824
+  main_metrics:
+    - commission_rate
+    - omission_rate
+    - dprime_loglinear
+    - c
+    - beta
+    - go_rt_median_ms
+    - rt_cv
+    - exg_tau
