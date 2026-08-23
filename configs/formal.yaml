@@ -7,16 +7,16 @@
 paths:
   formal_data_root: "E:/正式实验"  # 数据盘路径，新设备需改；其余模型路径均相对 v2 根，自包含可移植
   roi_selection_artifact_root: "artifacts/roi-selection-sub011-block1-2min"
-  # ROI 定位后端权重（相对 v2 根，config.path_value 自动 resolve 到 <v2>/models/）
-  face_landmarker_model: "models/face_landmarker.task"
-  yunet_model: "models/yunet_2023mar.onnx"
-  yolo_model: "models/yolov8n-face.onnx"
-  faceparts_model: "models/yolo-face-parts-detector-main/weights/yolov8n.pt"
-  faceparts_model_small: "models/yolo-face-parts-detector-main/weights/yolov8s.pt"
+  # ROI 定位后端权重（相对 v2 根，config.path_value 自动 resolve）
+  face_landmarker_model: "models/pretrained/face_landmarker.task"
+  yunet_model: "models/pretrained/yunet_2023mar.onnx"
+  yolo_model: "models/pretrained/yolov8n-face.onnx"
+  faceparts_model: "models/external/yolo-face-parts-detector/weights/yolov8n.pt"
+  faceparts_model_small: "models/external/yolo-face-parts-detector/weights/yolov8s.pt"
   # 瞳孔分析算法权重
-  ritnet_model: "models/RITnet-master/best_model.pkl"
-  deepvog_weights: "models/DeepVOG-master/deepvog/model/DeepVOG_weights.h5"
-  deepvog3d_weights: "models/DeepVOG-master/deepvog/model/DeepVOG3D_weights.h5"
+  ritnet_model: "models/external/ritnet/best_model.pkl"
+  deepvog_weights: "models/external/deepvog/deepvog/model/DeepVOG_weights.h5"
+  deepvog3d_weights: "models/external/deepvog/deepvog/model/DeepVOG3D_weights.h5"
 
 runtimes:
   main_python: "D:/Code/python/python.exe"
