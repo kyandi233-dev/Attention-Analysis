@@ -17,12 +17,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-nir = ["mediapipe>=0.10"]
 test = ["pytest>=8.0"]
-
-[project.scripts]
-attention-analysis = "attention_pipeline.cli:main"
-attention-pipeline = "attention_pipeline.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
