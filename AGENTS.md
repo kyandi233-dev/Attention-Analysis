@@ -7,7 +7,7 @@
 - 当前唯一维护主线：`main`。
 - 正式 NIR runtime：`runtime/nir-formal/`。
 - 正式 NIR 流程已经全量运行：FocusWave v3.1.3 phase windows → 逐帧 YOLO26n 眼框 → ROI → RITnet batch inference → 指标/QC 输出。
-- CSRT/KCF 等 ROI tracking 仅保留用于诊断与历史复现，不属于当前正式主链。
+- CSRT/KCF 等 ROI tracking 不属于当前正式主链；旧 tracking 时代完整仓库快照保存在 `history/tracking-era-2026-08`。
 - YOLO26n 100 epochs 训练产物：`training/nir-eye-yolo/runs/yolo26n_eye_100epoch/weights/best.pt`。
 - 正式 runtime 内冻结副本：`runtime/nir-formal/models/nir-eye-yolo26n-best.pt`。
 - 正式分析输出放在仓库外独立分析目录，不把全量结果堆回 Git 仓库。
@@ -61,18 +61,18 @@
 ## 其他目录职责
 
 - `src/attention_pipeline/`：项目自身可复用 Python 源码。
-- `scripts/`：命令入口、诊断与历史比较脚本。
+- `scripts/`：命令入口、诊断与历史比较脚本。历史脚本可能依赖已经从当前 `main` 删除的旧模型资产，因此必须以 `scripts/README.md` 的状态说明为准，不能默认都可直接运行。
 - `tools/`：独立辅助工具，不属于 `attention_pipeline` Python 包。
 - `datasets/`：原始训练/标注数据资产与 provenance。
 - `training/nir-eye-yolo/`：YOLO 眼框训练工作区、固定划分与训练结果。
-- `models/external/`：第三方完整源码/算法仓库。
-- `models/historical/`：曾参与历史候选/比较、但不属于当前正式 NIR pipeline 的独立模型文件。
-- `runtime/nir-formal/`：当前正式可迁移 NIR 运行包，包含正式冻结权重和运行依赖说明。
+- `models/`：模型资产注册与来源说明；当前正式权重不从这里读取。
+- `runtime/nir-formal/`：当前正式可迁移 NIR 运行包，包含正式冻结权重、RITnet 必要源码和运行依赖说明。
 - `runtime/legacy/`：旧环境快照，仅供历史复现，不作为当前正式 runtime 依赖。
-- `artifacts/`：已提交的历史评估/QC/审批证据，不是正式全量输出。
-- `configs/`：仓库级行为/历史配置；当前正式 NIR 使用 `runtime/nir-formal/config.yaml`。
+- `configs/`：仓库级行为/历史配置；当前正式 NIR 使用 `runtime/nir-formal/config.yaml`。历史配置可能保留已删除旧资产路径，仅作 provenance。
 - `tests/`：仓库级回归；`runtime/nir-formal/tests/`：正式运行包内部最小自检。
 - `venv-labelimg/`：当前暂保留的本机历史虚拟环境；未经用户明确许可不得删除。
+
+`artifacts/` 已于 08-23 在用户明确授权下从当前 `main` 删除。其内容属于已退出路线的阶段性输出；删除决策和原用途保留在 `docs/工作记录/` 与 Git 历史中，不再作为当前仓库一级资产。
 
 ## 运行与复现原则
 
