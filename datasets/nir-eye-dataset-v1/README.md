@@ -10,7 +10,7 @@
 - `batch1` / `batch2` 的环境划分继续保留，用于记录不同采集条件，不因后续合并训练而删除。
 - 本数据集已经派生出仓库顶层的 `yolotrain/` 训练工作区；后者将两批数据合并，并按被试进行固定的 train / val / test 划分。
 - `datasets/nir-eye-dataset-v1/manifests/split_subject.csv` 与 `yolotrain/split_subjects.csv` 当前内容一致，Git blob SHA 均为 `38a48242d46ab40997e95664f3b22f593f8622e8`，说明训练工作区继承了 dataset v1 的被试级划分，而不是另行随机划分。
-- YOLO26n 眼睛检测器已经完成训练；最终权重位于 `yolotrain/weights/best.pt`。
+- YOLO26n 眼睛检测器已经完成训练；当前 GitHub 分支中最终训练权重位于 `yolotrain/runs/yolo26n_eye_100epoch/weights/best.pt`。
 - 该 YOLO26n 模型已经进入后续 NIR pipeline，并已完成正式 NIR 全量分析。
 
 因此，本目录当前的主要职责不是继续充当“待训练工作区”，而是作为：
@@ -35,7 +35,7 @@ yolotrain/
 生成训练 manifest
 YOLO26n 训练
         ↓
-yolotrain/weights/best.pt
+yolotrain/runs/yolo26n_eye_100epoch/weights/best.pt
         ↓
 后续正式 NIR pipeline
 ```
