@@ -23,7 +23,7 @@ models/nir-eye-yolo26n-best.pt
 models/ritnet-best_model.pkl
 ```
 
-当前 NVIDIA/CUDA 维护分支为 `nvidia-cuda`。AMD/DirectML 版本应从经过最终检查并冻结的 NVIDIA 基线节点创建独立 `amd-DirectML` 分支，不直接修改本 runtime 的既有 CUDA 复现口径。
+当前 NVIDIA/CUDA 维护分支为 `nvidia-cuda`，仓库基线版本为 `1.0.0`。AMD/DirectML 版本应从该冻结 NVIDIA 基线节点创建独立 `amd-DirectML` 分支，不直接修改本 runtime 的既有 CUDA 复现口径。
 
 ## 正式原始数据发现
 
@@ -45,7 +45,7 @@ F:/Data
 新 NVIDIA/CUDA 机器从 [`INSTALL.md`](INSTALL.md) 开始。安装完成后，在本目录执行：
 
 ```powershell
-pytest -q
+python -m pytest tests -q
 python run_pipeline.py check-env
 ```
 
@@ -120,17 +120,21 @@ outputs/formal
 
 ## 最小验收
 
-在准备冻结 NVIDIA 基线或从其创建平台分支前，至少检查：
+准备从 NVIDIA `1.0.0` 基线创建平台分支，或在新机器上复现时，仓库级 current baseline 与 runtime 自检应分开执行。根仓库 current baseline 使用与 `.github/workflows/ci.yml` 相同的可移植测试集合：
 
 ```powershell
 # repo root
-pytest -q
+python -m pytest -q tests/test_behavior_formal_bb.py tests/test_current_data_roots.py tests/test_formal_nir.py tests/test_io.py tests/test_nir.py tests/test_portable_nir_gpu_package.py
+python -m pytest runtime/nir-formal/tests -q
+```
 
-# runtime/nir-formal
-pytest -q
+在实际 NVIDIA/CUDA 机器并挂载正式数据盘后，再执行环境/数据验收：
+
+```powershell
+cd runtime\nir-formal
 python run_pipeline.py check-env
 python run_pipeline.py discover --formal-only
 python run_formal_batch.py --dry-run
 ```
 
-其中最后两项需要正式数据盘实际挂载；`check-env` 需要 NVIDIA/CUDA 环境可用。任何重复被试、模型缺失或环境后端错误都应显式失败，不用插值或默认路径掩盖。
+最后三项依赖目标机器的 GPU/CUDA 与正式数据盘，不属于干净 CI 能模拟的项目级测试。任何重复被试、模型缺失或环境后端错误都应显式失败，不用插值或默认路径掩盖。
