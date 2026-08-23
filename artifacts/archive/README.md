@@ -1,59 +1,36 @@
-﻿# 00｜finish —— 已完成工作产物归档
+# archive｜已封存历史证据
 
-## 当前定位（2026-08-23）
+## 当前定位
 
-`finish/` 是 **2026-08-16 及更早阶段** 已完成过程证据的历史归档区，不是当前正式 NIR 全量输出目录，也不是当前 active runtime。
+`artifacts/archive/` 原名 `finish/`，保存 **2026-08-16 及更早阶段** 已经结论确定、主要用于历史追溯的过程证据。它不是当前正式 NIR 全量输出目录，也不是当前 runtime。
 
-目录中的 Gate1、preview、ROI compare 和 smoke test 解释了当时为什么从完整人脸 ROI 路线继续转向专用眼部 ROI。后来项目已经发展到 NIR 专用 YOLO26n + tracking + RITnet，并完成正式全量分析，因此下面“新 ROI 定稿后”“下一轮”等措辞应按 08-16 的历史时间点理解。
+这些 Gate1、preview、ROI compare 和 smoke test 解释了当时为什么从完整人脸 ROI 路线继续转向专用眼部 ROI。后来项目已经发展到 NIR 专用 YOLO26n + tracking + RITnet，并完成正式全量分析。
 
-当前活动/复现入口分别为：
+## 已封存内容
+
+| 目录 | 内容 | 历史用途 |
+|---|---|---|
+| `gate1-24eyes/` | 12 帧 / 24 眼审批包与人工标注 | 审批门 1 证据 |
+| `preview/` | 最早 12 眼网页预览 | 后被 Gate1 包取代；保留界面证据 |
+| `roi-compare/` | 早期离散全视频 ROI 测速调查 | 后被 Block1 60 时点入围检查取代 |
+| `roi-selection-smoke-sub011/` | Block1 起始约 0.2 秒冒烟 | 首次发现正式输入不是完整人脸 |
+| `roi-selection-smoke3s-sub011/` | Block1 前 3 秒三后端冒烟与源图检查 | 确认 MediaPipe / YuNet 失检、旧 YOLO 单眼假脸 |
+
+这些目录是历史证据归档，不代表当前正式技术路线。
+
+## 与其他 artifacts 的关系
+
+2026-08-16 时，另一些当时仍活动的 artifacts 包括 `truth-528`、benchmark、sequence、ROI selection 等。当前分支未全部保留这些目录；其执行证据仍存在于工作记录中。
+
+“当前分支未保留”只描述 Git 当前实体，不否认当时真实生成过。若以后从原始备份找回，应以原文件恢复，不根据工作记录人工重建。
+
+## 当前复现入口
 
 ```text
-runtime/README.md
-runtime/nir-yolo-tracking-ritnet-v1/
+runtime/NIR-formal/
 yolotrain/README.md
 models/README.md
-docs/010-nir/00-目录与映射.md
+docs/010-nir/README.md
 ```
 
----
-
-## 2026-08-16 历史归档状态
-
-> 08-16（Asia/Shanghai）｜当时只把结论已定、不会继续修改的过程证据放入 `finish/`；仍会复测或作为下一轮输入的文件保留在 `artifacts/`。
-
-### 已归档
-
-| 目录 | 内容 | 当时结论/用途 |
-|---|---|---|
-| `gate1-24eyes/` | 12帧/24眼审批包与人工标注 | 审批门1已完成；配置当时指向此处 |
-| `preview/` | 最早12眼网页预览 | 已被gate1包取代，仅作历史界面证据 |
-| `roi-compare/` | 早期离散全视频ROI测速调查 | 已被Block1 60时点入围检查取代 |
-| `roi-selection-smoke-sub011/` | Block1起始约0.2秒冒烟 | 首次发现正式输入不是完整人脸 |
-| `roi-selection-smoke3s-sub011/` | Block1前3秒三后端冒烟与源图检查 | 确认MediaPipe/YuNet失检、YOLO单眼假脸 |
-
-这些目录当时是移动归档，不是删除；当前仍按历史证据保留在 `finish/`。
-
-### 当时仍在活动产物区的目录
-
-| 历史路径 | 当时保留原因 | 2026-08-23 当前说明 |
-|---|---|---|
-| `artifacts/truth-528/` | 人工真值，后续任何新瞳孔算法仍需复测 | 当前分支未在 `artifacts/` 保留该目录 |
-| `artifacts/benchmark-single/` | 修复前历史对照，不能当最终指标 | 当前分支未保留 |
-| `artifacts/benchmark-axis-fix-review/` | 轴角修复后的阶段4/4b权威复核 | 当前分支未保留 |
-| `artifacts/sequence-44x121/` | 修复前历史连续序列源 | 当前分支未保留 |
-| `artifacts/sequence-adapter-review/` | 新PuReST适配层复核证据 | 当前分支未保留 |
-| `artifacts/roi-selection-sub011-block1-2min/` | 当时正式ROI阻断证据；60时点/12组图为下一轮专用眼部ROI比较基线 | 当前分支未保留 |
-
-“当前分支未保留”只描述 Git 当前实体，不否认这些 artifact 当时真实生成过；相关执行证据继续保存在工作记录。
-
-### 当时代码、模型与 runtime 计划
-
-08-16 当时记录：
-
-- 活动代码继续留在 `scripts/` 和 `src/attention_pipeline/nir/`，不放入 `finish/`；
-- 当时三个人脸 ROI 候选均淘汰，因此计划不把它们复制进生产 `models/`；
-- 当时设想“新 ROI 定稿后，`models/` 放完整生产链实际使用模型”；
-- 当时设想 `runtime/` 后续保存环境锁、wheel、模型 SHA-256 和重建说明。
-
-这些计划后来部分实现并发生演化：当前 `runtime/nir-yolo-tracking-ritnet-v1/` 已经冻结 YOLO26n 与 RITnet 的可移植实现及模型，且正式 NIR 全量分析已经完成。因此本节仅作为架构演化历史保留。
+本目录只承担历史 archive 角色。
