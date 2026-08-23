@@ -4,7 +4,7 @@
 
 ## 2026-08-23 当前项目状态
 
-- NIR 眼框 YOLO26n 已完成 100 epochs 训练；训练产物保留在 `yolotrain/runs/yolo26n_eye_100epoch/`，`best.pt` 已复制进入正式 runtime。
+- NIR 眼框 YOLO26n 已完成 100 epochs 训练；训练产物保留在 `training/nir-eye-yolo/runs/yolo26n_eye_100epoch/`，`best.pt` 已复制进入正式 runtime。
 - 正式 NIR pipeline 已完成全量运行，不再处于“准备正式分析 / 等待全量推理”的阶段。
 - 当前正式 runtime 为 `runtime/nir-formal/`；正式模式采用逐帧 YOLO，tracking 仅保留用于诊断和历史复现。
 - 当前正式配置以 FocusWave v3.1.3 时间语义为准，分析 `baseline / instructions / practice / block1 / block2`；RITnet 使用 batch 推理，当前配置为 `batch_size=16`、`fp32`。
