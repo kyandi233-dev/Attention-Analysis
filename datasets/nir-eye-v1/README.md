@@ -1,16 +1,28 @@
-# nir-eye-dataset-v1｜NIR 眼框训练数据集（两批分开）
+# NIR Eye Dataset v1
 
-## 2026-08-21 训练与正式分析状态
+`datasets/nir-eye-v1/` 是 NIR 眼框检测器使用的原始抽帧与人工标注数据版本。它保存数据 provenance，不保存正式实验全量视频，也不作为训练运行目录。
+
+## 2026-08-23 当前状态
+
+- 数据集 v1 已完成标注并用于 YOLO26n 训练。
+- 合并后的固定 train / val / test 与训练结果位于 `training/nir-eye-yolo/`。
+- YOLO26n 已完成 100 epochs 训练；正式训练产物为 `training/nir-eye-yolo/runs/yolo26n_eye_100epoch/weights/best.pt`。
+- 正式运行副本位于 `runtime/nir-formal/models/nir-eye-yolo26n-best.pt`。
+- 正式 NIR 全量分析已经执行；本目录后续主要承担训练数据来源、标注规则与版本溯源职责。
+
+> 下方 2026-08-19 / 08-21 的“准备训练 / 准备正式分析”等文字属于当时阶段记录，保留其历史语境。
+
+## 2026-08-21 历史状态
 
 > 2026-08-21 17:30（Asia/Shanghai）｜数据集 v1 已进入模型训练阶段；正式视频分析计划在 2026-08-23 晚回珠海后启动准备。
 
-- 当前训练电脑为 AMD RX 6750 GRE 12GB 设备，训练使用 CPU，计划完成 100 epochs。
-- 本 README 不预设尚未回传确认的具体模型变体、训练批次、`imgsz`、`batch` 或最终权重名称；这些信息以训练目录中的 `args.yaml` 和结果文件为准。
-- 训练完成后，候选权重可能迁移到 NVIDIA 电脑，用于一百多个约 25 分钟视频的正式推理准备。
-- 数据集 batch1/batch2 的环境划分仍然保留；正式采用一个模型还是分批模型，须结合验证结果及下游 RITnet 连续性结果决定。
-- 眼框模型不是最终眼动指标模型。正式路线仍需在短视频中验证：YOLO 重新检测、tracking、RITnet、失败状态记录和连续检测能力。
+- 当时训练电脑为 AMD RX 6750 GRE 12GB 设备，训练使用 CPU，计划完成 100 epochs。
+- 当时尚未回传确认最终模型参数，具体模型变体、训练批次、`imgsz`、`batch` 和最终权重名称以训练目录中的 `args.yaml` 与结果文件为准。
+- 当时计划将候选权重迁移到 NVIDIA 电脑，用于一百多个约 25 分钟视频的正式推理。
+- 数据集 batch1/batch2 的环境划分继续保留，用于数据来源与环境差异溯源。
+- 眼框模型不是最终眼动指标模型；后续实际正式路线最终冻结为 YOLO26n + RITnet。
 
-> 2026-08-19（Asia/Shanghai）｜为 NIR 专用 YOLO 眼框检测器第一轮训练抽帧；两批实验环境分开训练两个模型。
+> 2026-08-19（Asia/Shanghai）｜为 NIR 专用 YOLO 眼框检测器第一轮训练抽帧；两批实验环境分开记录。
 
 ## 批次定义（用户确认）
 
@@ -31,49 +43,58 @@
 - 确定性 seed `20260817`；同 `(subject,block)` 帧号去重（碰撞 +1 帧）。
 - 每帧灰度 JPG（1920×1080），命名 `subject_<stem>_frame_<6位帧号>.jpg`。
 
-## 目录结构（对齐 docs/010-nir/08-17-02）
+## 目录结构
 
 ```text
-nir-eye-dataset-v1/
+nir-eye-v1/
 ├── images/batch1/          # 315 张原图
 ├── images/batch2/          # 260 张原图
-├── labels_yolo/batch1/     # LabelImg 导出（YOLO txt，与图片同名，标注后回传）
+├── labels_yolo/batch1/     # LabelImg 导出（YOLO txt，与图片同名）
 ├── labels_yolo/batch2/
 ├── manifests/
 │   ├── frames.csv          # 抽帧清单（image_id,subject,batch,block,frame_idx,unix_ms,image_path,source_video）
-│   ├── annotations.csv     # 标注状态占位（按 08-17-02 字段）
+│   ├── annotations.csv     # 标注状态
 │   ├── split_subject.csv   # 两批 train/val/test 被试划分（不按帧）
 │   ├── summary_by_subject.csv
-│   └── split_batch{1,2}_{train,val,test}.txt   # 各 split 图片绝对路径清单
+│   └── split_batch{1,2}_{train,val,test}.txt
 ├── previews/
 ├── classes.txt             # 单行 `eye`
 ├── dataset_batch1.yaml
 └── dataset_batch2.yaml
 ```
 
-## 标注（轻薄本 + LabelImg）
+## 标注方法记录（LabelImg）
 
-LabelImg 专用环境：`venv-labelimg`（Python 3.10，base=`D:\psychopy`）。用干净启动器 `labelimg_launch.py` 启动（它自动把 Qt 插件拷到 ASCII 路径并设置环境变量，规避中文路径的 Qt 崩溃）：
+当时使用 LabelImg 1.8.6 + Python 3.10 的专用 Windows venv。为解决中文路径和 Qt 问题，环境内增加了 `labelimg_launch.py`；同时对 LabelImg 的滚轮/缩放 `setValue(float)` 问题做了 4 处 `int(...)` 修正。
 
-**启动（首选快捷方式）**——**必须用 venv 的解释器，不要用 `C:\Python314` 的 labelImg（没打补丁）、也不要双击 `labelimg.bat`（双击环节有问题）**：
+当前仓库仍暂时保留 `venv-labelimg/` 以保护这段历史环境；它正在整理为可重建工具配置，在获得删除许可前不会直接删除整个 venv。
 
-- **双击桌面 `labelImg.lnk`** 或 v2 根目录 `labelImg.lnk`（用 `pythonw.exe`，无控制台窗口）。
-- 备用（PowerShell 粘贴）：
-
-```powershell
-& "D:\AAAWORK\07-竞赛\厚璨杯\021-analysisplan\attention-pipeline-v2\venv-labelimg\Scripts\python.exe" "D:\AAAWORK\07-竞赛\厚璨杯\021-analysisplan\attention-pipeline-v2\venv-labelimg\Scripts\labelimg_launch.py"
-```
-
-打开后点 **Open Dir** 选 `images\batch1`、**Change Save Dir** 选 `labels_yolo\batch1`，顶部格式下拉从 PascalVOC 切到 **YOLO**。已修复：Qt 插件中文路径崩溃（launcher 自动拷贝到 ASCII 路径）+ 滚轮/缩放 `setValue(float)` 崩溃（`labelImg.py` 4 处 `int()`）。
+历史标注规则：
 
 1. Open Dir = `images/batch1/`（先标 batch1，再标 batch2）。
 2. Save Dir = `labels_yolo/batch1/`（与图片同名 `.txt`）。
 3. 格式选 YOLO；`classes.txt` 只含 `eye`。
-4. 规则（08-17-02 §1）：单类 `eye`、不区分左右；框含眼裂/上下眼睑+少量眼周；闭眼仍标；无眼不标框并在 `annotations.csv` 记 `no_eye`。
-5. 完成后把 `images/ + labels_yolo/` 回传本机（或整目录拷回）。
+4. 单类 `eye`、不区分左右；框含眼裂/上下眼睑 + 少量眼周；闭眼仍标；无眼不标框并在 `annotations.csv` 记 `no_eye`。
+5. 完成后保留 `images/ + labels_yolo/ + manifests/` 作为数据版本证据。
 
-## 训练（后续审批）
+## 训练结果映射
 
-- 两批各自训练：`yolo11n.pt`（对照 `yolov8n.pt`），`data=dataset_batch{1,2}.yaml`，NIR 灰度复制 3 通道，`imgsz` 先试 1280（CPU 慢可降 640/960）。
-- 按 `split_subject.csv` 的被试划分评测；最终按 mAP + PuReST 下游（检出率/连续性）选模型。
-- 数据版本 v1；后续困难画面补抽记为 v1.x 追加集。
+原始两批数据最终合并为固定的被试级 train / val / test，训练工作区位于：
+
+```text
+../../training/nir-eye-yolo/
+```
+
+训练结果与正式 runtime 的关系：
+
+```text
+datasets/nir-eye-v1/
+        ↓ 整理/固定 split
+training/nir-eye-yolo/
+        ↓ YOLO26n 100 epochs
+training/nir-eye-yolo/runs/yolo26n_eye_100epoch/weights/best.pt
+        ↓ 冻结副本
+runtime/nir-formal/models/nir-eye-yolo26n-best.pt
+```
+
+数据版本仍记为 v1；只有在标注规范、来源批次、split 或标签定义发生实质变化时才建立新的正式数据版本。
