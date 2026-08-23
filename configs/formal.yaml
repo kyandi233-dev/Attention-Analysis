@@ -1,4 +1,9 @@
-﻿pipeline:
+# HISTORICAL COMPATIBILITY CONFIG
+# 该文件保留用于早期 ROI 入围/候选阶段的历史复现与旧脚本兼容。
+# 它不是已完成全量正式 NIR 分析的当前配置源；不要根据本文件中的 candidate / blocked 状态判断当前项目进度。
+# 在正式全量运行时实际使用的最终配置被核验并归档前，不重命名或删除本文件。
+
+pipeline:
   name: attention-pipeline-v2-formal
   version: 0.1.0-candidate
   timezone: Asia/Shanghai
@@ -62,4 +67,3 @@ production:
   roi_backend: null
   parameters_frozen: false
   note: "60时点显示正式输入为双眼特写；MediaPipe、YuNet和当前YOLO-face正确双眼ROI均为0。批准新的专用眼部ROI路线前停止生产冻结。"
-
