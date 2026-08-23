@@ -52,6 +52,7 @@ def _subject_number(name: str) -> int | None:
 
 
 def _subject_behavior_matches(config: Config, subject: str) -> list[Path]:
+    """Return every existing behavior directory for a subject across candidate roots."""
     number = int(subject.split("-")[1])
     names = (f"sub-{number:03d}_", f"sub-{number:03d}")
     behavior_dir = str(config.section("data").get("behavior_dir", "beh"))
@@ -115,9 +116,9 @@ def subject_behavior_dir(config: Config, subject: str) -> Path:
     if not matches:
         raise FileNotFoundError(f"{subject}: behavior directory not found in data.roots")
     if len(matches) > 1:
-        detail = ", ".join(str(path) for path in matches)
+        details = ", ".join(str(path) for path in matches)
         raise RuntimeError(
-            f"{subject}: duplicate behavior directories found across data.roots: {detail}"
+            f"{subject}: duplicate behavior directories found across data.roots: {details}"
         )
     return matches[0]
 
@@ -235,43 +236,66 @@ def validate_formal(config: Config, trials: pd.DataFrame) -> pd.DataFrame:
         if actual_blocks != expected_blocks:
             raise ValueError(f"{subject}: blocks={sorted(actual_blocks)}, expected [1, 2]")
 
-        for block_num, block_df in subject_df.groupby("block_num", sort=True):
-            condition_values = set(block_df["condition"].dropna().astype(str))
-            if condition_values != {"B"}:
-                raise ValueError(
-                    f"{subject} block {int(block_num)}: condition={sorted(condition_values)}, expected ['B']"
-                )
-            trial_count = int(len(block_df))
-            nogo_count = int(block_df["is_no_go"].fillna(0).astype(int).sum())
-            probe_count = int(block_df["is_probe"].fillna(0).astype(int).sum())
-            rows.append({
-                "subject": subject,
-                "block_num": int(block_num),
-                "trial_count": trial_count,
-                "nogo_count": nogo_count,
-                "probe_count": probe_count,
-            })
+    for (subject, block_num), block in trials.groupby(["subject", "block_num"], sort=True):
+        issues: list[str] = []
+        if block["trial_num"].isna().any() or block["trial_num"].duplicated().any():
+            issues.append("trial_num missing or duplicated")
+        if block["condition"].nunique() != 1 or str(block["condition"].iloc[0]).upper() != "B":
+            issues.append("condition is not a single B")
+        if ((block["commission"].eq(1)) & block["is_no_go"].ne(1)).any():
+            issues.append("commission inconsistent with is_no_go")
+        if ((block["omission"].eq(1)) & block["is_no_go"].ne(0)).any():
+            issues.append("omission inconsistent with is_no_go")
+        if (block["response"].eq(1) & block["rt"].isna()).any():
+            issues.append("response=1 with missing rt")
+
+        counts = {
+            "trials": int(len(block)),
+            "nogo": int(block["is_no_go"].eq(1).sum()),
+            "probes": int(block["is_probe"].eq(1).sum()),
+        }
+        for key, cfg_key in (
+            ("trials", "expected_trials_per_block"),
+            ("nogo", "expected_nogo_per_block"),
+            ("probes", "expected_probes_per_block"),
+        ):
+            expected = validation.get(cfg_key)
+            if expected is not None and counts[key] != int(expected):
+                issues.append(f"{key}={counts[key]} expected {expected}")
+
+        rows.append({
+            "subject": subject,
+            "block_num": int(block_num),
+            "condition": str(block["condition"].iloc[0]),
+            **counts,
+            "probe_positions": ";".join(
+                str(int(x)) for x in sorted(block.loc[block["is_probe"].eq(1), "trial_num"].dropna())
+            ),
+            "timestamp_inconsistent": int(block["rt_qc_timestamp_inconsistent"].sum()),
+            "hard_fail": bool(issues),
+            "issues": "; ".join(issues),
+        })
 
     report = pd.DataFrame(rows)
-    if report.empty:
-        raise ValueError("No formal behavior blocks were validated")
 
-    for column, key in (
-        ("trial_count", "expected_trials_per_block"),
-        ("nogo_count", "expected_nogo_per_block"),
-        ("probe_count", "expected_probes_per_block"),
-    ):
-        expected = validation.get(key)
-        if expected is not None and not report[column].eq(int(expected)).all():
-            bad = report.loc[~report[column].eq(int(expected)), ["subject", "block_num", column]]
-            raise ValueError(f"{key} mismatch: {bad.to_dict(orient='records')}")
-
-    if bool(validation.get("require_cross_subject_count_consistency", True)):
-        for block_num, block_df in report.groupby("block_num"):
-            for column in ("trial_count", "nogo_count", "probe_count"):
-                if block_df[column].nunique(dropna=False) != 1:
+    if validation.get("require_cross_subject_count_consistency", True):
+        for block_num, block_report in report.groupby("block_num"):
+            for key in ("trials", "nogo", "probes"):
+                if block_report[key].nunique() != 1:
                     raise ValueError(
-                        f"block {int(block_num)} has inconsistent {column} across subjects: "
-                        f"{block_df[['subject', column]].to_dict(orient='records')}"
+                        f"Block{block_num}: {key} counts are inconsistent across subjects: "
+                        f"{sorted(block_report[key].unique().tolist())}"
                     )
+
+    if validation.get("require_probe_position_consistency", False):
+        for block_num, block_report in report.groupby("block_num"):
+            if block_report["probe_positions"].nunique() != 1:
+                raise ValueError(f"Block{block_num}: probe positions differ across subjects")
+
+    if report["hard_fail"].any():
+        failed = report.loc[report["hard_fail"]]
+        detail = "; ".join(
+            f"{r.subject}-B{r.block_num}: {r.issues}" for r in failed.itertuples()
+        )
+        raise ValueError(f"formal behavior validation failed: {detail}")
     return report
