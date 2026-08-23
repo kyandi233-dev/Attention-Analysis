@@ -1,0 +1,105 @@
+# HISTORICAL EXECUTABLE CONFIG — FocusWave v3.0 BBB
+# 2026-08-16 analysis for sub-011..030. This is intentionally retained for
+# historical reruns and must not be used as the current v3.1.3 BB config.
+
+pipeline:
+  name: attention-pipeline-v2-sart-formal-bbb-v3.0
+  version: 0.1.0
+  timezone: Asia/Shanghai
+  approval_gate: sart_formal_gate_A
+  random_seed: 20260816
+
+approvals:
+  gate_A_plan: approved
+  gate_B_extract_preview: pending
+  gate_C_full_run: pending
+
+paths:
+  raw_root: "E:/正式实验"
+  output_root: "D:/_AttentionData/output-v2/050-sart-formal"
+
+subjects:
+  include:
+    - sub-011
+    - sub-012
+    - sub-013
+    - sub-014
+    - sub-015
+    - sub-016
+    - sub-017
+    - sub-018
+    - sub-019
+    - sub-020
+    - sub-021
+    - sub-022
+    - sub-023
+    - sub-024
+    - sub-025
+    - sub-026
+    - sub-027
+    - sub-028
+    - sub-029
+    - sub-030
+  exclude: [sub-9504]
+  known_issues:
+    sub-015: "完全无反应：144/144 No-Go 未正确抑制（no_go_hit=0），近零按键；主推断排除(n=19)，敏感性纳入(n=20)"
+    sub-021: "No-Go 正确抑制 24%，偏低但有用；保留"
+    sub-024: "No-Go 正确抑制 33%，偏低但有用；保留"
+
+runtimes:
+  main_python: "D:/Code/python/python.exe"
+
+stages:
+  validate: true
+  sart_extract: true
+  sart_metrics: true
+  sart_stats: true
+  sart_figures: true
+  sart_report: true
+
+protocol:
+  block_order: [B, B, B]
+  trials_per_cycle: 18
+  cycles_per_block: 24
+  trials_per_block: 432
+  nogo_per_block: 48
+  probes_per_block: 10
+  nominal_trial_ms: 1150
+  schedule_version: "sched-v1.0-4cat-vig-20260814"
+  probe_scale: "attention-4cat+vigilance-4point"
+  probe_labels:
+    1: "完全专注"
+    2: "在任务上没想目标"
+    3: "走神"
+    4: "大脑空白"
+  probe_vigilance_direction: "higher_more_alert"
+  probe_positions:
+    1: [31, 73, 117, 162, 204, 251, 293, 338, 380, 424]
+    2: [32, 75, 118, 162, 205, 247, 295, 339, 381, 424]
+    3: [32, 76, 119, 161, 204, 248, 292, 335, 382, 425]
+
+behavior:
+  time_windows_sec: [30, 60, 90, 120]
+  step_sec: 10
+  probe_pre_windows_sec: [30, 60, 90]
+  probe_post_windows_sec: [30, 60, 90]
+  nogo_opportunity_windows: [6, 8, 12]
+  cycle_bins: 6
+  rt_qc_ms:
+    very_early: 100
+    early: 150
+    long: 1000
+    beyond_nominal: 1150
+    timestamp_tolerance: 25
+  window_statuses: [insufficient_rt, insufficient_nogo, response_only, full_evidence]
+  rt_cv_min_n: 20
+
+stats:
+  bootstrap_iterations: 20000
+  seed: 20260816
+  primary_inference_note: "排除 sub-015（n=19）；敏感性纳入（n=20）"
+  mixed_model_formula: "rt ~ cycle_num + (1|subject)"
+  sdt:
+    dprime: "loglinear 端点校正"
+    c: "c = -(zH + zF)/2；c<0 宽松（倾向按键），c>0 保守"
+    beta: "beta = f(zH)/f(zF) 似然比；与敏感性混叠，c 为主 β 为辅"

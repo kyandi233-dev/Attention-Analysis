@@ -3,9 +3,11 @@ package:
   purpose: GPU formal NIR analysis runtime; diagnostic runner retained
 
 data:
+  # Known formal-data locations used across the E:/F: machines.
   roots:
-    - "F:/正式实验"
+    - "E:/正式实验"
     - "E:/Data"
+    - "F:/Data"
   subject_pattern: "sub-*_/nir/*_nir.avi"
   default_duration_sec: 60
 
