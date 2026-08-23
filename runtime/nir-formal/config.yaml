@@ -3,10 +3,11 @@ package:
   purpose: GPU formal NIR analysis runtime; diagnostic runner retained
 
 data:
-  # 已确认正式实验数据根：E: 本机与 F: GPU 机器使用相同目录结构。
+  # 已确认的数据根：E: 本机可见 E:/正式实验 与 E:/Data；GPU 机器为 F:/Data。
   roots:
     - "E:/正式实验"
-    - "F:/正式实验"
+    - "E:/Data"
+    - "F:/Data"
   subject_pattern: "sub-*_/nir/*_nir.avi"
   default_duration_sec: 60
 
