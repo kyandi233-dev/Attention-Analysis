@@ -2,7 +2,7 @@
 
 > 2026-08-24（Asia/Shanghai）｜GitHub 仓库已统一命名为 `Attention-Analysis`；当前默认维护分支为 `nvidia-cuda`，后续 AMD/DirectML 路线使用 `amd-DirectML`。
 
-> 本 checkout 为 `amd-DirectML` package `0.1.0`：YOLO26n 与 RITnet 已改用 ONNX Runtime DirectML，NVIDIA/CUDA `1.0.0` 基线仍保存在 `nvidia-cuda`。
+> 本 checkout 为 `amd-DirectML` package `0.1.1`：YOLO26n 与 RITnet 已改用 ONNX Runtime DirectML，并增加正式完成性校验；NVIDIA/CUDA 基线仍保存在 `nvidia-cuda`。
 
 ## 当前状态｜2026-08-24
 
@@ -74,7 +74,7 @@ F:/Data
 
 ## 分支状态
 
-`nvidia-cuda` 是 GitHub default，保存已完成正式全量分析的 NVIDIA/CUDA `1.0.0` 基线。`amd-DirectML` 已从该冻结基线开始实际改造，当前 package 为 `0.1.0`。
+`nvidia-cuda` 是 GitHub default，保存已完成正式全量分析的 NVIDIA/CUDA `1.0.0` 基线。`amd-DirectML` 已从该冻结基线开始实际改造，当前 package 为 `0.1.1`。
 
 tracking 时代已冻结为 tag `v0.8-tracking`；正式 NIR 全量完成阶段为 `v0.9-nir-formal`；历史 BBB 行为分析为 `behavior-bbb-v3.0`。旧开发分支已删除，新开发不再从 tracking 路线继续。
 

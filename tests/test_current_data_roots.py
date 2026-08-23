@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -91,3 +92,87 @@ def test_amd_batch_output_is_namespaced_and_settings_are_fixed(tmp_path):
     assert output == tmp_path / "formal" / "amd-directml"
     assert batch.FIXED_RITNET_BATCH_SIZE == 16
     assert batch.FIXED_RITNET_PRECISION == "fp32"
+
+
+def test_nir_subject_exclusion_applies_even_to_cli_selection():
+    batch = _load_nir_batch_module()
+    discovered = {
+        "sub-031": Path("sub-031_nir.avi"),
+        "sub-9504": Path("sub-9504_nir.avi"),
+    }
+    config = {"batch": {"subjects": {"include": [], "exclude": ["sub-9504"]}}}
+
+    selected = batch.selected_subjects(config, discovered, ["sub-031", "sub-9504"])
+
+    assert selected == ["sub-031"]
+
+
+def test_batch_rejects_exit_zero_without_valid_completion_marker(monkeypatch, tmp_path):
+    batch = _load_nir_batch_module()
+    data_root = tmp_path / "data"
+    video = data_root / "sub-031_" / "nir" / "sub-031_nir.avi"
+    video.parent.mkdir(parents=True)
+    video.touch()
+    output_root = tmp_path / "output" / "amd-directml"
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        """
+package:
+  version: 0.1.1
+data:
+  roots: [DATA_ROOT]
+  subject_pattern: sub-*_/nir/*_nir.avi
+formal:
+  min_subject_number: 31
+  focuswave_release: v3.1.3
+  phases: [baseline2, sart1]
+ritnet:
+  enabled: true
+  precision: fp32
+  batch_size: 16
+batch:
+  subjects:
+    include: []
+    exclude: []
+  output_root: OUTPUT_ROOT
+  device: "0"
+  continue_on_error: true
+  skip_completed: true
+output:
+  root: OUTPUT_ROOT
+""".replace("DATA_ROOT", json.dumps(str(data_root))).replace(
+            "OUTPUT_ROOT", json.dumps(str(output_root))
+        ),
+        encoding="utf-8",
+    )
+
+    class Completed:
+        returncode = 0
+
+    monkeypatch.setattr(batch.subprocess, "run", lambda *args, **kwargs: Completed())
+    monkeypatch.setattr(
+        batch,
+        "parse_args",
+        lambda: type(
+            "Args",
+            (),
+            {
+                "config": config_path,
+                "subjects": None,
+                "device": None,
+                "ritnet_precision": None,
+                "ritnet_batch_size": None,
+                "phases": None,
+                "output": None,
+                "force": False,
+                "dry_run": False,
+            },
+        )(),
+    )
+
+    return_code = batch.main()
+    results = json.loads((output_root / "batch_run_summary.json").read_text(encoding="utf-8"))
+
+    assert return_code == 1
+    assert results[0]["status"] == "failed"
+    assert "missing completion.json" in results[0]["validation_error"]

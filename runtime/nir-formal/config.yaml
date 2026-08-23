@@ -1,6 +1,6 @@
 package:
   name: nir-formal
-  version: 0.1.0
+  version: 0.1.1
   purpose: AMD DirectML formal NIR analysis runtime; diagnostic runner retained
 
 data:
@@ -68,7 +68,8 @@ formal:
 batch:
   subjects:
     include: []
-    exclude: []
+    exclude:
+      - "sub-9504"
   device: "0"
   continue_on_error: true
   skip_completed: true

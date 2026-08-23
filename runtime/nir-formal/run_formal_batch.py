@@ -25,6 +25,10 @@ PACKAGE_ROOT = Path(__file__).resolve().parent
 PIPELINE = PACKAGE_ROOT / "run_pipeline.py"
 FIXED_RITNET_BATCH_SIZE = 16
 FIXED_RITNET_PRECISION = "fp32"
+if str(PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_ROOT))
+
+from formal_completion import validate_completion
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -113,10 +117,17 @@ def effective_output_root(config: dict[str, Any], override: str | None) -> Path:
 
 
 def expected_run_dir(
-    config: dict[str, Any], output_root: Path, subject: str, precision: str, batch_size: int
+    config: dict[str, Any],
+    output_root: Path,
+    subject: str,
+    precision: str,
+    batch_size: int,
+    phases: list[str],
 ) -> Path:
     release = str(config["formal"].get("focuswave_release", "v3.1.3"))
-    return output_root / f"{subject}_formal_{release}_yolo_b{batch_size}_{precision}"
+    configured = [str(value) for value in config["formal"].get("phases", [])]
+    suffix = "" if phases == configured else "_partial-" + "-".join(phases)
+    return output_root / f"{subject}_formal_{release}_yolo_b{batch_size}_{precision}{suffix}"
 
 
 def build_command(
@@ -162,7 +173,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ritnet-batch-size", type=int)
     parser.add_argument("--phases", help="Optional comma-separated phase override")
     parser.add_argument("--output")
-    parser.add_argument("--force", action="store_true", help="Rerun even when summary.json already exists")
+    parser.add_argument("--force", action="store_true", help="Rerun even when a valid completion marker exists")
     parser.add_argument("--dry-run", action="store_true", help="Print selected subjects/commands without running")
     return parser.parse_args()
 
@@ -185,6 +196,13 @@ def main() -> int:
         raise ValueError("AMD/DirectML RITnet precision is fixed at fp32")
     if batch_size != FIXED_RITNET_BATCH_SIZE:
         raise ValueError("AMD/DirectML RITnet batch size is fixed at 16")
+    configured_phases = [str(value) for value in config["formal"].get("phases", [])]
+    phases = (
+        [value.strip() for value in str(args.phases).split(",") if value.strip()]
+        if args.phases
+        else configured_phases
+    )
+    is_full_phase_run = phases == configured_phases
 
     output_root = effective_output_root(config, args.output)
     output_root.mkdir(parents=True, exist_ok=True)
@@ -204,13 +222,31 @@ def main() -> int:
     results: list[dict[str, Any]] = []
     for index, subject in enumerate(subjects, start=1):
         video = discovered[subject]
-        run_dir = expected_run_dir(config, output_root, subject, precision, batch_size)
-        summary_path = run_dir / "summary.json"
+        run_dir = expected_run_dir(config, output_root, subject, precision, batch_size, phases)
+        expected_identity = {
+            "subject": subject,
+            "video": str(video.resolve()),
+            "package_version": str(config["package"]["version"]),
+            "focuswave_release": str(config["formal"].get("focuswave_release", "v3.1.3")),
+            "phases": phases,
+            "ritnet_enabled": bool(config["ritnet"].get("enabled", True)),
+            "ritnet_precision": precision,
+            "ritnet_batch_size": batch_size,
+            "max_frames": None,
+            "partial_phase_selection": not is_full_phase_run,
+        }
 
-        if skip_completed and summary_path.exists():
-            print(f"[SKIP {index}/{len(subjects)}] {subject}: completed -> {summary_path}")
-            results.append({"subject": subject, "status": "skipped_completed", "video": str(video)})
-            continue
+        if skip_completed and is_full_phase_run:
+            validation = validate_completion(run_dir, expected_identity)
+            if validation.valid:
+                marker_path = run_dir / "completion.json"
+                print(f"[SKIP {index}/{len(subjects)}] {subject}: validated -> {marker_path}")
+                results.append(
+                    {"subject": subject, "status": "skipped_completed", "video": str(video)}
+                )
+                continue
+            if run_dir.exists():
+                print(f"[RERUN {index}/{len(subjects)}] {subject}: {validation.reason}")
 
         command = build_command(
             config_path,
@@ -230,7 +266,28 @@ def main() -> int:
 
         completed = subprocess.run(command, cwd=PACKAGE_ROOT)
         if completed.returncode == 0:
-            results.append({"subject": subject, "status": "completed", "video": str(video)})
+            accepted = ("complete",) if is_full_phase_run else ("smoke_complete",)
+            validation = validate_completion(
+                run_dir,
+                expected_identity,
+                accepted_statuses=accepted,
+            )
+            if validation.valid:
+                status = "completed" if is_full_phase_run else "partial_complete"
+                results.append({"subject": subject, "status": status, "video": str(video)})
+                continue
+            results.append(
+                {
+                    "subject": subject,
+                    "status": "failed",
+                    "returncode": 0,
+                    "validation_error": validation.reason,
+                    "video": str(video),
+                }
+            )
+            print(f"[FAIL] {subject}: process returned 0 but completion is invalid: {validation.reason}")
+            if not continue_on_error:
+                break
             continue
 
         results.append({

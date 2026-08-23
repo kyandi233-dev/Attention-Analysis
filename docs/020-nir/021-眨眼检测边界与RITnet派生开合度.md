@@ -4,7 +4,7 @@
 
 ## 当前结论
 
-当前 `runtime/nir-formal/` **不输出正式眨眼事件，也不输出 PERCLOS**。AMD/DirectML `0.1.0` 保持 NVIDIA 正式 CSV schema，负责逐帧眼框、ROI、RITnet 分割、瞳孔椭圆与成功/失败状态；它没有新增或暗含一个已经验证的 blink 分类器。
+当前 `runtime/nir-formal/` **不输出正式眨眼事件，也不输出 PERCLOS**。AMD/DirectML `0.1.1` 保持 NVIDIA 正式 CSV schema，负责逐帧眼框、ROI、RITnet 分割、瞳孔椭圆与成功/失败状态；它没有新增或暗含一个已经验证的 blink 分类器。
 
 RITnet 同时也不只是“找瞳孔”。它把每个 ROI 像素分为四类：
 
@@ -58,8 +58,8 @@ normalized_openness = aperture_ratio / open_eye_baseline
 4. **不跨 unknown 补齐**：缺失段不继承前一 open/closed 状态。若研究需要插值，只能写入独立副轨并保留原始观测轨。
 5. **PERCLOS 分母**：按“有效闭眼观察时长 ÷ 有效眼睑观察时长”计算，同时报告有效覆盖率与 unknown 时长；不能直接用 phase 或视频总时长作分母。
 6. **人工时序真值**：标注完整睁眼、半闭、自然眨眼、长闭眼、反光、头动、无眼和模糊片段；至少报告事件级 precision/recall、起止误差、持续时间误差和 PERCLOS 误差。
-7. **显式版本迁移**：新增 openness/blink/PERCLOS 正式列时升级 package/schema 版本，保留 AMD `0.1.0` 输出的可复现性，不静默改写已有全量结果。
+7. **显式版本迁移**：新增 openness/blink/PERCLOS 正式列时升级 package/schema 版本，保留 AMD `0.1.x` 既有 schema 输出的可复现性，不静默改写已有全量结果。
 
 ## 本次 AMD 版本的边界
 
-AMD `0.1.0` 继续输出原 CSV schema，因此不会仅凭理论可行性增加未经验证的 blink 列。当前四分类 argmax 已在内存中产生，未来计算 ocular mask 不需要第二次 RITnet forward，新增几何计算本身预计不是 GPU 瓶颈。真正需要解决的是基线、unknown 门控、时序规则和人工效度，而不是把 `pred > 0` 直接命名成“眨眼”。
+AMD `0.1.1` 继续输出原 CSV schema，因此不会仅凭理论可行性增加未经验证的 blink 列。当前四分类 argmax 已在内存中产生，未来计算 ocular mask 不需要第二次 RITnet forward，新增几何计算本身预计不是 GPU 瓶颈。真正需要解决的是基线、unknown 门控、时序规则和人工效度，而不是把 `pred > 0` 直接命名成“眨眼”。

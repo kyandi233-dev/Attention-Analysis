@@ -24,7 +24,7 @@ models/ritnet-b16-fp32.onnx
 models/ritnet-b16-fp32.onnx.data
 ```
 
-当前 AMD package version 为 `0.1.0`。此分支从 NVIDIA 冻结节点 `e63675ad15c17db6ea2ac7a3bb1c1ac6fc106e06` 创建；NVIDIA/CUDA 复现仍在 `nvidia-cuda` 分支维护。
+当前 AMD package version 为 `0.1.1`。此分支从 NVIDIA 冻结节点 `e63675ad15c17db6ea2ac7a3bb1c1ac6fc106e06` 创建；NVIDIA/CUDA 复现仍在 `nvidia-cuda` 分支维护。
 
 ## 正式原始数据发现
 
@@ -105,7 +105,7 @@ python run_pipeline.py formal `
 
 RITnet 输出 background、sclera、iris、pupil 四类分割；当前正式后处理只使用 pupil 类拟合椭圆。把 sclera、iris、pupil 合成 ocular mask 后，可以派生候选眼裂高度/宽度和被试内 normalized openness，而且不需要第二次 RITnet forward。
 
-但本 runtime 尚未把该候选量验证为正式眨眼指标。`ritnet_missing`、`yolo_missing`、瞳孔面积下降或低置信度都不能单独解释为 blink。AMD `0.1.0` 为保持既有 CSV schema，没有新增正式 openness/blink/PERCLOS 列。完整派生逻辑、unknown 门控、时间戳、基线与验证要求见 [`docs/020-nir/021-眨眼检测边界与RITnet派生开合度.md`](../../docs/020-nir/021-眨眼检测边界与RITnet派生开合度.md)。
+但本 runtime 尚未把该候选量验证为正式眨眼指标。`ritnet_missing`、`yolo_missing`、瞳孔面积下降或低置信度都不能单独解释为 blink。AMD `0.1.1` 为保持既有 CSV schema，没有新增正式 openness/blink/PERCLOS 列。完整派生逻辑、unknown 门控、时间戳、基线与验证要求见 [`docs/020-nir/021-眨眼检测边界与RITnet派生开合度.md`](../../docs/020-nir/021-眨眼检测边界与RITnet派生开合度.md)。
 
 ## 输出与恢复
 
@@ -117,7 +117,9 @@ outputs/amd-directml/formal
 
 实际全量结果应保存在仓库外独立分析目录；仓库中的相对输出设置主要用于 runtime 自检和可复现说明。
 
-单次运行目录名包含 subject、FocusWave release、RITnet batch size 和 precision。`skip_completed: true` 时，如果预期 run directory 已存在 `summary.json`，批处理会跳过该被试；使用 `--force` 可显式重跑。
+单次运行目录名包含 subject、FocusWave release、RITnet batch size 和 precision。`skip_completed: true` 只会跳过通过身份、phase、帧集合、计数和产物校验的 `completion.json: status=complete`；只有 `summary.json`、smoke、partial、读帧失败或损坏 marker 都会重跑。使用 `--force` 可显式重跑。
+
+正式运行开始时先原子写 `completion.json: running`，全部 CSV/JSON 产物写完并验证后最后写 `complete`。`--max-frames` 或非完整 phase 选择只会得到 `smoke_complete`；视频读帧失败写 `failed` 并返回非零码，不能被后续 batch 静默跳过。
 
 ## 代码边界
 

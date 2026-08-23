@@ -1,6 +1,6 @@
 # INSTALL｜NIR Formal Runtime
 
-本文件是 `runtime/nir-formal/` 在 AMD/DirectML Windows 机器上的安装入口。当前分支为 `amd-DirectML`，package version 为 `0.1.0`。
+本文件是 `runtime/nir-formal/` 在 AMD/DirectML Windows 机器上的安装入口。当前分支为 `amd-DirectML`，package version 为 `0.1.1`。
 
 ## 1. 获取当前分支
 

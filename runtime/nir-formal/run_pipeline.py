@@ -26,6 +26,13 @@ import numpy as np
 import yaml
 
 from directml_runtime import DML_PROVIDER, YoloDirectMLRuntime, _import_onnxruntime
+from formal_completion import (
+    REQUIRED_ARTIFACTS,
+    SCHEMA_VERSION as COMPLETION_SCHEMA_VERSION,
+    expected_frame_keys,
+    validate_completion,
+    write_completion,
+)
 from phase_windows import PhaseWindow, resolve_phase_windows
 from ritnet_runtime import RitnetRuntime
 
@@ -712,6 +719,8 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
         )
 
     phases = _phase_names(args, config)
+    configured_phases = [str(value) for value in config["formal"].get("phases", [])]
+    is_full_phase_run = phases == configured_phases
     windows = resolve_phase_windows(
         video,
         unix_by_frame,
@@ -740,8 +749,13 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
     output_root = ensure_amd_output_root(
         Path(args.output) if args.output else resolve_package_path(config["output"]["root"])
     )
-    smoke_suffix = f"_smoke{args.max_frames}" if args.max_frames else ""
-    run_name = f"{subject}_formal_{release}_yolo_b{batch_size}_{precision}{smoke_suffix}"
+    suffixes: list[str] = []
+    if not is_full_phase_run:
+        suffixes.append("partial-" + "-".join(phases))
+    if args.max_frames is not None:
+        suffixes.append(f"smoke{args.max_frames}")
+    run_suffix = "_" + "_".join(suffixes) if suffixes else ""
+    run_name = f"{subject}_formal_{release}_yolo_b{batch_size}_{precision}{run_suffix}"
     out = output_root / run_name
     overlays = out / "overlays"
     overlays.mkdir(parents=True, exist_ok=True)
@@ -750,8 +764,49 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
         rois_path = out / "rois"
         rois_path.mkdir(parents=True, exist_ok=True)
 
+    window_dicts = [window.to_dict() for window in windows]
+    expected_keys = expected_frame_keys(window_dicts)
+    started_at_utc = datetime.now(timezone.utc).isoformat()
+    video_identity = str(video.resolve())
+    run_identity = {
+        "subject": subject,
+        "video": video_identity,
+        "package_version": str(config["package"]["version"]),
+        "focuswave_release": release,
+        "phases": phases,
+        "ritnet_enabled": bool(ritnet),
+        "ritnet_precision": ritnet.precision if ritnet else "disabled",
+        "ritnet_batch_size": batch_size if ritnet else 0,
+        "max_frames": args.max_frames,
+    }
+    run_id = hashlib.sha256(
+        json.dumps(
+            {"identity": run_identity, "phase_windows": window_dicts},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    completion_base = {
+        "schema_version": COMPLETION_SCHEMA_VERSION,
+        "run_id": run_id,
+        **run_identity,
+        "expected_frames": len(expected_keys),
+        "processed_frames": 0,
+        "decoded_frames": 0,
+        "video_read_failure_count": 0,
+        "missing_expected_frame_count": len(expected_keys),
+        "unexpected_frame_count": 0,
+        "truncated_for_smoke_test": False,
+        "partial_phase_selection": not is_full_phase_run,
+        "required_artifacts": list(REQUIRED_ARTIFACTS),
+        "started_at_utc": started_at_utc,
+        "finished_at_utc": None,
+    }
+    write_completion(out, {**completion_base, "status": "running"})
+
     (out / "phase_windows.json").write_text(
-        json.dumps([window.to_dict() for window in windows], ensure_ascii=False, indent=2),
+        json.dumps(window_dicts, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
@@ -766,6 +821,7 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
     wall_started = time.perf_counter()
     read_failed = False
     stop_requested = False
+    decoded_frames = 0
 
     try:
         for window in windows:
@@ -809,6 +865,8 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
                     frame_lookup[frame_key] = frame_row
                     read_failed = True
                     break
+
+                decoded_frames += 1
 
                 yolo_started = time.perf_counter()
                 detections = yolo_detect(model, frame, config, device)
@@ -988,7 +1046,7 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
 
     summary = {
         "subject": subject,
-        "video": str(video),
+        "video": video_identity,
         "mode": "formal",
         "focuswave_release": release,
         "phases": phases,
@@ -1005,7 +1063,7 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
         "frame_status_counts": _counts(row.get("status") for row in frame_rows),
         "eye_status_counts": _counts(row.get("status") for row in eye_rows),
         "phase_summary": phase_summary,
-        "truncated_for_smoke_test": bool(stop_requested),
+        "truncated_for_smoke_test": bool(args.max_frames is not None),
     }
     (out / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2),
@@ -1036,7 +1094,7 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
                     "device": device,
                     "max_frames": args.max_frames,
                 },
-                "phase_windows": [window.to_dict() for window in windows],
+                "phase_windows": window_dicts,
                 "python": sys.version,
                 "platform": platform.platform(),
                 "opencv": cv2.__version__,
@@ -1053,6 +1111,75 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
         ),
         encoding="utf-8",
     )
+
+    actual_keys = {
+        (str(row["phase"]), int(row["phase_segment"]), int(row["frame_idx"]))
+        for row in frame_rows
+    }
+    missing_expected = expected_keys - actual_keys
+    unexpected = actual_keys - expected_keys
+    failure_count = sum(row.get("status") == "video_read_failed" for row in frame_rows)
+    artifact_complete = (
+        not read_failed
+        and not stop_requested
+        and is_full_phase_run
+        and decoded_frames == len(expected_keys)
+        and len(frame_rows) == len(expected_keys)
+        and not missing_expected
+        and not unexpected
+        and failure_count == 0
+    )
+    finished_at_utc = datetime.now(timezone.utc).isoformat()
+    final_payload = {
+        **completion_base,
+        "status": "running",
+        "processed_frames": len(frame_rows),
+        "decoded_frames": decoded_frames,
+        "video_read_failure_count": failure_count,
+        "missing_expected_frame_count": len(missing_expected),
+        "unexpected_frame_count": len(unexpected),
+        "truncated_for_smoke_test": bool(args.max_frames is not None),
+        "finished_at_utc": finished_at_utc,
+    }
+
+    if read_failed:
+        final_payload["status"] = "failed"
+        write_completion(out, final_payload)
+        print(json.dumps({"output": str(out.resolve()), **summary}, ensure_ascii=False, indent=2))
+        return 3
+
+    if args.max_frames is not None or not is_full_phase_run:
+        final_payload["status"] = "smoke_complete"
+        write_completion(out, final_payload)
+        print(json.dumps({"output": str(out.resolve()), **summary}, ensure_ascii=False, indent=2))
+        return 0
+
+    if not artifact_complete:
+        final_payload["status"] = "failed"
+        write_completion(out, final_payload)
+        print(json.dumps({"output": str(out.resolve()), **summary}, ensure_ascii=False, indent=2))
+        return 4
+
+    # Validate the finalized artifacts while the marker still says running. Only a
+    # successful validation is allowed to publish the terminal complete state.
+    write_completion(out, final_payload)
+    preflight = validate_completion(out, run_identity, accepted_statuses=("running",))
+    if not preflight.valid:
+        final_payload["status"] = "failed"
+        final_payload["validation_error"] = preflight.reason
+        write_completion(out, final_payload)
+        print(json.dumps({"output": str(out.resolve()), **summary}, ensure_ascii=False, indent=2))
+        return 4
+
+    final_payload["status"] = "complete"
+    write_completion(out, final_payload)
+    published = validate_completion(out, run_identity)
+    if not published.valid:
+        final_payload["status"] = "failed"
+        final_payload["validation_error"] = published.reason
+        write_completion(out, final_payload)
+        print(json.dumps({"output": str(out.resolve()), **summary}, ensure_ascii=False, indent=2))
+        return 4
     print(json.dumps({"output": str(out.resolve()), **summary}, ensure_ascii=False, indent=2))
     return 0
 
