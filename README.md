@@ -1,6 +1,6 @@
 # Attention-Analysis
 
-> GitHub 仓库当前仍使用历史名称 `attention-pipeline-v2`；项目文档统一使用 `Attention-Analysis`。
+> 2026-08-24 02:16（Asia/Shanghai）｜GitHub 仓库已统一命名为 `Attention-Analysis`；当前默认维护分支为 `nvidia-cuda`，未来 AMD/DirectML 路线使用预留名称 `amd-DirectML`。
 
 ## 当前状态｜2026-08-24
 
@@ -49,7 +49,7 @@ runtime/nir-formal/
 - `scripts/sart_formal_analysis.py` 与 `src/attention_pipeline/behavior_formal/` 是当前 FocusWave v3.1.3 BB 行为分析；
 - `scripts/sart_bbb_v3_0_analysis.py` 与 `src/attention_pipeline/behavior_bbb_v3_0/` 是明确标记的历史 BBB 可执行复现；
 - `tests/` 保存当前自动化测试代码；
-- 已淘汰的第三方模型源码、历史候选模型和阶段性 artifacts 已从当前 `main` 删除，删除原因与历史用途保存在 `docs/工作记录/` 和 Git 历史中。
+- 已淘汰的第三方模型源码、历史候选模型和阶段性 artifacts 已从当前 `nvidia-cuda` 删除，删除原因与历史用途保存在 `docs/工作记录/` 和 Git 历史中。
 
 更完整说明见 [`docs/010-overview/013-仓库资产与复现关系.md`](docs/010-overview/013-仓库资产与复现关系.md)。
 
@@ -66,7 +66,9 @@ F:/正式实验
 
 ## 分支状态
 
-`main` 是当前唯一应继续维护的主线。tracking 时代已冻结历史入口 `history/tracking-era-2026-08`，用于追溯旧版本；新开发不再从旧 tracking 分支继续。
+`nvidia-cuda` 是当前唯一维护分支，也是 GitHub default；它保存已经完成正式全量分析的 NVIDIA/CUDA 路线。未来 AMD 路线使用预留名称 `amd-DirectML`，但在实际开发开始前不创建空分支。
+
+tracking 时代已冻结为 tag `v0.8-tracking`；正式 NIR 全量完成阶段为 `v0.9-nir-formal`；历史 BBB 行为分析为 `behavior-bbb-v3.0`。旧开发分支已删除，新开发不再从 tracking 路线继续。
 
 ## 历史与 provenance
 

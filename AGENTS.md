@@ -1,13 +1,16 @@
 # AGENTS.md｜Attention-Analysis 仓库规则
 
+> 2026-08-24 02:16（Asia/Shanghai）｜仓库已改名为 Attention-Analysis；当前默认维护分支为 `nvidia-cuda`，未来 AMD/DirectML 路线预留分支名 `amd-DirectML`。
+
 本文件是仓库级长期工作约束。项目当前已完成正式 NIR 全量分析；后续默认任务是结构整理、可复现维护、结果复核与必要的增量开发，不得重新把项目描述为“准备进入正式分析”。
 
 ## 当前状态
 
-- 当前唯一维护主线：`main`。
+- 当前唯一维护分支与 GitHub default：`nvidia-cuda`。
+- 未来 AMD/DirectML 路线预留分支名：`amd-DirectML`；实际开发开始前不创建空分支，也不把它描述为已实现。
 - 正式 NIR runtime：`runtime/nir-formal/`。
 - 正式 NIR 流程已经全量运行：FocusWave v3.1.3 phase windows → 逐帧 YOLO26n 眼框 → ROI → RITnet batch inference → 指标/QC 输出。
-- CSRT/KCF 等 ROI tracking 不属于当前正式主链；tracking 时代通过 Git 历史和 `history/tracking-era-2026-08` 追溯。
+- CSRT/KCF 等 ROI tracking 不属于当前正式主链；tracking 时代通过 Git 历史和 tag `v0.8-tracking` 追溯。
 - YOLO26n 100 epochs 训练产物：`training/nir-eye-yolo/runs/yolo26n_eye_100epoch/weights/best.pt`。
 - 正式 runtime 冻结模型：`runtime/nir-formal/models/nir-eye-yolo26n-best.pt` 与 `runtime/nir-formal/models/ritnet-best_model.pkl`。
 - 正式 runtime 冻结最终实验阶段：FocusWave v3.1.3、正式被试编号下限 31、两个正式 B block。
@@ -75,7 +78,7 @@
 - `tests/`：仓库级回归；`runtime/nir-formal/tests/`：正式运行包内部最小自检。
 - `venv-labelimg/`：当前暂保留的本机历史虚拟环境；未经用户明确许可不得删除。
 
-根 `models/` 和 `artifacts/` 已按用户授权从 `main` 删除。第三方历史模型、候选权重和阶段性输出的用途、来源、淘汰与删除原因统一由 `docs/工作记录/`、decision record 和 Git 历史保存，不重新创建空壳目录。
+根 `models/` 和 `artifacts/` 已按用户授权从 `nvidia-cuda` 删除。第三方历史模型、候选权重和阶段性输出的用途、来源、淘汰与删除原因统一由 `docs/工作记录/`、decision record 和 Git 历史保存，不重新创建空壳目录。
 
 ## 运行与复现原则
 

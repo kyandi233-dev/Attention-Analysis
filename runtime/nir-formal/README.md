@@ -1,6 +1,6 @@
 # NIR Formal GPU 分析包
 
-> 当前结构整理主线：`main`。原 GPU 开发分支 `codex/nir-formal-gpu-v3` 保留作为开发历史；正式实验时间语义以 FocusWave release `v3.1.3` 为准。
+> 2026-08-24 02:16（Asia/Shanghai）｜当前 NVIDIA/CUDA 正式运行分支为 `nvidia-cuda`；旧 GPU/tracking 开发状态由 Git 历史与 tags 保留，正式实验时间语义以 FocusWave release `v3.1.3` 为准。
 
 > 2026-08-23：该 runtime 已用于正式全量分析。目录由历史名称 `nir-yolo-tracking-ritnet-v1` 重命名为 `nir-formal`；正式模式默认逐帧 YOLO，不使用 tracker。
 
@@ -212,11 +212,11 @@ python .\run_formal_batch.py --subjects sub-031,sub-033,sub-056
 
 ```cmd
 conda activate D:\conda_envs\eye-ai
-cd /d D:\NIR_Analysis\attention-pipeline-v2
+cd /d D:\NIR_Analysis\Attention-Analysis
 git fetch origin
-git switch main
+git switch nvidia-cuda
 git pull
-cd /d D:\NIR_Analysis\attention-pipeline-v2\runtime\nir-formal
+cd /d D:\NIR_Analysis\Attention-Analysis\runtime\nir-formal
 python run_pipeline.py check-env
 python run_pipeline.py discover --formal-only
 python run_formal_batch.py --dry-run
