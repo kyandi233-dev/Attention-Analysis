@@ -1,6 +1,6 @@
 # NIR Formal Runtime
 
-这是 Attention-Analysis 当前正式 NIR 分析的自包含 NVIDIA/CUDA 运行包。正式全量分析已经执行；本目录用于复现、迁移、结果复核和后续平台分支开发的基线，不再代表候选路线。
+这是 Attention-Analysis `amd-DirectML` 分支的正式 NIR 运行包。它保持已完成全量分析的 NVIDIA 科研口径，但将 YOLO 和 RITnet 推理后端替换为 ONNX Runtime DirectML。
 
 ## 当前正式流程
 
@@ -19,11 +19,12 @@ frames.csv / eyes.csv / summary.json / run_manifest.json / phase_windows.json / 
 正式配置：`config.yaml`。正式模型：
 
 ```text
-models/nir-eye-yolo26n-best.pt
-models/ritnet-best_model.pkl
+models/nir-eye-yolo26n-best.onnx
+models/ritnet-b16-fp32.onnx
+models/ritnet-b16-fp32.onnx.data
 ```
 
-当前 NVIDIA/CUDA 维护分支为 `nvidia-cuda`，仓库基线版本为 `1.0.0`。AMD/DirectML 版本应从该冻结 NVIDIA 基线节点创建独立 `amd-DirectML` 分支，不直接修改本 runtime 的既有 CUDA 复现口径。
+当前 AMD package version 为 `0.1.0`。此分支从 NVIDIA 冻结节点 `e63675ad15c17db6ea2ac7a3bb1c1ac6fc106e06` 创建；NVIDIA/CUDA 复现仍在 `nvidia-cuda` 分支维护。
 
 ## 正式原始数据发现
 
@@ -42,14 +43,14 @@ F:/Data
 
 ## 环境安装
 
-新 NVIDIA/CUDA 机器从 [`INSTALL.md`](INSTALL.md) 开始。安装完成后，在本目录执行：
+新 AMD/DirectML Windows 机器从 [`INSTALL.md`](INSTALL.md) 开始。已配置机器使用 `D:\CondaEnvs\nir-amd`。安装完成后，在本目录执行：
 
 ```powershell
 python -m pytest tests -q
 python run_pipeline.py check-env
 ```
 
-`check-env` 应确认 Python、PyTorch/CUDA、Ultralytics、OpenCV、YOLO 权重和 RITnet 权重可用。
+`check-env` 必须确认 `DmlExecutionProvider` 存在且是两个 session 的首选 provider，并实际加载两个 ONNX 图。DirectML 不可用或 session 创建后变成 CPU 首选时立即失败。ORT 仍会保留 CPU EP 处理少量图节点，但运行时 provider failover 已禁用，不允许整个 session 静默退回纯 CPU。
 
 ## 数据发现与批处理
 
@@ -98,14 +99,20 @@ python run_pipeline.py formal `
 - baseline：180 s
 - 正式 block 数：2
 
-这些参数属于已经运行过的 NVIDIA/CUDA 正式分析口径。后续 AMD/DirectML 适配如果需要改变后端、precision 或 batch 行为，应在 AMD 分支中明确记录，而不是静默改写本基线。
+这些科研参数与 NVIDIA 正式口径一致。AMD 版本额外强制 RITnet 固定 FP32 batch=16；尾批复制最后一个真实 ROI 补齐 16，推理后只保留真实 ROI 数量的输出。RITnet ONNX 在图内把四通道 logits 压缩成 UINT8 四分类 label map 和 FP32 pupil-probability map，减少 DirectML→CPU 数据搬运；四类 argmax 语义仍完整保留。
+
+## 眨眼解释边界
+
+RITnet 输出 background、sclera、iris、pupil 四类分割；当前正式后处理只使用 pupil 类拟合椭圆。把 sclera、iris、pupil 合成 ocular mask 后，可以派生候选眼裂高度/宽度和被试内 normalized openness，而且不需要第二次 RITnet forward。
+
+但本 runtime 尚未把该候选量验证为正式眨眼指标。`ritnet_missing`、`yolo_missing`、瞳孔面积下降或低置信度都不能单独解释为 blink。AMD `0.1.0` 为保持既有 CSV schema，没有新增正式 openness/blink/PERCLOS 列。完整派生逻辑、unknown 门控、时间戳、基线与验证要求见 [`docs/020-nir/021-眨眼检测边界与RITnet派生开合度.md`](../../docs/020-nir/021-眨眼检测边界与RITnet派生开合度.md)。
 
 ## 输出与恢复
 
 默认正式输出根为：
 
 ```text
-outputs/formal
+outputs/amd-directml/formal
 ```
 
 实际全量结果应保存在仓库外独立分析目录；仓库中的相对输出设置主要用于 runtime 自检和可复现说明。
@@ -120,7 +127,7 @@ outputs/formal
 
 ## 最小验收
 
-准备从 NVIDIA `1.0.0` 基线创建平台分支，或在新机器上复现时，仓库级 current baseline 与 runtime 自检应分开执行。根仓库 current baseline 使用与 `.github/workflows/ci.yml` 相同的可移植测试集合：
+在新机器复现时，仓库级回归与 DirectML 硬件自检分开执行：
 
 ```powershell
 # repo root
@@ -128,7 +135,7 @@ python -m pytest -q tests/test_behavior_formal_bb.py tests/test_current_data_roo
 python -m pytest runtime/nir-formal/tests -q
 ```
 
-在实际 NVIDIA/CUDA 机器并挂载正式数据盘后，再执行环境/数据验收：
+在实际 AMD/DirectML 机器并挂载正式数据盘后，再执行环境/数据验收：
 
 ```powershell
 cd runtime\nir-formal
@@ -137,4 +144,4 @@ python run_pipeline.py discover --formal-only
 python run_formal_batch.py --dry-run
 ```
 
-最后三项依赖目标机器的 GPU/CUDA 与正式数据盘，不属于干净 CI 能模拟的项目级测试。任何重复被试、模型缺失或环境后端错误都应显式失败，不用插值或默认路径掩盖。
+轻量端到端验证可使用 `formal --phases block1 --max-frames 600`；运行目录会附加 `_smoke600`，summary 中会写入 `truncated_for_smoke_test: true`，不得当作完整被试结果。

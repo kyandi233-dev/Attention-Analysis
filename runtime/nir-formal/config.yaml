@@ -1,6 +1,7 @@
 package:
   name: nir-formal
-  purpose: GPU formal NIR analysis runtime; diagnostic runner retained
+  version: 0.1.0
+  purpose: AMD DirectML formal NIR analysis runtime; diagnostic runner retained
 
 data:
   # 正式原始数据位于两个逻辑目录 `正式实验` 与 `Data`。
@@ -15,8 +16,9 @@ data:
   default_duration_sec: 60
 
 models:
-  yolo: "models/nir-eye-yolo26n-best.pt"
-  ritnet: "models/ritnet-best_model.pkl"
+  yolo: "models/nir-eye-yolo26n-best.onnx"
+  ritnet: "models/ritnet-b16-fp32.onnx"
+  ritnet_external_data: "models/ritnet-b16-fp32.onnx.data"
 
 yolo:
   confidence: 0.40
@@ -24,8 +26,8 @@ yolo:
   nms_iou: 0.70
   max_det: 20
 
-# Tracking remains available for diagnostic reproduction, but formal analysis
-# defaults to per-frame YOLO because KCF/CSRT were slower on the target RTX host.
+# Tracking remains available only for diagnostic reproduction; formal analysis
+# uses the fixed-shape YOLO ONNX model on every frame.
 tracking:
   method: none
   redetect_interval: 10
@@ -70,9 +72,9 @@ batch:
   device: "0"
   continue_on_error: true
   skip_completed: true
-  output_root: "outputs/formal"
+  output_root: "outputs/amd-directml/formal"
 
 output:
-  root: "outputs"
+  root: "outputs/amd-directml"
   overlay_stride: 3000
   save_rois: false

@@ -1,4 +1,4 @@
-# Run from runtime/nir-yolo-tracking-ritnet-v1 in the validated eye-ai environment.
+# Run from runtime/nir-formal in D:\CondaEnvs\nir-amd.
 
 python .\run_pipeline.py check-env
 python .\run_pipeline.py discover --formal-only
@@ -8,15 +8,11 @@ python .\run_pipeline.py discover --formal-only
 python .\run_pipeline.py formal `
   --video "F:\正式实验\sub-033_\nir\sub-033_nir.avi"
 
-# Same data, CUDA mixed-precision comparison.
+# Lightweight 20-second end-to-end smoke test inside the real block1 window.
 python .\run_pipeline.py formal `
-  --video "F:\正式实验\sub-033_\nir\sub-033_nir.avi" `
-  --ritnet-precision fp16
-
-# Batch-size comparison while keeping FP32 fixed.
-python .\run_pipeline.py formal `
-  --video "F:\正式实验\sub-033_\nir\sub-033_nir.avi" `
-  --ritnet-batch-size 32 --ritnet-precision fp32
+  --video "E:\正式实验\sub-031_\nir\sub-031_nir.avi" `
+  --phases block1 --max-frames 600 `
+  --output "D:\AttentionModels\pipeline-smoke-output"
 
 # Analyze only selected phases if needed.
 python .\run_pipeline.py formal `

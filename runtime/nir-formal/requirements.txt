@@ -1,4 +1,4 @@
-ultralytics==8.4.120
+onnxruntime-directml==1.24.4
 opencv-contrib-python>=4.10
 numpy>=1.26
 pandas>=2.2

@@ -1,24 +1,18 @@
-"""In-process RITnet inference for the portable NIR GPU pipeline.
-
-Formal-mode changes relative to the original trial runtime:
-- raw expanded eye crops can be passed directly to RITnet;
-- multiple crops are preprocessed and inferred as one GPU batch;
-- FP32 is the default reference precision; CUDA FP16 autocast is optional;
-- pupil ellipse outputs remain in the stable 320x160 analysis coordinate system.
-"""
+"""Fixed-batch FP32 RITnet inference through ONNX Runtime DirectML."""
 from __future__ import annotations
 
-import sys
 import time
-from contextlib import nullcontext
 from pathlib import Path
 
 import cv2
 import numpy as np
-import torch
+
+from directml_runtime import _fixed_shape, create_directml_session, parse_device_id
 
 
 class RitnetRuntime:
+    FIXED_BATCH_SIZE = 16
+
     def __init__(
         self,
         package_root: Path,
@@ -28,33 +22,58 @@ class RitnetRuntime:
         analysis_size: tuple[int, int] = (320, 160),
         precision: str = "fp32",
     ):
-        module_dir = package_root / "ritnet"
-        sys.path.insert(0, str(module_dir))
-        from densenet import DenseNet2D
-
-        requested = str(device).strip().lower()
-        if requested == "cpu" or not torch.cuda.is_available():
-            self.device = torch.device("cpu")
-        elif requested.isdigit():
-            self.device = torch.device(f"cuda:{requested}")
-        else:
-            self.device = torch.device(requested)
-
+        del package_root  # Kept in the signature for the existing pipeline adapter.
+        self.device_id = parse_device_id(device)
+        self.device = f"dml:{self.device_id}"
         self.precision = str(precision).strip().lower()
-        if self.precision not in {"fp32", "fp16"}:
-            raise ValueError(f"Unsupported RITnet precision: {precision!r}; use fp32 or fp16")
-        if self.precision == "fp16" and self.device.type != "cuda":
-            raise ValueError(
-                "RITnet fp16 is enabled only for CUDA in this pipeline. "
-                "Use --device <GPU index> or select --ritnet-precision fp32."
-            )
+        if self.precision != "fp32":
+            raise ValueError("AMD/DirectML RITnet is frozen to FP32")
 
         self.input_size = tuple(map(int, input_size))
         self.analysis_size = tuple(map(int, analysis_size))
-        self.model = DenseNet2D(dropout=True, prob=0.2)
-        state = torch.load(weights, map_location="cpu", weights_only=True)
-        self.model.load_state_dict(state)
-        self.model.to(self.device).eval()
+        self.weights = Path(weights)
+        self.session = create_directml_session(self.weights, self.device_id)
+        self.providers = list(self.session.get_providers())
+        inputs = self.session.get_inputs()
+        outputs = self.session.get_outputs()
+        if len(inputs) != 1 or len(outputs) != 2:
+            raise ValueError(
+                "RITnet ONNX must expose one input plus label/probability outputs"
+            )
+        self.input_name = inputs[0].name
+        self.output_names = [output.name for output in outputs]
+        expected_input = (
+            self.FIXED_BATCH_SIZE,
+            1,
+            int(self.input_size[1]),
+            int(self.input_size[0]),
+        )
+        expected_output = (
+            self.FIXED_BATCH_SIZE,
+            int(self.input_size[1]),
+            int(self.input_size[0]),
+        )
+        if inputs[0].type != "tensor(float)" or _fixed_shape(inputs[0]) != expected_input:
+            raise ValueError(
+                f"RITnet ONNX must use FP32 input shape {expected_input}, got "
+                f"{inputs[0].type} {_fixed_shape(inputs[0])}"
+            )
+        if (
+            outputs[0].type != "tensor(uint8)"
+            or _fixed_shape(outputs[0]) != expected_output
+        ):
+            raise ValueError(
+                f"RITnet label output must use UINT8 shape {expected_output}, got "
+                f"{outputs[0].type} {_fixed_shape(outputs[0])}"
+            )
+        if (
+            outputs[1].type != "tensor(float)"
+            or _fixed_shape(outputs[1]) != expected_output
+        ):
+            raise ValueError(
+                f"RITnet pupil-probability output must use FP32 shape {expected_output}, got "
+                f"{outputs[1].type} {_fixed_shape(outputs[1])}"
+            )
 
         self.gamma_table = (255.0 * (np.linspace(0, 1, 256) ** 0.8)).astype(np.uint8)
         self.clahe = cv2.createCLAHE(clipLimit=1.5, tileGridSize=(8, 8))
@@ -86,7 +105,6 @@ class RitnetRuntime:
             return {"found": False}
 
         (cx, cy), (axis_a, axis_b), angle = cv2.fitEllipse(contour)
-        confidence = float(pupil_prob[pupil.astype(bool)].mean()) if pupil.any() else 0.0
         area = float(cv2.contourArea(contour))
         return {
             "found": True,
@@ -97,7 +115,9 @@ class RitnetRuntime:
             "angle_deg": float(angle),
             "mask_area": area,
             "equiv_diameter": float(2 * np.sqrt(area / np.pi)),
-            "pupil_confidence": confidence,
+            "pupil_confidence": (
+                float(pupil_prob[pupil.astype(bool)].mean()) if pupil.any() else 0.0
+            ),
         }
 
     def infer_batch(self, roi_grays: list[np.ndarray]) -> list[dict]:
@@ -119,28 +139,35 @@ class RitnetRuntime:
 
         total_started = time.perf_counter()
         preprocess_started = time.perf_counter()
-        images = np.stack([self._preprocess_one(roi) for roi in roi_grays], axis=0)
-        tensor = torch.from_numpy(images).to(self.device, dtype=torch.float32)
-        tensor = ((tensor / 255.0 - 0.5) / 0.5)[:, None, :, :]
+        valid_batch_size = len(roi_grays)
+        if valid_batch_size > self.FIXED_BATCH_SIZE:
+            raise ValueError(
+                f"RITnet accepts at most {self.FIXED_BATCH_SIZE} ROIs per call; "
+                f"got {valid_batch_size}"
+            )
+        images = [self._preprocess_one(roi) for roi in roi_grays]
+        padded_count = self.FIXED_BATCH_SIZE - valid_batch_size
+        if padded_count:
+            # Reuse the final real ROI instead of inventing an out-of-domain blank
+            # image. Outputs for these padding slots are discarded below.
+            images.extend([images[-1]] * padded_count)
+        tensor = np.stack(images, axis=0).astype(np.float32, copy=False)
+        tensor = ((tensor / np.float32(255.0) - np.float32(0.5)) / np.float32(0.5))[
+            :, None, :, :
+        ]
+        tensor = np.ascontiguousarray(tensor, dtype=np.float32)
         preprocess_ms = (time.perf_counter() - preprocess_started) * 1000.0
 
         gpu_started = time.perf_counter()
-        use_fp16 = self.precision == "fp16"
-        autocast_context = (
-            torch.autocast(device_type="cuda", dtype=torch.float16)
-            if use_fp16
-            else nullcontext()
+        pred_batch, pupil_prob_batch = self.session.run(
+            self.output_names,
+            {self.input_name: tensor},
         )
-        with torch.inference_mode():
-            with autocast_context:
-                logits = self.model(tensor)
-                pred_tensor = logits.argmax(dim=1)
-                pupil_prob_tensor = torch.softmax(logits, dim=1)[:, 3]
-
-            # One batched device->host transfer per output type, instead of one
-            # synchronization/transfer for every individual eye.
-            pred_batch = pred_tensor.cpu().numpy()
-            pupil_prob_batch = pupil_prob_tensor.float().cpu().numpy()
+        pred_batch = np.asarray(pred_batch[:valid_batch_size], dtype=np.uint8)
+        pupil_prob_batch = np.asarray(
+            pupil_prob_batch[:valid_batch_size],
+            dtype=np.float32,
+        )
         gpu_and_transfer_ms = (time.perf_counter() - gpu_started) * 1000.0
 
         post_started = time.perf_counter()
@@ -151,7 +178,9 @@ class RitnetRuntime:
         postprocess_ms = (time.perf_counter() - post_started) * 1000.0
 
         self.last_timing = {
-            "batch_size": len(roi_grays),
+            "batch_size": self.FIXED_BATCH_SIZE,
+            "valid_batch_size": valid_batch_size,
+            "padded_count": padded_count,
             "precision": self.precision,
             "preprocess_ms": preprocess_ms,
             "gpu_and_transfer_ms": gpu_and_transfer_ms,
@@ -161,5 +190,5 @@ class RitnetRuntime:
         return results
 
     def infer(self, roi_gray: np.ndarray) -> dict:
-        """Compatibility wrapper for the original diagnostic runner."""
+        """Run one real ROI in a padded fixed batch and return only its output."""
         return self.infer_batch([roi_gray])[0]

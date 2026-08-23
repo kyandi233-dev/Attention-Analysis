@@ -2,6 +2,8 @@
 
 > 2026-08-24（Asia/Shanghai）｜GitHub 仓库已统一命名为 `Attention-Analysis`；当前默认维护分支为 `nvidia-cuda`，后续 AMD/DirectML 路线使用 `amd-DirectML`。
 
+> 本 checkout 为 `amd-DirectML` package `0.1.0`：YOLO26n 与 RITnet 已改用 ONNX Runtime DirectML，NVIDIA/CUDA `1.0.0` 基线仍保存在 `nvidia-cuda`。
+
 ## 当前状态｜2026-08-24
 
 - 正式 NIR 全量分析已经完成。
@@ -10,7 +12,7 @@
 - 当前正式实验版本为 FocusWave v3.1.3，正式阶段包含 `block1`、`block2` 两个 B block。
 - 当前正式 Behavior 分析已经按最终 BB 版本建立：`configs/behavior_formal.yaml` → `scripts/sart_formal_analysis.py` → `src/attention_pipeline/behavior_formal/`。
 - 旧 v3.0 BBB 行为分析仍保留独立历史可执行入口，方便以后重跑，但不作为当前正式口径。
-- NVIDIA/CUDA 仓库基线已完成 current/legacy 边界、动态数据根、默认入口、依赖与可移植测试契约的一致性整理，并冻结为 package version `1.0.0`。在新的 NVIDIA 机器上复现时仍需按 `runtime/nir-formal/README.md` 执行 `check-env`、数据发现与 dry-run，以验证该机器的 CUDA/数据挂载环境。
+- AMD runtime 已用 ONNX Runtime DirectML 替换 Ultralytics/PyTorch CUDA 推理，固定 RITnet batch=16 + FP32，尾批补位后丢弃补位输出，默认输出使用 `amd-directml` 隔离层。
 
 ## 快速入口
 
@@ -72,7 +74,7 @@ F:/Data
 
 ## 分支状态
 
-`nvidia-cuda` 是当前 GitHub default，并保存已经完成正式全量分析的 NVIDIA/CUDA `1.0.0` 基线。AMD 路线使用 `amd-DirectML`，应从这个冻结节点创建，不从 tracking 历史路线继续。
+`nvidia-cuda` 是 GitHub default，保存已完成正式全量分析的 NVIDIA/CUDA `1.0.0` 基线。`amd-DirectML` 已从该冻结基线开始实际改造，当前 package 为 `0.1.0`。
 
 tracking 时代已冻结为 tag `v0.8-tracking`；正式 NIR 全量完成阶段为 `v0.9-nir-formal`；历史 BBB 行为分析为 `behavior-bbb-v3.0`。旧开发分支已删除，新开发不再从 tracking 路线继续。
 

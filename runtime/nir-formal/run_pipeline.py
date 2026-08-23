@@ -1,9 +1,9 @@
-"""Portable NIR eye pipeline: diagnostic runner + optimized formal analysis.
+"""Portable AMD/DirectML NIR eye pipeline.
 
 ``run`` preserves the original short-video diagnostic behavior, including optional
 CSRT/KCF reproduction. ``formal`` is the production-candidate path for FocusWave
 v3.1.3 subjects (sub-031 and later): per-frame YOLO, phase-aware frame selection,
-raw expanded crops, batched RITnet, optional CUDA FP16, and sparse QC overlays.
+raw expanded crops, fixed-batch FP32 RITnet, and sparse QC overlays.
 """
 from __future__ import annotations
 
@@ -24,8 +24,8 @@ from typing import Any
 import cv2
 import numpy as np
 import yaml
-from ultralytics import YOLO
 
+from directml_runtime import DML_PROVIDER, YoloDirectMLRuntime, _import_onnxruntime
 from phase_windows import PhaseWindow, resolve_phase_windows
 from ritnet_runtime import RitnetRuntime
 
@@ -48,6 +48,13 @@ def load_config(path: Path) -> dict[str, Any]:
 def resolve_package_path(value: str | Path) -> Path:
     path = Path(value)
     return path if path.is_absolute() else PACKAGE_ROOT / path
+
+
+def ensure_amd_output_root(path: Path) -> Path:
+    """Add a backend namespace so AMD and NVIDIA runs cannot collide."""
+    if any(part.lower() == "amd-directml" for part in path.parts):
+        return path
+    return path / "amd-directml"
 
 
 def sha256(path: Path) -> str:
@@ -230,27 +237,23 @@ def expand_crop_raw(
     return np.ascontiguousarray(gray), crop_box, clipped
 
 
-def yolo_detect(model: YOLO, frame: np.ndarray, config: dict[str, Any], device: str) -> list[Detection]:
+def yolo_detect(
+    model: YoloDirectMLRuntime,
+    frame: np.ndarray,
+    config: dict[str, Any],
+    device: str,
+) -> list[Detection]:
+    del device  # The DirectML adapter is fixed when the session is created.
     cfg = config["yolo"]
-    result = model.predict(
+    raw = model.detect(
         frame,
-        conf=float(cfg["confidence"]),
-        imgsz=int(cfg["imgsz"]),
-        iou=float(cfg["nms_iou"]),
+        confidence=float(cfg["confidence"]),
         max_det=int(cfg["max_det"]),
-        device=device,
-        verbose=False,
-    )[0]
-    if result.boxes is None:
-        return []
+    )
     detections = [
-        Detection(tuple(map(float, box)), float(conf))
-        for box, conf, cls in zip(
-            result.boxes.xyxy.cpu().numpy(),
-            result.boxes.conf.cpu().numpy(),
-            result.boxes.cls.cpu().numpy(),
-        )
-        if int(cls) == 0
+        Detection(box, confidence)
+        for box, confidence, class_id in raw
+        if class_id == 0 and valid_box(box, frame.shape)
     ]
     return sorted(detections, key=lambda item: item.confidence, reverse=True)
 
@@ -333,17 +336,29 @@ def _make_ritnet(
     )
 
 
+def _make_yolo(config: dict[str, Any], device: str) -> YoloDirectMLRuntime:
+    return YoloDirectMLRuntime(resolve_package_path(config["models"]["yolo"]), device=device)
+
+
+def _validate_amd_settings(precision: str, batch_size: int = 16) -> None:
+    if str(precision).strip().lower() != "fp32":
+        raise ValueError("AMD/DirectML runtime is frozen to RITnet FP32")
+    if int(batch_size) != RitnetRuntime.FIXED_BATCH_SIZE:
+        raise ValueError(
+            f"AMD/DirectML RITnet batch size is fixed at {RitnetRuntime.FIXED_BATCH_SIZE}"
+        )
+
+
 def run(args: argparse.Namespace, config: dict[str, Any]) -> int:
     """Original diagnostic mode; optional tracking and scalar RITnet are preserved."""
     subject, video = resolve_video(config, args.subject, args.root, args.video)
     model_path = resolve_package_path(config["models"]["yolo"])
     ritnet_path = resolve_package_path(config["models"]["ritnet"])
     device = args.device
-    model = YOLO(str(model_path))
-    if model.names != {0: "eye"}:
-        raise ValueError(f"Unexpected YOLO classes: {model.names}")
+    model = _make_yolo(config, device)
     use_ritnet = bool(config["ritnet"]["enabled"]) and not args.skip_ritnet
     precision = args.ritnet_precision or str(config["ritnet"].get("precision", "fp32"))
+    _validate_amd_settings(precision)
     ritnet = _make_ritnet(config, device, precision=precision) if use_ritnet else None
 
     tracker_method = args.tracker or config["tracking"]["method"]
@@ -365,7 +380,9 @@ def run(args: argparse.Namespace, config: dict[str, Any]) -> int:
         raise ValueError(f"Invalid frame window {start_frame}:{end_frame} / {total_frames}")
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
 
-    output_root = Path(args.output) if args.output else resolve_package_path(config["output"]["root"])
+    output_root = ensure_amd_output_root(
+        Path(args.output) if args.output else resolve_package_path(config["output"]["root"])
+    )
     run_name = f"{subject}_{start_frame:08d}_{end_frame:08d}_{tracker_method}_r{redetect_interval}"
     out = output_root / run_name
     overlays = out / "overlays"
@@ -540,7 +557,7 @@ def run(args: argparse.Namespace, config: dict[str, Any]) -> int:
                     "tracker": tracker_method,
                     "redetect_interval": redetect_interval,
                     "ritnet_precision": ritnet.precision if ritnet else "disabled",
-                    "ritnet_batch_size": 1 if ritnet else 0,
+                    "ritnet_batch_size": RitnetRuntime.FIXED_BATCH_SIZE if ritnet else 0,
                     "device": device,
                 },
                 "python": sys.version,
@@ -548,7 +565,7 @@ def run(args: argparse.Namespace, config: dict[str, Any]) -> int:
                 "opencv": cv2.__version__,
                 "yolo_sha256": sha256(model_path),
                 "ritnet_sha256": sha256(ritnet_path),
-                "cuda_available": _cuda_available(),
+                "directml_providers": model.providers,
                 "timestamp_file": str(timestamp_path) if timestamp_path else None,
             },
             ensure_ascii=False,
@@ -666,6 +683,8 @@ def _flush_formal_batch(
 
 def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
     """Optimized FocusWave v3.1.3 formal analysis path."""
+    if args.max_frames is not None and args.max_frames <= 0:
+        raise ValueError("--max-frames must be positive")
     subject, video = resolve_video(config, args.subject, args.root, args.video)
     minimum = int(config["formal"].get("min_subject_number", 31))
     number = subject_number(subject)
@@ -678,15 +697,12 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
     device = args.device
     model_path = resolve_package_path(config["models"]["yolo"])
     ritnet_path = resolve_package_path(config["models"]["ritnet"])
-    model = YOLO(str(model_path))
-    if model.names != {0: "eye"}:
-        raise ValueError(f"Unexpected YOLO classes: {model.names}")
+    model = _make_yolo(config, device)
 
     use_ritnet = bool(config["ritnet"]["enabled"]) and not args.skip_ritnet
     precision = args.ritnet_precision or str(config["ritnet"].get("precision", "fp32"))
     batch_size = args.ritnet_batch_size or int(config["ritnet"].get("batch_size", 16))
-    if batch_size <= 0:
-        raise ValueError("RITnet batch size must be positive")
+    _validate_amd_settings(precision, batch_size)
     ritnet = _make_ritnet(config, device, precision=precision) if use_ritnet else None
 
     timestamp_path, unix_by_frame = load_timestamp_map(video)
@@ -721,8 +737,11 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
     release = str(config["formal"].get("focuswave_release", "v3.1.3"))
-    output_root = Path(args.output) if args.output else resolve_package_path(config["output"]["root"])
-    run_name = f"{subject}_formal_{release}_yolo_b{batch_size}_{precision}"
+    output_root = ensure_amd_output_root(
+        Path(args.output) if args.output else resolve_package_path(config["output"]["root"])
+    )
+    smoke_suffix = f"_smoke{args.max_frames}" if args.max_frames else ""
+    run_name = f"{subject}_formal_{release}_yolo_b{batch_size}_{precision}{smoke_suffix}"
     out = output_root / run_name
     overlays = out / "overlays"
     overlays.mkdir(parents=True, exist_ok=True)
@@ -746,6 +765,7 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
 
     wall_started = time.perf_counter()
     read_failed = False
+    stop_requested = False
 
     try:
         for window in windows:
@@ -919,6 +939,10 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
                         analysis_size=analysis_size,
                     )
 
+                if args.max_frames and len(frame_rows) >= args.max_frames:
+                    stop_requested = True
+                    break
+
             _flush_formal_batch(
                 pending,
                 ritnet=ritnet,
@@ -929,7 +953,7 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
                 rois=rois_path,
                 analysis_size=analysis_size,
             )
-            if read_failed:
+            if read_failed or stop_requested:
                 break
     finally:
         cap.release()
@@ -981,6 +1005,7 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
         "frame_status_counts": _counts(row.get("status") for row in frame_rows),
         "eye_status_counts": _counts(row.get("status") for row in eye_rows),
         "phase_summary": phase_summary,
+        "truncated_for_smoke_test": bool(stop_requested),
     }
     (out / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2),
@@ -1009,6 +1034,7 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
                     ],
                     "overlay_stride": overlay_stride,
                     "device": device,
+                    "max_frames": args.max_frames,
                 },
                 "phase_windows": [window.to_dict() for window in windows],
                 "python": sys.version,
@@ -1016,7 +1042,10 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
                 "opencv": cv2.__version__,
                 "yolo_sha256": sha256(model_path),
                 "ritnet_sha256": sha256(ritnet_path),
-                "cuda_available": _cuda_available(),
+                "ritnet_external_data_sha256": sha256(
+                    resolve_package_path(config["models"]["ritnet_external_data"])
+                ),
+                "directml_providers": model.providers,
                 "timestamp_file": str(timestamp_path),
             },
             ensure_ascii=False,
@@ -1046,27 +1075,30 @@ def _counts(values) -> dict[str, int]:
     return result
 
 
-def _cuda_available() -> bool:
-    try:
-        import torch
-
-        return bool(torch.cuda.is_available())
-    except ImportError:
-        return False
-
-
 def check_environment(config: dict[str, Any]) -> int:
-    import torch
+    ort = _import_onnxruntime()
+    device = str(config.get("batch", {}).get("device", "0"))
+    precision = str(config.get("ritnet", {}).get("precision", "fp32"))
+    batch_size = int(config.get("ritnet", {}).get("batch_size", 16))
+    _validate_amd_settings(precision, batch_size)
+    yolo = _make_yolo(config, device)
+    ritnet = _make_ritnet(config, device, precision=precision)
 
     checks = {
         "python": sys.version,
         "platform": platform.platform(),
         "opencv": cv2.__version__,
-        "torch": torch.__version__,
-        "cuda_available": torch.cuda.is_available(),
-        "cuda_device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+        "onnxruntime": ort.__version__,
+        "available_providers": list(ort.get_available_providers()),
+        "required_provider": DML_PROVIDER,
+        "yolo_active_providers": yolo.providers,
+        "ritnet_active_providers": ritnet.providers,
+        "device": yolo.device,
         "yolo_model": str(resolve_package_path(config["models"]["yolo"])),
         "ritnet_model": str(resolve_package_path(config["models"]["ritnet"])),
+        "ritnet_external_data": str(
+            resolve_package_path(config["models"]["ritnet_external_data"])
+        ),
         "formal_min_subject_number": int(config.get("formal", {}).get("min_subject_number", 31)),
         "formal_phases": config.get("formal", {}).get("phases", []),
         "ritnet_default_precision": config.get("ritnet", {}).get("precision", "fp32"),
@@ -1079,7 +1111,8 @@ def check_environment(config: dict[str, Any]) -> int:
         except Exception as exc:
             checks[f"tracker_{method}"] = str(exc)
     checks["models_exist"] = all(
-        resolve_package_path(config["models"][key]).exists() for key in ("yolo", "ritnet")
+        resolve_package_path(config["models"][key]).exists()
+        for key in ("yolo", "ritnet", "ritnet_external_data")
     )
     print(json.dumps(checks, ensure_ascii=False, indent=2))
     return 0 if checks["models_exist"] else 2
@@ -1093,7 +1126,7 @@ def _add_common_target_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--skip-ritnet", action="store_true")
     parser.add_argument("--save-rois", action="store_true")
     parser.add_argument("--output")
-    parser.add_argument("--ritnet-precision", choices=("fp32", "fp16"))
+    parser.add_argument("--ritnet-precision", choices=("fp32",))
 
 
 def parse_args() -> argparse.Namespace:
@@ -1115,6 +1148,11 @@ def parse_args() -> argparse.Namespace:
     formal_parser = sub.add_parser("formal")
     _add_common_target_args(formal_parser)
     formal_parser.add_argument("--ritnet-batch-size", type=int)
+    formal_parser.add_argument(
+        "--max-frames",
+        type=int,
+        help="Smoke-test limit; output run name is suffixed and must not be treated as complete",
+    )
     formal_parser.add_argument(
         "--phases",
         help="Comma-separated phases; default comes from config.yaml",

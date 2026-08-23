@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "attention-analysis"
-version = "1.0.0"
+version = "0.1.0"
 description = "Auditable NIR and behavioral attention-analysis pipeline for the Houcan Cup project"
 requires-python = ">=3.10"
 dependencies = [

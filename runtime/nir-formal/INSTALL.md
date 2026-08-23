@@ -1,48 +1,49 @@
 # INSTALL｜NIR Formal Runtime
 
-本文件是 `runtime/nir-formal/` 在新的 NVIDIA/CUDA Windows 机器上的安装入口。当前正式分支为 `nvidia-cuda`；正式全量分析已经完成，本安装流程用于复现与迁移。
+本文件是 `runtime/nir-formal/` 在 AMD/DirectML Windows 机器上的安装入口。当前分支为 `amd-DirectML`，package version 为 `0.1.0`。
 
 ## 1. 获取当前分支
 
 ```powershell
 git clone https://github.com/kyandi233-dev/Attention-Analysis.git
 cd Attention-Analysis
-git switch nvidia-cuda
+git switch amd-DirectML
 ```
 
 如果仓库已经存在：
 
 ```powershell
-git switch nvidia-cuda
+git switch amd-DirectML
 git pull
 ```
 
 ## 2. 创建独立环境
 
-推荐 Python 3.10/3.11 的独立 Conda 环境。示例：
+推荐 Python 3.11 的独立 Conda 环境。当前已验证环境为：
 
 ```powershell
-conda create -p D:\conda_envs\eye-ai python=3.11 -y
-conda activate D:\conda_envs\eye-ai
+conda create -p D:\CondaEnvs\nir-amd python=3.11 -y
+conda activate D:\CondaEnvs\nir-amd
 ```
 
-先按目标 NVIDIA 驱动/CUDA 环境安装可用的 PyTorch CUDA 版本，再进入 runtime 安装其余依赖：
+进入 runtime 安装依赖：
 
 ```powershell
 cd runtime\nir-formal
 pip install -r requirements.txt
 ```
 
-不要把根 `pyproject.toml` 的通用 Python 依赖误认为正式 CUDA runtime 的完整环境声明；GPU/PyTorch 后端由本 runtime 和目标机器共同决定。
+`requirements.txt` 已固定 `onnxruntime-directml==1.24.4`，不再需要 Ultralytics、PyTorch 或 CUDA。DirectML 需要 Windows 10 1903+ 与 DirectX 12 可用 GPU/驱动。
 
 ## 3. 检查冻结资产
 
 确认以下文件存在：
 
 ```text
-models/nir-eye-yolo26n-best.pt
-models/ritnet-best_model.pkl
-ritnet/
+models/nir-eye-yolo26n-best.onnx
+models/ritnet-b16-fp32.onnx
+models/ritnet-b16-fp32.onnx.data
+directml_runtime.py
 config.yaml
 run_pipeline.py
 run_formal_batch.py
@@ -55,7 +56,7 @@ python -m pytest tests -q
 python run_pipeline.py check-env
 ```
 
-`check-env` 必须能够识别目标 NVIDIA GPU/CUDA、PyTorch、Ultralytics、OpenCV 以及两份冻结模型。
+`check-env` 必须列出 `DmlExecutionProvider` 并显示 YOLO/RITnet 两个 session 都以它为首选 provider；否则立即失败，不退回纯 CPU。
 
 ## 4. 挂载正式数据
 
@@ -109,8 +110,6 @@ python run_pipeline.py formal --video "<实际盘符>:\<数据根>\sub-033_\nir\
 
 不要在安装文档里把 `E:` 或 `F:` 固定解释成某一台机器或某一块硬盘。
 
-## 7. NVIDIA 基线与 AMD 分支边界
+## 7. AMD 版本边界
 
-NVIDIA/CUDA 仓库基线已经冻结为 package version `1.0.0`。仓库级 current baseline tests 与 runtime tests 的具体集合见根 `.github/workflows/ci.yml` 和 `tests/README.md`；新 NVIDIA 机器还应额外运行本页的 `check-env`、数据发现和 dry-run，确认该机器的 CUDA 与数据挂载环境。
-
-AMD/DirectML 适配应从该 `1.0.0` NVIDIA 基线节点创建 `amd-DirectML`。AMD 分支可以修改设备后端、依赖和必要的 inference 适配，但不得反向改写已冻结 NVIDIA 正式分析参数和历史结果。
+AMD 版本从 NVIDIA 基线 `e63675a` 分出，只替换推理后端与运行依赖。FocusWave phase、YOLO confidence 0.40、ROI、FP32、CSV schema 保持不变；RITnet 固定 batch=16，尾批补位并丢弃补位输出。默认输出包含 `amd-directml`隔离层。

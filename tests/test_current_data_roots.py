@@ -80,3 +80,14 @@ def test_nir_discovery_rejects_duplicate_subject_video(tmp_path):
 
     with pytest.raises(RuntimeError, match="Duplicate subject videos found across data roots"):
         batch.discover(config)
+
+
+def test_amd_batch_output_is_namespaced_and_settings_are_fixed(tmp_path):
+    batch = _load_nir_batch_module()
+    config = {"batch": {"output_root": str(tmp_path / "formal")}, "output": {"root": "outputs"}}
+
+    output = batch.effective_output_root(config, None)
+
+    assert output == tmp_path / "formal" / "amd-directml"
+    assert batch.FIXED_RITNET_BATCH_SIZE == 16
+    assert batch.FIXED_RITNET_PRECISION == "fp32"

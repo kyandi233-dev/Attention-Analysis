@@ -23,6 +23,8 @@ import yaml
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
 PIPELINE = PACKAGE_ROOT / "run_pipeline.py"
+FIXED_RITNET_BATCH_SIZE = 16
+FIXED_RITNET_PRECISION = "fp32"
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -104,7 +106,10 @@ def selected_subjects(
 def effective_output_root(config: dict[str, Any], override: str | None) -> Path:
     value = override or config.get("batch", {}).get("output_root") or config["output"]["root"]
     path = Path(value)
-    return path if path.is_absolute() else PACKAGE_ROOT / path
+    path = path if path.is_absolute() else PACKAGE_ROOT / path
+    if not any(part.lower() == "amd-directml" for part in path.parts):
+        path = path / "amd-directml"
+    return path
 
 
 def expected_run_dir(
@@ -153,7 +158,7 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated subjects overriding batch.subjects.include, e.g. sub-031,sub-033,sub-056",
     )
     parser.add_argument("--device")
-    parser.add_argument("--ritnet-precision", choices=("fp32", "fp16"))
+    parser.add_argument("--ritnet-precision", choices=("fp32",))
     parser.add_argument("--ritnet-batch-size", type=int)
     parser.add_argument("--phases", help="Optional comma-separated phase override")
     parser.add_argument("--output")
@@ -176,8 +181,10 @@ def main() -> int:
     device = args.device or str(batch_cfg.get("device", "0"))
     precision = args.ritnet_precision or str(config["ritnet"].get("precision", "fp32"))
     batch_size = args.ritnet_batch_size or int(config["ritnet"].get("batch_size", 16))
-    if batch_size <= 0:
-        raise ValueError("RITnet batch size must be positive")
+    if precision != FIXED_RITNET_PRECISION:
+        raise ValueError("AMD/DirectML RITnet precision is fixed at fp32")
+    if batch_size != FIXED_RITNET_BATCH_SIZE:
+        raise ValueError("AMD/DirectML RITnet batch size is fixed at 16")
 
     output_root = effective_output_root(config, args.output)
     output_root.mkdir(parents=True, exist_ok=True)

@@ -12,5 +12,6 @@
 ## 当前决策入口
 
 - `051-NIR正式路线与ROI-Tracking状态.md`：明确正式 NIR 使用逐帧 YOLO，CSRT/KCF ROI tracking 仅保留诊断/历史复现身份。
+- `052-AMD-DirectML推理后端与固定批策略.md`：记录 ONNX Runtime DirectML、固定 RITnet batch=16/FP32、provider 失败策略和 AMD 输出隔离。
 
 后续可继续记录眼框检测路线、RITnet 选择、眨眼/EAR/PERCLOS 方法、QC 口径、RGB 启停以及跨模态升级条件等关键决定。

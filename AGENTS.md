@@ -6,13 +6,13 @@
 
 ## 当前状态
 
-- 当前唯一维护分支与 GitHub default：`nvidia-cuda`。
-- AMD/DirectML 路线使用 `amd-DirectML`；从经过最终检查并冻结的 NVIDIA 基线节点创建，不从 tracking 历史路线继续。
+- GitHub default 与 NVIDIA 维护分支：`nvidia-cuda`。
+- 当前工作分支：`amd-DirectML`；从冻结 NVIDIA 基线 `e63675ad15c17db6ea2ac7a3bb1c1ac6fc106e06` 创建，package version `0.1.0`。
 - 正式 NIR runtime：`runtime/nir-formal/`。
 - 正式 NIR 流程已经全量运行：FocusWave v3.1.3 phase windows → 逐帧 YOLO26n 眼框 → ROI → RITnet batch inference → 指标/QC 输出。
 - CSRT/KCF 等 ROI tracking 不属于当前正式主链；tracking 时代通过 Git 历史和 tag `v0.8-tracking` 追溯。
 - YOLO26n 100 epochs 训练产物：`training/nir-eye-yolo/runs/yolo26n_eye_100epoch/weights/best.pt`。
-- 正式 runtime 冻结模型：`runtime/nir-formal/models/nir-eye-yolo26n-best.pt` 与 `runtime/nir-formal/models/ritnet-best_model.pkl`。
+- AMD runtime 冻结模型：`runtime/nir-formal/models/nir-eye-yolo26n-best.onnx`、`runtime/nir-formal/models/ritnet-b16-fp32.onnx` 与必需的 `runtime/nir-formal/models/ritnet-b16-fp32.onnx.data`。NVIDIA `.pt/.pkl` runtime 权重只在 `nvidia-cuda` 分支复现。
 - 正式 runtime 冻结最终实验阶段：FocusWave v3.1.3、正式被试编号下限 31、两个正式 B block。
 - 当前正式 Behavior 已按最终 v3.1.3 BB 建立：`configs/behavior_formal.yaml`、`scripts/sart_formal_analysis.py`、`src/attention_pipeline/behavior_formal/`。
 - 旧 v3.0 BBB SART 分析为历史版本，但用户要求保留可执行复现：`configs/sart_bbb_v3_0.yaml`、`scripts/sart_bbb_v3_0_analysis.py`、`src/attention_pipeline/behavior_bbb_v3_0/`。不得把它解释为当前正式口径。
