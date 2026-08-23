@@ -1,4 +1,6 @@
 .venv/
+.venv-*/
+venv-labelimg/
 __pycache__/
 *.py[cod]
 .pytest_cache/
