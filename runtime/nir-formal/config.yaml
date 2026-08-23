@@ -3,9 +3,12 @@ package:
   purpose: GPU formal NIR analysis runtime; diagnostic runner retained
 
 data:
-  # 已确认的数据根：E: 本机可见 E:/正式实验 与 E:/Data；GPU 机器为 F:/Data。
+  # 正式原始数据位于两个逻辑目录 `正式实验` 与 `Data`。
+  # 两块外接存储设备的 Windows 盘符可能在 E:/ 与 F:/ 之间变化，
+  # 因此同时声明四个候选根；batch discovery 会忽略不存在的路径。
   roots:
     - "E:/正式实验"
+    - "F:/正式实验"
     - "E:/Data"
     - "F:/Data"
   subject_pattern: "sub-*_/nir/*_nir.avi"
