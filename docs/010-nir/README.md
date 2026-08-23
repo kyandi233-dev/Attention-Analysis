@@ -1,4 +1,4 @@
-﻿# 00｜NIR目录与映射
+﻿# NIR
 
 ## 2026-08-23 当前 NIR 状态
 
@@ -20,10 +20,11 @@ runtime/nir-formal/
 |---|---|---|
 | [08-23-01-NIR正式分析当前入口与资产映射.md](08-23-01-NIR正式分析当前入口与资产映射.md) | 当前 branch、runtime、模型、配置、运行命令与历史路径映射 | **当前正式入口** |
 | `runtime/nir-formal/` | 已用于正式全量分析的自包含 GPU runtime | **当前正式 runtime** |
+| `runtime/nir-formal/INSTALL.md` | 新电脑从零配置当前正式 runtime | **当前安装入口** |
 | `src/attention_pipeline/nir/` | 项目级 NIR 可复用源码、历史评价与相关核心逻辑 | 保留 |
 | `scripts/00-目录与映射.md` | 可运行脚本、环境和入口→核心跳转 | 保留；本轮不整理 scripts |
-| [08-22-04-NIR新电脑GPU环境配置与正式批处理运行指南.md](08-22-04-NIR新电脑GPU环境配置与正式批处理运行指南.md) | RTX 新电脑从零配置、CUDA/PyTorch/OpenCV/RITnet 排错过程 | 历史环境配置手册；旧 branch/runtime 名见 08-23 映射 |
-| `SETUP.md`（根目录） | 环境/迁移/运行命令 | 跨模块历史可移植说明 |
+| [08-22-04-NIR新电脑GPU环境配置与正式批处理运行指南.md](08-22-04-NIR新电脑GPU环境配置与正式批处理运行指南.md) | RTX 新电脑从零配置、CUDA/PyTorch/OpenCV/RITnet 排错过程 | 历史环境配置手册 |
+| [08-16-03-NIR历史多算法环境与迁移说明.md](08-16-03-NIR历史多算法环境与迁移说明.md) | 4 ROI × 4 pupil 阶段的环境/迁移说明 | 历史多算法部署手册 |
 
 ## 历史 08-16 核心入口
 
@@ -32,6 +33,7 @@ runtime/nir-formal/
 | `scripts/roi_faceparts.py` | 特写专用 ROI：直接检测 eye bbox（不依赖完整人脸） | 当时新候选，待数据实测 |
 | [08-16-01-NIR特写ROI调研与选型.md](08-16-01-NIR特写ROI调研与选型.md) | 三后端全灭后调研 RITnet/DeepVOG/Iris/faceparts/自训练，选定 faceparts | 历史总结 |
 | [08-16-02-NIR算法封装与可移植.md](08-16-02-NIR算法封装与可移植.md) | 4 ROI + 4 瞳孔封装、画面分型、模型归集、迁移 | 历史总结 |
+| [08-16-03-NIR历史多算法环境与迁移说明.md](08-16-03-NIR历史多算法环境与迁移说明.md) | 当时完整多算法环境与跨机迁移说明 | 历史环境说明 |
 | `configs/formal.yaml` | 当时正式ROI与PuReST候选配置 | 历史配置；当时未冻结生产参数 |
 | `artifacts/truth-528/` | 528眼人工真值 | 保留供复测 |
 | `artifacts/benchmark-axis-fix-review/` | 轴角修复后的阶段4/4b复核 | 历史单帧复核 |
@@ -84,4 +86,4 @@ runtime/nir-formal/
 | [08-17-02-NIR离线眼框标注指南.md](08-17-02-NIR离线眼框标注指南.md) | 离线抽帧、单类 eye 框标注、YOLO 标签、人工质量清单 | 标注操作说明 |
 | [08-17-03-NIR远程YOLO训练指南.md](08-17-03-NIR远程YOLO训练指南.md) | 新电脑/远程机器需要的文件、训练命令、输出归档和迁移检查 | 训练操作说明 |
 | [../工作记录/08-22-01-NIR-YOLO测试评估与跨机验证工作记录.md](../工作记录/08-22-01-NIR-YOLO测试评估与跨机验证工作记录.md) | yolo26n 本机 test 评价与跨机验证计划 | 历史工作记录 |
-| `runtime/nir-yolo-tracking-ritnet-v1.zip` | 当时打包的 YOLO26n + CSRT/KCF + ROI + RITnet GPU 试跑包 | 历史 zip 快照，保留原名 |
+| `runtime/nir-yolo-tracking-ritnet-v1.zip` | 当时生成的 YOLO26n + CSRT/KCF + ROI + RITnet GPU 试跑包 | 历史事实；压缩包已于 08-23 仓库整理时删除 |
