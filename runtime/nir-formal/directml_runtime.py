@@ -55,7 +55,6 @@ def create_directml_session(model_path: Path, device: str | int = "0"):
         )
 
     options = ort.SessionOptions()
-    # Required by the DirectML execution provider.
     options.enable_mem_pattern = False
     options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
     options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
@@ -75,8 +74,6 @@ def create_directml_session(model_path: Path, device: str | int = "0"):
             f"Failed to initialize DirectML for {model_path}; refusing CPU fallback"
         ) from exc
 
-    # Prevent ONNX Runtime's Python wrapper from replacing the provider list with
-    # CPUExecutionProvider if a later execution-provider error occurs.
     session.disable_fallback()
     active = list(session.get_providers())
     if not active or active[0] != DML_PROVIDER:
@@ -95,7 +92,12 @@ def _fixed_shape(node: Any) -> tuple[int, ...]:
 
 
 class YoloDirectMLRuntime:
-    """Fixed-shape YOLO26n end-to-end detector backed by DirectML."""
+    """Fixed-batch YOLO26n end-to-end detector backed by DirectML.
+
+    The ONNX model may use any positive fixed batch size. ``detect_batch`` pads
+    only the final partial call by repeating the last real tensor; padded outputs
+    are discarded. ``detect`` remains a compatibility wrapper for diagnostic code.
+    """
 
     names = {0: "eye"}
 
@@ -115,18 +117,24 @@ class YoloDirectMLRuntime:
         self.output_name = outputs[0].name
         self.input_shape = _fixed_shape(inputs[0])
         self.output_shape = _fixed_shape(outputs[0])
-        if inputs[0].type != "tensor(float)" or self.input_shape != (1, 3, 640, 640):
+        if (
+            inputs[0].type != "tensor(float)"
+            or len(self.input_shape) != 4
+            or self.input_shape[0] <= 0
+            or self.input_shape[1:] != (3, 640, 640)
+        ):
             raise ValueError(
-                "YOLO ONNX must use FP32 input shape [1,3,640,640], got "
+                "YOLO ONNX must use fixed FP32 input shape [B,3,640,640], got "
                 f"{inputs[0].type} {self.input_shape}"
             )
+        self.batch_size = int(self.input_shape[0])
         if outputs[0].type != "tensor(float)" or (
             len(self.output_shape) != 3
-            or self.output_shape[0] != 1
+            or self.output_shape[0] != self.batch_size
             or self.output_shape[2] != 6
         ):
             raise ValueError(
-                "YOLO ONNX must return FP32 end-to-end rows [1,N,6], got "
+                "YOLO ONNX must return FP32 end-to-end rows [B,N,6] with matching B, got "
                 f"{outputs[0].type} {self.output_shape}"
             )
 
@@ -158,30 +166,31 @@ class YoloDirectMLRuntime:
             value=(114, 114, 114),
         )
         rgb = cv2.cvtColor(padded, cv2.COLOR_BGR2RGB)
-        tensor = np.ascontiguousarray(rgb.transpose(2, 0, 1)[None], dtype=np.float32)
+        tensor = np.ascontiguousarray(rgb.transpose(2, 0, 1), dtype=np.float32)
         tensor /= np.float32(255.0)
         return tensor, scale, (float(left), float(top))
 
-    def detect(
-        self,
-        frame: np.ndarray,
+    @staticmethod
+    def _postprocess(
+        rows: np.ndarray,
         *,
+        frame_shape: tuple[int, ...],
+        scale: float,
+        pad: tuple[float, float],
         confidence: float,
         max_det: int,
     ) -> list[tuple[tuple[float, float, float, float], float, int]]:
-        tensor, scale, (pad_x, pad_y) = self._letterbox(frame)
-        output = self.session.run([self.output_name], {self.input_name: tensor})[0]
-        rows = np.asarray(output, dtype=np.float32)[0]
+        rows = np.asarray(rows, dtype=np.float32)
         if rows.ndim != 2 or rows.shape[1] != 6:
-            raise RuntimeError(f"Unexpected YOLO output shape: {output.shape}")
-
+            raise RuntimeError(f"Unexpected YOLO output rows shape: {rows.shape}")
         rows = rows[np.isfinite(rows).all(axis=1)]
         rows = rows[rows[:, 4] >= np.float32(confidence)]
         if not len(rows):
             return []
         rows = rows[np.argsort(-rows[:, 4], kind="stable")[: int(max_det)]]
 
-        frame_h, frame_w = frame.shape[:2]
+        pad_x, pad_y = pad
+        frame_h, frame_w = frame_shape[:2]
         detections = []
         for x1, y1, x2, y2, score, class_id in rows:
             box = np.array(
@@ -194,3 +203,55 @@ class YoloDirectMLRuntime:
                 (tuple(float(value) for value in box), float(score), int(class_id))
             )
         return detections
+
+    def detect_batch(
+        self,
+        frames: list[np.ndarray],
+        *,
+        confidence: float,
+        max_det: int,
+    ) -> list[list[tuple[tuple[float, float, float, float], float, int]]]:
+        if not frames:
+            return []
+        if len(frames) > self.batch_size:
+            raise ValueError(
+                f"YOLO model accepts at most {self.batch_size} frames per call; got {len(frames)}"
+            )
+
+        prepared = [self._letterbox(frame) for frame in frames]
+        tensors = [item[0] for item in prepared]
+        while len(tensors) < self.batch_size:
+            tensors.append(tensors[-1])
+        batch = np.ascontiguousarray(np.stack(tensors, axis=0), dtype=np.float32)
+        output = self.session.run([self.output_name], {self.input_name: batch})[0]
+        output = np.asarray(output, dtype=np.float32)
+        if output.ndim != 3 or output.shape[0] != self.batch_size or output.shape[2] != 6:
+            raise RuntimeError(f"Unexpected YOLO output shape: {output.shape}")
+
+        results = []
+        for index, frame in enumerate(frames):
+            _, scale, pad = prepared[index]
+            results.append(
+                self._postprocess(
+                    output[index],
+                    frame_shape=frame.shape,
+                    scale=scale,
+                    pad=pad,
+                    confidence=confidence,
+                    max_det=max_det,
+                )
+            )
+        return results
+
+    def detect(
+        self,
+        frame: np.ndarray,
+        *,
+        confidence: float,
+        max_det: int,
+    ) -> list[tuple[tuple[float, float, float, float], float, int]]:
+        return self.detect_batch(
+            [frame],
+            confidence=confidence,
+            max_det=max_det,
+        )[0]
