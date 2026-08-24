@@ -88,8 +88,9 @@ def test_yolo_end_to_end_rows_keep_confidence_gate_and_restore_coordinates():
     runtime.session = FakeSession()
     runtime.input_name = "images"
     runtime.output_name = "output0"
+    runtime.batch_size = 1
     runtime._letterbox = lambda frame: (
-        np.zeros((1, 3, 640, 640), dtype=np.float32),
+        np.zeros((3, 640, 640), dtype=np.float32),
         0.5,
         (10.0, 20.0),
     )
@@ -103,3 +104,39 @@ def test_yolo_end_to_end_rows_keep_confidence_gate_and_restore_coordinates():
     assert len(detections) == 2
     assert detections[0] == ((40.0, 40.0, 100.0, 100.0), pytest.approx(0.95), 1)
     assert detections[1] == ((0.0, 0.0, 200.0, 100.0), pytest.approx(0.90), 0)
+
+
+def test_yolo_batched_tail_is_padded_and_only_real_frames_are_returned():
+    captured = {}
+
+    class FakeSession:
+        def run(self, output_names, feeds):
+            captured["tensor"] = feeds["images"].copy()
+            output = np.zeros((8, 1, 6), dtype=np.float32)
+            for index in range(8):
+                output[index, 0] = [10, 10, 20, 20, 0.9, 0]
+            return [output]
+
+    runtime = YoloDirectMLRuntime.__new__(YoloDirectMLRuntime)
+    runtime.session = FakeSession()
+    runtime.input_name = "images"
+    runtime.output_name = "output0"
+    runtime.batch_size = 8
+    runtime._letterbox = lambda frame: (
+        np.full((3, 640, 640), int(frame[0, 0, 0]), dtype=np.float32),
+        1.0,
+        (0.0, 0.0),
+    )
+
+    frames = [
+        np.full((100, 100, 3), 1, dtype=np.uint8),
+        np.full((100, 100, 3), 2, dtype=np.uint8),
+    ]
+    results = runtime.detect_batch(frames, confidence=0.4, max_det=20)
+
+    tensor = captured["tensor"]
+    assert tensor.shape == (8, 3, 640, 640)
+    assert np.all(tensor[0] == 1)
+    assert np.all(tensor[1:] == 2)
+    assert len(results) == 2
+    assert all(len(item) == 1 for item in results)
