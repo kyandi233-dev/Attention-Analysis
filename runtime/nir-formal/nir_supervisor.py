@@ -200,6 +200,7 @@ def main() -> int:
         if duplicates:
             emit(event_path, {"type": "duplicate_process", "subjects": duplicates, "action": "none_kill"})
 
+        recovery_started = False
         if incomplete_without_process and not active_batches and not active_pipelines:
             subject = incomplete_without_process[0].get("subject")
             if subject:
@@ -209,6 +210,7 @@ def main() -> int:
                     pid = launch(runtime, root, subject, force=True)
                     state["retries"][key] = retries + 1
                     emit(event_path, {"type": "auto_repair", "subject": subject, "reason": "orphaned_state", "pid": pid})
+                    recovery_started = True
 
         if failed and not active_batches and not active_pipelines:
             recoverable = next((r for r in failed if "CUDA" in str(r.get("error", "")) or r.get("failure_stage") == "unhandled_exit"), None)
@@ -220,6 +222,20 @@ def main() -> int:
                     pid = launch(runtime, root, subject, force=True)
                     state["retries"][key] = retries + 1
                     emit(event_path, {"type": "auto_repair", "subject": subject, "reason": "recoverable_failure", "pid": pid})
+                    recovery_started = True
+
+        # If the batch runner itself disappeared between subjects, resume the
+        # normal queue after targeted recovery decisions.  A live batch or
+        # pipeline always wins, so this cannot create a competing instance.
+        if (
+            not active_batches
+            and not active_pipelines
+            and not recovery_started
+            and complete_count < 72
+            and any(r.get("status") != "complete" for r in rows)
+        ):
+            pid = launch(runtime, root)
+            emit(event_path, {"type": "auto_resume", "reason": "batch_process_absent", "pid": pid})
 
         if complete_count >= 72 and not active_batches and not active_pipelines:
             emit(event_path, {"type": "complete", "complete": complete_count})
