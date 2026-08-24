@@ -126,12 +126,11 @@ def expected_run_dir(
     suffixes: list[str] = []
     if backend == "ort-cuda":
         suffixes.append("ort-cuda")
-    if yolo_batch_size > 1:
-        suffixes.append(f"yolo{yolo_batch_size}")
     if phases != configured:
         suffixes.append("partial-" + "-".join(phases))
     suffix = "_" + "_".join(suffixes) if suffixes else ""
-    return output_root / f"{subject}_formal_{release}_yolo_b{batch_size}_{precision}{suffix}"
+    yolo_name = f"_yolo{yolo_batch_size}" if yolo_batch_size > 1 else "_yolo"
+    return output_root / f"{subject}_formal_{release}{yolo_name}_b{batch_size}_{precision}{suffix}"
 
 
 def build_command(
