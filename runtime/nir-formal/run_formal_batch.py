@@ -203,7 +203,7 @@ def main() -> int:
     device = args.device or str(batch_cfg.get("device", "0"))
     precision = args.ritnet_precision or str(config["ritnet"].get("precision", "fp32"))
     batch_size = args.ritnet_batch_size or int(config["ritnet"].get("batch_size", 16))
-    yolo_batch_size = args.yolo_batch_size or int(
+    yolo_batch_size = getattr(args, "yolo_batch_size", None) or int(
         config.get("inference", {}).get("yolo_batch_size", 1)
     )
     if batch_size <= 0:
