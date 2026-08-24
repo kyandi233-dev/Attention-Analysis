@@ -19,6 +19,8 @@ models:
   yolo: "models/nir-eye-yolo26n-best.onnx"
   ritnet: "models/ritnet-b16-fp32.onnx"
   ritnet_external_data: "models/ritnet-b16-fp32.onnx.data"
+  ritnet_reference: "models/ritnet-b16-fp32.onnx"
+  ritnet_reference_external_data: "models/ritnet-b16-fp32.onnx.data"
 
 yolo:
   confidence: 0.40
