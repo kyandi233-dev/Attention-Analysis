@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import tempfile
 from pathlib import Path
 
 from ultralytics import YOLO
@@ -46,20 +47,26 @@ def main() -> int:
     if not batches or any(value <= 0 for value in batches):
         raise ValueError("--batches must contain positive integers")
 
-    model = YOLO(str(pt))
-    for batch in batches:
-        exported = Path(
-            model.export(
-                format="onnx",
-                imgsz=int(args.imgsz),
-                batch=batch,
-                dynamic=False,
-                device=args.device,
-            )
-        ).resolve()
-        target = output_dir / f"nir-eye-yolo26n-best-b{batch}.onnx"
-        shutil.copy2(exported, target)
-        print(f"batch={batch}: {target}")
+    # Export from a temporary copy so Ultralytics never overwrites the stable
+    # models/nir-eye-yolo26n-best.onnx batch-1 reference in the working tree.
+    with tempfile.TemporaryDirectory(prefix="attention-yolo-batch-") as tmp_text:
+        tmp = Path(tmp_text)
+        for batch in batches:
+            temp_pt = tmp / f"nir-eye-yolo26n-best-b{batch}.pt"
+            shutil.copy2(pt, temp_pt)
+            model = YOLO(str(temp_pt))
+            exported = Path(
+                model.export(
+                    format="onnx",
+                    imgsz=int(args.imgsz),
+                    batch=batch,
+                    dynamic=False,
+                    device=args.device,
+                )
+            ).resolve()
+            target = output_dir / f"nir-eye-yolo26n-best-b{batch}.onnx"
+            shutil.copy2(exported, target)
+            print(f"batch={batch}: {target}")
 
     return 0
 
