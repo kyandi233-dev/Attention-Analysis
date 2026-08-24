@@ -1,17 +1,12 @@
-"""Sequential multi-subject runner for the formal NIR pipeline.
+"""Sequential multi-subject runner for the AMD batched formal NIR pipeline.
 
-Subject selection is read from config.yaml:
-
-batch:
-  subjects:
-    include: []   # empty => all discovered subjects >= formal.min_subject_number
-    exclude: []
-
-CLI --subjects overrides YAML include for one run.
+Production configuration is YOLO fixed batch 8 plus RITnet fixed batch 16.
+Subject selection is read from config.yaml; CLI --subjects overrides YAML include.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 import sys
@@ -22,7 +17,8 @@ import yaml
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
-PIPELINE = PACKAGE_ROOT / "run_pipeline.py"
+PIPELINE = PACKAGE_ROOT / "run_formal_batched.py"
+FIXED_YOLO_BATCH_SIZE = 8
 FIXED_RITNET_BATCH_SIZE = 16
 FIXED_RITNET_PRECISION = "fp32"
 if str(PACKAGE_ROOT) not in sys.path:
@@ -34,6 +30,19 @@ from formal_completion import validate_completion
 def load_config(path: Path) -> dict[str, Any]:
     with path.open(encoding="utf-8") as handle:
         return yaml.safe_load(handle)
+
+
+def resolve_package_path(value: str | Path) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else PACKAGE_ROOT / path
+
+
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def normalize_subject(value: str) -> str:
@@ -121,13 +130,17 @@ def expected_run_dir(
     output_root: Path,
     subject: str,
     precision: str,
-    batch_size: int,
+    ritnet_batch_size: int,
+    yolo_batch_size: int,
     phases: list[str],
 ) -> Path:
     release = str(config["formal"].get("focuswave_release", "v3.1.3"))
     configured = [str(value) for value in config["formal"].get("phases", [])]
     suffix = "" if phases == configured else "_partial-" + "-".join(phases)
-    return output_root / f"{subject}_formal_{release}_yolo_b{batch_size}_{precision}{suffix}"
+    return output_root / (
+        f"{subject}_formal_{release}_yolo-b{yolo_batch_size}_"
+        f"ritnet-b{ritnet_batch_size}_{precision}{suffix}"
+    )
 
 
 def build_command(
@@ -136,7 +149,7 @@ def build_command(
     output_root: Path,
     device: str,
     precision: str,
-    batch_size: int,
+    ritnet_batch_size: int,
     phases: str | None,
 ) -> list[str]:
     command = [
@@ -144,7 +157,6 @@ def build_command(
         str(PIPELINE),
         "--config",
         str(config_path),
-        "formal",
         "--video",
         str(video),
         "--device",
@@ -152,7 +164,7 @@ def build_command(
         "--ritnet-precision",
         precision,
         "--ritnet-batch-size",
-        str(batch_size),
+        str(ritnet_batch_size),
         "--output",
         str(output_root),
     ]
@@ -162,7 +174,7 @@ def build_command(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run formal NIR analysis sequentially for selected subjects")
+    parser = argparse.ArgumentParser(description="Run AMD batched formal NIR analysis sequentially")
     parser.add_argument("--config", type=Path, default=PACKAGE_ROOT / "config.yaml")
     parser.add_argument(
         "--subjects",
@@ -191,11 +203,27 @@ def main() -> int:
 
     device = args.device or str(batch_cfg.get("device", "0"))
     precision = args.ritnet_precision or str(config["ritnet"].get("precision", "fp32"))
-    batch_size = args.ritnet_batch_size or int(config["ritnet"].get("batch_size", 16))
+    ritnet_batch_size = args.ritnet_batch_size or int(config["ritnet"].get("batch_size", 16))
+    yolo_batch_size = int(config["yolo"].get("batch_size", 8))
     if precision != FIXED_RITNET_PRECISION:
         raise ValueError("AMD/DirectML RITnet precision is fixed at fp32")
-    if batch_size != FIXED_RITNET_BATCH_SIZE:
+    if ritnet_batch_size != FIXED_RITNET_BATCH_SIZE:
         raise ValueError("AMD/DirectML RITnet batch size is fixed at 16")
+    if yolo_batch_size != FIXED_YOLO_BATCH_SIZE:
+        raise ValueError("AMD/DirectML formal YOLO batch size is fixed at 8")
+
+    yolo_path = resolve_package_path(config["models"]["yolo_formal"])
+    ritnet_path = resolve_package_path(config["models"]["ritnet"])
+    if not yolo_path.is_file():
+        raise FileNotFoundError(
+            f"Missing production YOLO b8 model: {yolo_path}. "
+            "The model must be present before formal analysis can run."
+        )
+    if not ritnet_path.is_file():
+        raise FileNotFoundError(ritnet_path)
+    yolo_hash = sha256(yolo_path)
+    ritnet_hash = sha256(ritnet_path)
+
     configured_phases = [str(value) for value in config["formal"].get("phases", [])]
     phases = (
         [value.strip() for value in str(args.phases).split(",") if value.strip()]
@@ -213,8 +241,10 @@ def main() -> int:
         "selected_subjects": subjects,
         "count": len(subjects),
         "device": device,
+        "yolo_batch_size": yolo_batch_size,
+        "yolo_model": str(yolo_path),
         "ritnet_precision": precision,
-        "ritnet_batch_size": batch_size,
+        "ritnet_batch_size": ritnet_batch_size,
         "output_root": str(output_root),
         "dry_run": bool(args.dry_run),
     }, ensure_ascii=False, indent=2))
@@ -222,16 +252,27 @@ def main() -> int:
     results: list[dict[str, Any]] = []
     for index, subject in enumerate(subjects, start=1):
         video = discovered[subject]
-        run_dir = expected_run_dir(config, output_root, subject, precision, batch_size, phases)
+        run_dir = expected_run_dir(
+            config,
+            output_root,
+            subject,
+            precision,
+            ritnet_batch_size,
+            yolo_batch_size,
+            phases,
+        )
         expected_identity = {
             "subject": subject,
             "video": str(video.resolve()),
             "package_version": str(config["package"]["version"]),
             "focuswave_release": str(config["formal"].get("focuswave_release", "v3.1.3")),
             "phases": phases,
+            "yolo_batch_size": yolo_batch_size,
+            "yolo_model_sha256": yolo_hash,
             "ritnet_enabled": bool(config["ritnet"].get("enabled", True)),
             "ritnet_precision": precision,
-            "ritnet_batch_size": batch_size,
+            "ritnet_batch_size": ritnet_batch_size,
+            "ritnet_model_sha256": ritnet_hash,
             "max_frames": None,
             "partial_phase_selection": not is_full_phase_run,
         }
@@ -254,7 +295,7 @@ def main() -> int:
             output_root,
             device,
             precision,
-            batch_size,
+            ritnet_batch_size,
             args.phases,
         )
         print(f"[RUN {index}/{len(subjects)}] {subject}: {video}")
