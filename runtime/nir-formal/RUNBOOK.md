@@ -252,3 +252,24 @@ python run_formal_batch.py --dry-run
 **科研结果完整性 > 防止并发覆盖 > 可恢复性 > 可诊断性 > 运行速度。**
 
 遇到不确定状态时，不通过猜测把任务判成完成；优先保留证据、确认真实进程和锁 owner，再决定继续、失败或重跑。
+
+## 11. 低打扰监督程序
+
+`nir_supervisor.py` 是本机 NVIDIA 正式批次的低频监督器。它每 30 秒检查一次，但只在状态变化、CUDA/未处理失败、孤立状态、重复实例或全部完成时写入事件，不连续刷屏。
+
+启动方式（必须使用项目 N 卡环境）：
+
+```powershell
+python nir_supervisor.py `
+  --output-root "D:\Project\厚粲杯\11_数据\01_Attention-Analysis_nvidia-cuda_formal_NIR" `
+  --runtime "D:\Project\厚粲杯\08_算法\01_Attention-Analysis_nvidia-cuda\runtime\nir-formal" `
+  --interval 30
+```
+
+事件记录在正式输出目录的 `_runtime_logs\supervisor_events.jsonl`。监督器的自动恢复边界如下：
+
+- 有效批处理或推理进程存在时，不启动第二实例；
+- 只把同一命令的 Windows 虚拟环境启动器与底层解释器视为一条运行链；
+- 无有效进程时，最多自动重试孤立状态或可恢复 CUDA/未处理失败 2 次；
+- 不强制终止有效进程，不手工修改 `completion.json`，不删除已有结果；
+- 其他异常只记录事件，交由执行者根据事件内容处理。
