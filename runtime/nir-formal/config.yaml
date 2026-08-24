@@ -1,7 +1,7 @@
 package:
   name: nir-formal
-  version: 0.1.1
-  purpose: AMD DirectML formal NIR analysis runtime; diagnostic runner retained
+  version: 0.2.0
+  purpose: AMD DirectML formal NIR analysis runtime; YOLO b8 + RITnet b16 production path
 
 data:
   # 正式原始数据位于两个逻辑目录 `正式实验` 与 `Data`。
@@ -16,7 +16,10 @@ data:
   default_duration_sec: 60
 
 models:
+  # Original fixed-b1 YOLO is retained for diagnostic/reference compatibility.
   yolo: "models/nir-eye-yolo26n-best.onnx"
+  # Formal production path: fixed-b8 YOLO selected by DirectML benchmark.
+  yolo_formal: "models/nir-eye-yolo26n-best-b8.onnx"
   ritnet: "models/ritnet-b16-fp32.onnx"
   ritnet_external_data: "models/ritnet-b16-fp32.onnx.data"
   ritnet_reference: "models/ritnet-b16-fp32.onnx"
@@ -27,9 +30,10 @@ yolo:
   imgsz: 640
   nms_iou: 0.70
   max_det: 20
+  batch_size: 8
 
 # Tracking remains available only for diagnostic reproduction; formal analysis
-# uses the fixed-shape YOLO ONNX model on every frame.
+# uses batched fixed-shape YOLO on every frame, with no tracker substitution.
 tracking:
   method: none
   redetect_interval: 10
@@ -65,8 +69,7 @@ formal:
 
 # Multi-subject formal batch runner settings.
 # `include: []` means: analyze every discovered subject >= min_subject_number,
-# after applying `exclude`. To run only selected people, list them explicitly,
-# e.g. ["sub-031", "sub-033", "sub-056"].
+# after applying `exclude`. To run only selected people, list them explicitly.
 batch:
   subjects:
     include: []
