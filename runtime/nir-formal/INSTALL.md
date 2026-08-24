@@ -2,6 +2,8 @@
 
 本文件是 `runtime/nir-formal/` 在新的 NVIDIA/CUDA Windows 机器上的安装入口。当前正式分支为 `nvidia-cuda`，package version 为 `1.0.1`。
 
+运行接续、故障恢复、`.run.lock`、`completion.json` 状态判断和“看到什么状态下一步做什么”的规则见 [`RUNBOOK.md`](RUNBOOK.md)。后续执行者不应仅依赖聊天上下文判断正式任务状态。
+
 ## 1. 获取当前分支
 
 ```powershell
@@ -123,6 +125,8 @@ python run_pipeline.py formal --video "<实际盘符>:\<数据根>\sub-033_\nir\
 ```
 
 不要在安装文档里把 `E:` 或 `F:` 固定解释成某一台机器或某一块硬盘。
+
+出现 `initializing`、`running`、`failed`、stale lock、重复实例或批处理恢复问题时，按 `RUNBOOK.md` 的决策规则处理，不要仅依据 `processed_frames=0` 或旧 marker 判断任务是否仍在运行。
 
 ## 7. NVIDIA 基线与 AMD 分支边界
 
