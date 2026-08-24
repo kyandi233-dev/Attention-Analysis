@@ -119,12 +119,15 @@ def expected_run_dir(
     batch_size: int,
     phases: list[str],
     backend: str,
+    yolo_batch_size: int,
 ) -> Path:
     release = str(config["formal"].get("focuswave_release", "v3.1.3"))
     configured = [str(value) for value in config["formal"].get("phases", [])]
     suffixes: list[str] = []
     if backend == "ort-cuda":
         suffixes.append("ort-cuda")
+    if yolo_batch_size > 1:
+        suffixes.append(f"yolo{yolo_batch_size}")
     if phases != configured:
         suffixes.append("partial-" + "-".join(phases))
     suffix = "_" + "_".join(suffixes) if suffixes else ""
@@ -140,6 +143,7 @@ def build_command(
     batch_size: int,
     phases: str | None,
     backend: str,
+    yolo_batch_size: int,
 ) -> list[str]:
     command = [
         sys.executable,
@@ -159,6 +163,8 @@ def build_command(
         str(output_root),
         "--backend",
         backend,
+        "--yolo-batch-size",
+        str(yolo_batch_size),
     ]
     if phases:
         command.extend(["--phases", phases])
@@ -175,6 +181,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device")
     parser.add_argument("--ritnet-precision", choices=("fp32", "fp16"))
     parser.add_argument("--ritnet-batch-size", type=int)
+    parser.add_argument("--yolo-batch-size", type=int)
     parser.add_argument("--phases", help="Optional comma-separated phase override")
     parser.add_argument("--backend", choices=("pytorch-cuda", "ort-cuda"))
     parser.add_argument("--output")
@@ -197,6 +204,9 @@ def main() -> int:
     device = args.device or str(batch_cfg.get("device", "0"))
     precision = args.ritnet_precision or str(config["ritnet"].get("precision", "fp32"))
     batch_size = args.ritnet_batch_size or int(config["ritnet"].get("batch_size", 16))
+    yolo_batch_size = args.yolo_batch_size or int(
+        config.get("inference", {}).get("yolo_batch_size", 1)
+    )
     if batch_size <= 0:
         raise ValueError("RITnet batch size must be positive")
     backend = args.backend or str(config.get("inference", {}).get("backend", "pytorch-cuda"))
@@ -222,6 +232,7 @@ def main() -> int:
         "ritnet_precision": precision,
         "ritnet_batch_size": batch_size,
         "inference_backend": backend,
+        "yolo_batch_size": yolo_batch_size,
         "output_root": str(output_root),
         "dry_run": bool(args.dry_run),
     }, ensure_ascii=False, indent=2))
@@ -230,7 +241,7 @@ def main() -> int:
     for index, subject in enumerate(subjects, start=1):
         video = discovered[subject]
         run_dir = expected_run_dir(
-            config, output_root, subject, precision, batch_size, phases, backend
+            config, output_root, subject, precision, batch_size, phases, backend, yolo_batch_size
         )
         expected_identity = {
             "subject": subject,
@@ -242,6 +253,7 @@ def main() -> int:
             "ritnet_enabled": bool(config["ritnet"].get("enabled", True)),
             "ritnet_precision": precision,
             "ritnet_batch_size": batch_size,
+            "yolo_batch_size": yolo_batch_size,
             "max_frames": None,
             "partial_phase_selection": not is_full_phase_run,
         }
@@ -267,6 +279,7 @@ def main() -> int:
             batch_size,
             args.phases,
             backend,
+            yolo_batch_size,
         )
         print(f"[RUN {index}/{len(subjects)}] {subject}: {video}")
         print("  " + subprocess.list2cmdline(command))

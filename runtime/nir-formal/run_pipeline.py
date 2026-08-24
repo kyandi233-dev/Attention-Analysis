@@ -271,6 +271,50 @@ def yolo_detect(model: Any, frame: np.ndarray, config: dict[str, Any], device: s
     return sorted(detections, key=lambda item: item.confidence, reverse=True)
 
 
+def yolo_detect_batch(
+    model: Any,
+    frames: list[np.ndarray],
+    config: dict[str, Any],
+    device: str,
+) -> list[list[Detection]]:
+    """Run the same YOLO settings on a bounded batch of frames.
+
+    This is an experimental validation path. It keeps the downstream formal
+    processing frame-by-frame and only changes YOLO scheduling.
+    """
+    if not frames:
+        return []
+    cfg = config["yolo"]
+    results = model.predict(
+        source=frames,
+        conf=float(cfg["confidence"]),
+        imgsz=int(cfg["imgsz"]),
+        iou=float(cfg["nms_iou"]),
+        max_det=int(cfg["max_det"]),
+        device=device,
+        batch=len(frames),
+        verbose=False,
+    )
+    output: list[list[Detection]] = []
+    for result in results:
+        if result.boxes is None:
+            output.append([])
+            continue
+        detections = [
+            Detection(tuple(map(float, box)), float(conf))
+            for box, conf, cls in zip(
+                result.boxes.xyxy.cpu().numpy(),
+                result.boxes.conf.cpu().numpy(),
+                result.boxes.cls.cpu().numpy(),
+            )
+            if int(cls) == 0
+        ]
+        output.append(sorted(detections, key=lambda item: item.confidence, reverse=True))
+    if len(output) != len(frames):
+        raise RuntimeError(f"YOLO batch returned {len(output)} results for {len(frames)} frames")
+    return output
+
+
 def init_trackers(frame: np.ndarray, boxes: list[Detection], creator) -> list[Any]:
     if creator is None or len(boxes) < 2:
         return []
@@ -757,6 +801,15 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
         practice_trial_duration_ms=int(config["formal"].get("practice_trial_duration_ms", 1150)),
     )
 
+    yolo_batch_size = int(
+        getattr(args, "yolo_batch_size", None)
+        or config.get("inference", {}).get("yolo_batch_size", 1)
+    )
+    if yolo_batch_size < 1:
+        raise ValueError("YOLO batch size must be positive")
+    if yolo_batch_size > 1 and is_ort:
+        raise ValueError("Experimental YOLO batching is available only for pytorch-cuda")
+
     expected_blocks = int(config["formal"].get("expected_formal_blocks", 2))
     requested_blocks = sorted(
         int(phase[5:]) for phase in phases if phase.startswith("block") and phase[5:].isdigit()
@@ -773,6 +826,38 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
     fps = float(cap.get(cv2.CAP_PROP_FPS)) or 30.0
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
+    # Validation-only path: precompute bounded YOLO batches, then let the
+    # existing formal frame/ROI/RITnet/output path consume those detections.
+    # This deliberately uses a second video read so downstream semantics remain
+    # identical and the experimental results stay separate from formal output.
+    batched_detections: dict[int, list[Detection]] | None = None
+    if yolo_batch_size > 1:
+        batched_detections = {}
+        batch_cap = cv2.VideoCapture(str(video))
+        if not batch_cap.isOpened():
+            raise RuntimeError(f"Cannot open video for YOLO batch prepass: {video}")
+        try:
+            for window in windows:
+                batch_frames: list[np.ndarray] = []
+                batch_indices: list[int] = []
+                batch_cap.set(cv2.CAP_PROP_POS_FRAMES, window.start_frame_idx)
+                for frame_idx in range(window.start_frame_idx, window.end_frame_idx + 1):
+                    ok, frame = batch_cap.read()
+                    if not ok or frame is None:
+                        raise RuntimeError(f"Video read failed during YOLO batch prepass at frame {frame_idx}")
+                    batch_frames.append(frame)
+                    batch_indices.append(frame_idx)
+                    if len(batch_frames) >= yolo_batch_size:
+                        rows = yolo_detect_batch(model, batch_frames, config, device)
+                        batched_detections.update(zip(batch_indices, rows))
+                        batch_frames.clear()
+                        batch_indices.clear()
+                if batch_frames:
+                    rows = yolo_detect_batch(model, batch_frames, config, device)
+                    batched_detections.update(zip(batch_indices, rows))
+        finally:
+            batch_cap.release()
+
     release = str(config["formal"].get("focuswave_release", "v3.1.3"))
     output_root = Path(args.output) if args.output else resolve_package_path(config["output"]["root"])
     suffixes: list[str] = []
@@ -783,7 +868,8 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
     if args.max_frames is not None:
         suffixes.append(f"smoke{args.max_frames}")
     run_suffix = "_" + "_".join(suffixes) if suffixes else ""
-    run_name = f"{subject}_formal_{release}_yolo_b{batch_size}_{precision}{run_suffix}"
+    yolo_suffix = f"_yolo{yolo_batch_size}" if yolo_batch_size > 1 else ""
+    run_name = f"{subject}_formal_{release}{yolo_suffix}_b{batch_size}_{precision}{run_suffix}"
     out = output_root / run_name
     overlays = out / "overlays"
     overlays.mkdir(parents=True, exist_ok=True)
@@ -806,6 +892,7 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
         "ritnet_enabled": bool(ritnet),
         "ritnet_precision": ritnet.precision if ritnet else "disabled",
         "ritnet_batch_size": batch_size if ritnet else 0,
+        "yolo_batch_size": yolo_batch_size,
         "max_frames": args.max_frames,
     }
     run_id = hashlib.sha256(
@@ -898,7 +985,11 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
                 decoded_frames += 1
 
                 yolo_started = time.perf_counter()
-                detections = yolo_detect(model, frame, config, device)
+                detections = (
+                    batched_detections[frame_idx]
+                    if batched_detections is not None
+                    else yolo_detect(model, frame, config, device)
+                )
                 yolo_ms = (time.perf_counter() - yolo_started) * 1000.0
                 selected = sorted(
                     detections[:2],
@@ -1318,6 +1409,12 @@ def parse_args() -> argparse.Namespace:
     _add_common_target_args(formal_parser)
     formal_parser.add_argument("--backend", choices=("pytorch-cuda", "ort-cuda"))
     formal_parser.add_argument("--ritnet-batch-size", type=int)
+    formal_parser.add_argument(
+        "--yolo-batch-size",
+        type=int,
+        default=None,
+        help="YOLO prepass batch size; defaults to config.inference.yolo_batch_size",
+    )
     formal_parser.add_argument(
         "--max-frames",
         type=int,
