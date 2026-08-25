@@ -38,6 +38,16 @@ analysis_window:
   end: "last_formal_block_stop"
   preserve_transition_phases: true
 
+# Hard development rule: preserve expensive model outputs before filtering.
+# See docs/040-rgb/044-RGB输出Schema与信息保留原则.md before adding any model stage.
+retention:
+  schema_version: "rgb-dev-0.1"
+  preserve_supported_raw_model_outputs: true
+  preserve_frame_identity_and_timestamps: true
+  preserve_qc_flags_before_filtering: true
+  drop_invalid_rows_before_raw_save: false
+  write_manifest_for_formal_subject_outputs: true
+
 face:
   enabled: true
   status: benchmark
@@ -84,7 +94,8 @@ motion:
 qc:
   min_face_valid_rate: null
   min_pose_valid_rate: null
-  # Development warning only; not yet a formal exclusion threshold.
+  # Development warning only; not yet a formal exclusion threshold. Every gap
+  # above this value is written to rgb_timestamp_gaps.csv with full provenance.
   timestamp_gap_warning_ms: 100
 
 output:
