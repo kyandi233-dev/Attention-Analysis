@@ -13,5 +13,6 @@
 
 - `051-NIR正式路线与ROI-Tracking状态.md`：明确正式 NIR 使用逐帧 YOLO，CSRT/KCF ROI tracking 仅保留诊断/历史复现身份。
 - `052-AMD-DirectML推理后端与固定批策略.md`：记录 ONNX Runtime DirectML、固定 RITnet batch=16/FP32、provider 失败策略和 AMD 输出隔离。
+- `053-RGB分析路线与开发边界.md`：记录 RGB Face/Pose/Motion 三条主线、Py-Feat vs LibreFace benchmark、AMD/DirectML 适配边界和连续时间轴原则；当前状态为 `Proposed`。
 
-后续可继续记录眼框检测路线、RITnet 选择、眨眼/EAR/PERCLOS 方法、QC 口径、RGB 启停以及跨模态升级条件等关键决定。
+后续可继续记录眨眼/EAR/PERCLOS 方法、QC 口径、RGB backend 冻结以及跨模态升级条件等关键决定。
