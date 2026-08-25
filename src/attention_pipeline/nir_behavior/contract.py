@@ -4,8 +4,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-ALIGNMENT_SCHEMA_VERSION = 1
-ALIGNMENT_PIPELINE_VERSION = "nir-behavior-v1.1"
+ALIGNMENT_SCHEMA_VERSION = 2
+ALIGNMENT_PIPELINE_VERSION = "nir-behavior-v1.2"
 FULLCLASS_EXTENSION_VERSION = "ritnet-fullclass-v1.2-fast-qc"
 
 PIR_COLUMN = "fullclass_pupil_to_iris_diameter_ratio"
