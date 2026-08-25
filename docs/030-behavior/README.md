@@ -8,24 +8,18 @@
 
 当前说明按顺序阅读：`031-正式BB行为分析流程.md`、`032-行为指标定义.md`、`033-统计分析方法.md`、`034-行为QC与输出.md`。行为与 NIR 的跨模态时间对齐和 pupil/SART 分析见 `035-NIR与正式SART行为数据对齐分析方法.md`。旧 v3.0 BBB 的三 block 统计、B1↔B3、sub-011~030 队列和旧结果均不属于当前正式分析。
 
-## 当前数据位置
+## 当前 NVIDIA 数据位置
 
-正式原始数据在逻辑上位于 `正式实验` 与 `Data`。E:/、F:/ 是两块外接存储设备常见的动态盘符；NVIDIA 工作站当前也可能把正式 `Data` 挂载为 `J:/Data`。因此 Behavior 与 NIR current config 使用同一候选根集合：
+当前 `nvidia-cuda` 分支对应的 RTX 5060 工作站正式数据根固定为：
 
 ```text
-E:/正式实验
-F:/正式实验
-E:/Data
-F:/Data
 J:/Data
 ```
 
-reader 会忽略不存在的候选根，并在所有有效根中发现正式被试。若同一被试的 `beh/` 目录同时存在于多个有效根，程序会直接报告重复数据，而不是按 roots 顺序静默选择一份。
-
-典型最终 BB 被试目录如下；前缀 `<active-root>` 表示当次实际挂载后有效的任一候选根：
+典型最终 BB 被试目录如下：
 
 ```text
-<active-root>/sub-031_/
+J:/Data/sub-031_/
 ├── beh/
 │   ├── esc_keypresses.csv
 │   ├── master_timeline.csv
@@ -39,6 +33,10 @@ reader 会忽略不存在的候选根，并在所有有效根中发现正式被�
 ```
 
 当前 BB behavior reader 直接使用两个正式 block CSV；`master_timeline.csv`、practice、summary 与 NIR timestamps 是后续时序对齐、QC 和跨模态分析的重要辅助数据，但不是当前 block-level SART 指标提取的替代文件。
+
+当前 NIR full-class CSV 已保留 `frame_idx / video_time_ms / unix_ms / phase_time_ms / phase`；正式 NIR ↔ SART trial alignment 作为独立下游步骤，通过 NIR `unix_ms` 与行为绝对时间戳匹配，不需要为行为对齐重新运行 RITnet。
+
+> AMD/DirectML 工作站的数据根由 `amd-DirectML` 分支自己的配置维护；不要把 AMD 的路径复制进当前 NVIDIA 分支。
 
 ## 历史 BBB
 
