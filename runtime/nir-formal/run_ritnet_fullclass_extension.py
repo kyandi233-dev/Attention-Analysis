@@ -1,8 +1,17 @@
-"""Post-hoc RITnet four-class extension for one completed formal NIR run.
+"""Fast post-hoc RITnet four-class extension for one completed formal NIR run.
 
-The extension reuses the source run's saved video/frame/ROI coordinates, skips
-YOLO entirely, re-runs the same frozen RITnet b16 FP32 model, and writes a
-subject-numbered CSV/JSON set without modifying the original eyes.csv.
+The extension reuses source video/frame/ROI coordinates, skips YOLO, keeps the
+frozen 640x400 FP32 fixed-b16 RITnet method, and writes subject-numbered outputs.
+
+Fast production mode:
+- requests labels_u8 only from ONNX;
+- reuses the frozen source pupil geometry/confidence from eyes.csv;
+- overlaps CPU decode/crop/preprocess with DirectML inference;
+- postprocesses independent eye label maps in a small worker pool.
+
+Validation mode (``--validate-pupil``) additionally requests pupil probability
+and recomputes pupil geometry so parity against the original formal eyes.csv can
+be checked before running the full batch.
 """
 from __future__ import annotations
 
@@ -14,7 +23,8 @@ import os
 import sys
 import time
 import uuid
-from collections import defaultdict
+from collections import defaultdict, deque
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -34,7 +44,10 @@ from ritnet_fullclass_contract import (
     normalize_subject,
     subject_output_paths,
 )
-from ritnet_fullclass_metrics import summarize_fullclass
+from ritnet_fullclass_metrics import (
+    summarize_fullclass,
+    summarize_fullclass_from_source,
+)
 from ritnet_fullclass_runtime import RitnetFullClassRuntime
 
 PARITY_TOLERANCE = 1e-3
@@ -87,6 +100,8 @@ def resolve_package_path(value: str | Path) -> Path:
 def parse_bool(value: Any) -> bool | None:
     if value is None:
         return None
+    if isinstance(value, bool):
+        return value
     text = str(value).strip().lower()
     if text in {"1", "true", "yes", "y"}:
         return True
@@ -169,6 +184,7 @@ def extension_completion_valid(
     *,
     source_eyes_sha256: str,
     ritnet_model_sha256: str,
+    pupil_validation_mode: bool,
 ) -> bool:
     if not path.is_file():
         return False
@@ -182,18 +198,30 @@ def extension_completion_valid(
         and marker.get("status") == "complete"
         and marker.get("source_eyes_sha256") == source_eyes_sha256
         and marker.get("ritnet_model_sha256") == ritnet_model_sha256
+        and bool(marker.get("pupil_validation_mode")) == bool(pupil_validation_mode)
         and all(Path(value).is_file() for value in marker.get("required_artifacts", []))
     )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Re-run RITnet only and retain background/sclera/iris/pupil metrics"
+        description="Re-run frozen RITnet only and retain background/sclera/iris/pupil metrics"
     )
     parser.add_argument("--run-dir", type=Path, required=True, help="Completed formal subject run directory")
     parser.add_argument("--config", type=Path, default=PACKAGE_ROOT / "config.yaml")
     parser.add_argument("--device", default="0")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--validate-pupil",
+        action="store_true",
+        help="Validation pass: also request pupil probability and recompute pupil geometry for parity.",
+    )
+    parser.add_argument(
+        "--postprocess-workers",
+        type=int,
+        default=4,
+        help="CPU workers for independent full-class label-map postprocessing (default: 4).",
+    )
     parser.add_argument(
         "--allow-model-mismatch",
         action="store_true",
@@ -204,6 +232,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if args.postprocess_workers <= 0:
+        raise ValueError("--postprocess-workers must be positive")
+
     run_dir = args.run_dir.resolve()
     if not run_dir.is_dir():
         raise FileNotFoundError(run_dir)
@@ -246,6 +277,7 @@ def main() -> int:
         outputs["completion"],
         source_eyes_sha256=source_eyes_hash,
         ritnet_model_sha256=current_model_hash,
+        pupil_validation_mode=bool(args.validate_pupil),
     ):
         print(f"[SKIP] {subject}: validated -> {outputs['completion']}")
         return 0
@@ -277,6 +309,7 @@ def main() -> int:
         rows_by_frame[parse_int(row["frame_idx"])].append(row)
     target_frames = sorted(rows_by_frame)
     min_frame, max_frame = target_frames[0], target_frames[-1]
+    target_set = set(target_frames)
 
     analysis_size = (int(config["roi"]["width"]), int(config["roi"]["height"]))
     runtime = RitnetFullClassRuntime(
@@ -291,11 +324,24 @@ def main() -> int:
         precision="fp32",
     )
 
-    prototype = summarize_fullclass(
-        np.zeros((runtime.input_size[1], runtime.input_size[0]), dtype=np.uint8),
-        np.zeros((runtime.input_size[1], runtime.input_size[0]), dtype=np.float32),
-        analysis_size,
+    prototype_source = rows[0]
+    prototype_labels = np.zeros(
+        (runtime.input_size[1], runtime.input_size[0]),
+        dtype=np.uint8,
     )
+    if args.validate_pupil:
+        prototype = summarize_fullclass(
+            prototype_labels,
+            np.zeros_like(prototype_labels, dtype=np.float32),
+            analysis_size,
+        )
+    else:
+        prototype = summarize_fullclass_from_source(
+            prototype_labels,
+            prototype_source,
+            analysis_size,
+        )
+
     metric_fields = [f"fullclass_{name}" for name in prototype]
     parity_fields = [
         "source_ritnet_found",
@@ -306,8 +352,14 @@ def main() -> int:
         "pupil_parity_confidence_abs_diff",
         "pupil_parity_ok",
     ]
+    provenance_fields = [
+        "fullclass_source_pupil_reused",
+        "fullclass_pupil_validation_mode",
+    ]
     output_fields = source_fields + [
-        name for name in metric_fields + parity_fields if name not in source_fields
+        name
+        for name in metric_fields + parity_fields + provenance_fields
+        if name not in source_fields
     ]
 
     started_at = datetime.now(timezone.utc).isoformat()
@@ -326,8 +378,13 @@ def main() -> int:
         "ritnet_device": str(runtime.device),
         "ritnet_precision": runtime.precision,
         "ritnet_batch_size": runtime.FIXED_BATCH_SIZE,
+        "ritnet_input_size": list(runtime.input_size),
         "analysis_size": list(analysis_size),
         "class_mapping": {str(key): value for key, value in CLASS_MAPPING.items()},
+        "labels_only": not bool(args.validate_pupil),
+        "source_pupil_reused": not bool(args.validate_pupil),
+        "pupil_validation_mode": bool(args.validate_pupil),
+        "postprocess_workers": int(args.postprocess_workers),
         "expected_rows": len(rows),
         "processed_rows": 0,
         "started_at_utc": started_at,
@@ -345,30 +402,126 @@ def main() -> int:
         raise RuntimeError(f"Cannot open video: {video}")
     cap.set(cv2.CAP_PROP_POS_FRAMES, min_frame)
 
-    pending: list[tuple[dict[str, str], np.ndarray]] = []
-    processed_rows = 0
+    current_frame = min_frame
+    raw_backlog: deque[tuple[dict[str, str], np.ndarray]] = deque()
     decoded_frames = 0
+    decode_cpu_ms = 0.0
+    crop_cpu_ms = 0.0
+    preprocess_cpu_ms = 0.0
+    gpu_ms = 0.0
+    postprocess_cpu_ms = 0.0
+    csv_write_ms = 0.0
+
+    processed_rows = 0
     normalization_valid_count = 0
     parity_ok_count = 0
     parity_mismatch_count = 0
     fraction_sums = defaultdict(float)
     wall_started = time.perf_counter()
 
-    def flush(writer: csv.DictWriter) -> None:
-        nonlocal processed_rows, normalization_valid_count, parity_ok_count, parity_mismatch_count
-        if not pending:
-            return
-        metrics_batch = runtime.infer_batch([roi for _, roi in pending])
-        for (source_row, _), metrics in zip(pending, metrics_batch):
+    def produce_batch() -> dict[str, Any] | None:
+        nonlocal current_frame, decoded_frames, decode_cpu_ms, crop_cpu_ms, preprocess_cpu_ms
+
+        items: list[tuple[dict[str, str], np.ndarray]] = []
+        while raw_backlog and len(items) < runtime.FIXED_BATCH_SIZE:
+            items.append(raw_backlog.popleft())
+
+        while len(items) < runtime.FIXED_BATCH_SIZE and current_frame <= max_frame:
+            decode_started = time.perf_counter()
+            ok, frame = cap.read()
+            decode_cpu_ms += (time.perf_counter() - decode_started) * 1000.0
+            if not ok or frame is None:
+                raise RuntimeError(f"Video read failed at frame {current_frame}: {video}")
+            decoded_frames += 1
+
+            if current_frame in target_set:
+                for source_row in rows_by_frame[current_frame]:
+                    crop_started = time.perf_counter()
+                    x1 = parse_int(source_row["roi_x1"])
+                    y1 = parse_int(source_row["roi_y1"])
+                    x2 = parse_int(source_row["roi_x2"])
+                    y2 = parse_int(source_row["roi_y2"])
+                    if not (0 <= x1 < x2 <= frame.shape[1] and 0 <= y1 < y2 <= frame.shape[0]):
+                        raise ValueError(
+                            f"Invalid ROI at {subject} frame={current_frame} eye={source_row.get('eye')}: "
+                            f"{(x1, y1, x2, y2)} for frame shape {frame.shape}"
+                        )
+                    roi = cv2.cvtColor(frame[y1:y2, x1:x2], cv2.COLOR_BGR2GRAY)
+                    crop_cpu_ms += (time.perf_counter() - crop_started) * 1000.0
+                    raw_backlog.append((source_row, np.ascontiguousarray(roi)))
+
+            current_frame += 1
+            while raw_backlog and len(items) < runtime.FIXED_BATCH_SIZE:
+                items.append(raw_backlog.popleft())
+
+        if not items:
+            return None
+
+        prep_started = time.perf_counter()
+        tensor, valid_size, prep_timing = runtime.prepare_batch([roi for _, roi in items])
+        preprocess_cpu_ms += (time.perf_counter() - prep_started) * 1000.0
+        return {
+            "items": items,
+            "tensor": tensor,
+            "valid_size": valid_size,
+            "prep_timing": prep_timing,
+        }
+
+    def postprocess_one(
+        source_row: dict[str, str],
+        labels: np.ndarray,
+        pupil_probability: np.ndarray | None,
+    ) -> tuple[dict[str, Any], dict[str, Any], float]:
+        started = time.perf_counter()
+        if args.validate_pupil:
+            metrics = summarize_fullclass(
+                labels,
+                pupil_probability,
+                analysis_size,
+            )
             parity = pupil_parity(source_row, metrics)
+        else:
+            metrics = summarize_fullclass_from_source(
+                labels,
+                source_row,
+                analysis_size,
+            )
+            parity = {
+                "source_ritnet_found": parse_bool(source_row.get("ritnet_found")),
+                "pupil_parity_found_match": None,
+                "pupil_parity_center_max_abs_diff": None,
+                "pupil_parity_equiv_diameter_abs_diff": None,
+                "pupil_parity_contour_area_abs_diff": None,
+                "pupil_parity_confidence_abs_diff": None,
+                "pupil_parity_ok": None,
+            }
+        return metrics, parity, (time.perf_counter() - started) * 1000.0
+
+    def consume_batch(
+        writer: csv.DictWriter,
+        batch_futures: list[tuple[dict[str, str], Future]],
+    ) -> None:
+        nonlocal processed_rows, normalization_valid_count
+        nonlocal parity_ok_count, parity_mismatch_count, postprocess_cpu_ms, csv_write_ms
+
+        for source_row, future in batch_futures:
+            metrics, parity, post_ms = future.result()
+            postprocess_cpu_ms += post_ms
             output_row: dict[str, Any] = dict(source_row)
             output_row.update({f"fullclass_{key}": value for key, value in metrics.items()})
             output_row.update(parity)
+            output_row["fullclass_source_pupil_reused"] = not bool(args.validate_pupil)
+            output_row["fullclass_pupil_validation_mode"] = bool(args.validate_pupil)
+
+            write_started = time.perf_counter()
             writer.writerow(output_row)
+            csv_write_ms += (time.perf_counter() - write_started) * 1000.0
+
             processed_rows += 1
             normalization_valid_count += int(bool(metrics.get("normalization_valid")))
-            parity_ok_count += int(bool(parity["pupil_parity_ok"]))
-            parity_mismatch_count += int(not bool(parity["pupil_parity_ok"]))
+            if args.validate_pupil:
+                parity_ok_count += int(bool(parity["pupil_parity_ok"]))
+                parity_mismatch_count += int(not bool(parity["pupil_parity_ok"]))
             for key in (
                 "background_fraction",
                 "sclera_fraction",
@@ -377,7 +530,13 @@ def main() -> int:
                 "ocular_fraction",
             ):
                 fraction_sums[key] += float(metrics[key])
-        pending.clear()
+
+    producer_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ritnet-prep")
+    post_pool = ThreadPoolExecutor(
+        max_workers=int(args.postprocess_workers),
+        thread_name_prefix="ritnet-post",
+    )
+    post_batches: deque[list[tuple[dict[str, str], Future]]] = deque()
 
     try:
         outputs["csv"].parent.mkdir(parents=True, exist_ok=True)
@@ -385,33 +544,46 @@ def main() -> int:
             writer = csv.DictWriter(out_handle, fieldnames=output_fields, extrasaction="ignore")
             writer.writeheader()
 
-            current_frame = min_frame
-            target_set = set(target_frames)
-            while current_frame <= max_frame:
-                ok, frame = cap.read()
-                if not ok or frame is None:
-                    raise RuntimeError(f"Video read failed at frame {current_frame}: {video}")
-                decoded_frames += 1
+            next_batch_future = producer_pool.submit(produce_batch)
+            while True:
+                batch = next_batch_future.result()
+                if batch is None:
+                    break
 
-                if current_frame in target_set:
-                    for source_row in rows_by_frame[current_frame]:
-                        x1 = parse_int(source_row["roi_x1"])
-                        y1 = parse_int(source_row["roi_y1"])
-                        x2 = parse_int(source_row["roi_x2"])
-                        y2 = parse_int(source_row["roi_y2"])
-                        if not (0 <= x1 < x2 <= frame.shape[1] and 0 <= y1 < y2 <= frame.shape[0]):
-                            raise ValueError(
-                                f"Invalid ROI at {subject} frame={current_frame} eye={source_row.get('eye')}: "
-                                f"{(x1, y1, x2, y2)} for frame shape {frame.shape}"
-                            )
-                        roi = cv2.cvtColor(frame[y1:y2, x1:x2], cv2.COLOR_BGR2GRAY)
-                        pending.append((source_row, np.ascontiguousarray(roi)))
-                        if len(pending) >= runtime.FIXED_BATCH_SIZE:
-                            flush(writer)
-                current_frame += 1
+                next_batch_future = producer_pool.submit(produce_batch)
 
-            flush(writer)
+                gpu_started = time.perf_counter()
+                labels_batch, pupil_prob_batch, _ = runtime.infer_prepared(
+                    batch["tensor"],
+                    int(batch["valid_size"]),
+                    include_pupil_probability=bool(args.validate_pupil),
+                )
+                gpu_ms += (time.perf_counter() - gpu_started) * 1000.0
+
+                futures: list[tuple[dict[str, str], Future]] = []
+                for index, (source_row, _) in enumerate(batch["items"]):
+                    probability = (
+                        pupil_prob_batch[index]
+                        if pupil_prob_batch is not None
+                        else None
+                    )
+                    future = post_pool.submit(
+                        postprocess_one,
+                        source_row,
+                        labels_batch[index],
+                        probability,
+                    )
+                    futures.append((source_row, future))
+                post_batches.append(futures)
+
+                if len(post_batches) >= 2:
+                    consume_batch(writer, post_batches.popleft())
+
+            while post_batches:
+                consume_batch(writer, post_batches.popleft())
     finally:
+        producer_pool.shutdown(wait=True, cancel_futures=False)
+        post_pool.shutdown(wait=True, cancel_futures=False)
         cap.release()
 
     elapsed = time.perf_counter() - wall_started
@@ -430,11 +602,25 @@ def main() -> int:
         "max_frame_idx": max_frame,
         "elapsed_sec": elapsed,
         "roi_per_sec": (processed_rows / elapsed) if elapsed else None,
+        "labels_only": not bool(args.validate_pupil),
+        "source_pupil_reused": not bool(args.validate_pupil),
+        "pupil_validation_mode": bool(args.validate_pupil),
+        "postprocess_workers": int(args.postprocess_workers),
         "normalization_valid_count": normalization_valid_count,
         "normalization_valid_fraction": normalization_valid_count / processed_rows,
-        "pupil_parity_ok_count": parity_ok_count,
-        "pupil_parity_mismatch_count": parity_mismatch_count,
-        "pupil_parity_ok_fraction": parity_ok_count / processed_rows,
+        "pupil_parity_ok_count": parity_ok_count if args.validate_pupil else None,
+        "pupil_parity_mismatch_count": parity_mismatch_count if args.validate_pupil else None,
+        "pupil_parity_ok_fraction": (
+            parity_ok_count / processed_rows if args.validate_pupil else None
+        ),
+        "timing_cpu_work_ms": {
+            "decode": decode_cpu_ms,
+            "roi_crop": crop_cpu_ms,
+            "preprocess": preprocess_cpu_ms,
+            "postprocess_sum_across_workers": postprocess_cpu_ms,
+            "csv_write": csv_write_ms,
+        },
+        "timing_gpu_ms": gpu_ms,
         "mean_class_fractions": {
             key: fraction_sums[key] / processed_rows
             for key in (
@@ -466,11 +652,33 @@ def main() -> int:
         "input_size": list(runtime.input_size),
         "analysis_size": list(analysis_size),
         "class_mapping": {str(key): value for key, value in CLASS_MAPPING.items()},
+        "labels_only": not bool(args.validate_pupil),
+        "source_pupil_reused": not bool(args.validate_pupil),
+        "pupil_validation_mode": bool(args.validate_pupil),
+        "postprocess_workers": int(args.postprocess_workers),
+        "time_mapping": {
+            "copied_from_source_eyes_csv": True,
+            "fields": [
+                "phase",
+                "phase_segment",
+                "frame_idx",
+                "video_time_ms",
+                "unix_ms",
+                "phase_time_ms",
+            ],
+            "note": (
+                "Behavior/trial alignment should be performed later from unix_ms "
+                "against behavior absolute timestamps; RITnet does not need to be rerun."
+            ),
+        },
         "notes": [
             "Original eyes.csv is never modified.",
             "YOLO is not re-run; source frame_idx and ROI coordinates are reused exactly.",
-            "The current ONNX exposes hard four-class labels and pupil probability only; "
-            "iris/sclera/background probabilities are therefore not fabricated.",
+            "Production fast mode requests only hard labels_u8 from the existing ONNX.",
+            "Production fast mode reuses the already-frozen pupil geometry/confidence from source eyes.csv.",
+            "Validation mode requests pupil probability and recomputes pupil geometry only for parity checking.",
+            "RITnet method remains 640x400, FP32, fixed batch=16; no FP16 or lower-resolution path is used.",
+            "Iris/sclera/background probabilities are not fabricated.",
             "Ocular aperture fields are candidate geometry/QC signals, not validated blink or PERCLOS labels.",
         ],
     }
@@ -483,7 +691,7 @@ def main() -> int:
         "output_csv_sha256": sha256(outputs["csv"]),
         "summary_sha256": sha256(outputs["summary"]),
         "manifest_sha256": sha256(outputs["manifest"]),
-        "pupil_parity_mismatch_count": parity_mismatch_count,
+        "pupil_parity_mismatch_count": parity_mismatch_count if args.validate_pupil else None,
         "normalization_valid_count": normalization_valid_count,
         "finished_at_utc": datetime.now(timezone.utc).isoformat(),
     }

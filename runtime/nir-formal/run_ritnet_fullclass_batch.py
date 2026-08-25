@@ -1,4 +1,4 @@
-"""Sequential batch runner for post-hoc RITnet four-class extension."""
+"""Sequential batch runner for the fast post-hoc RITnet four-class extension."""
 from __future__ import annotations
 
 import argparse
@@ -78,12 +78,28 @@ def select_run(candidates: list[tuple[Path, dict[str, Any]]]) -> tuple[Path, dic
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Batch RITnet full-class extension")
-    parser.add_argument("--output", type=Path, required=True, help="Formal AMD output root containing sub-*_formal_* directories")
+    parser = argparse.ArgumentParser(description="Batch fast RITnet full-class extension")
+    parser.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+        help="Formal AMD output root containing sub-*_formal_* directories",
+    )
     parser.add_argument("--config", type=Path, default=PACKAGE_ROOT / "config.yaml")
     parser.add_argument("--subjects", help="Optional comma-separated subject filter")
     parser.add_argument("--device", default="0")
     parser.add_argument("--force", action="store_true")
+    parser.add_argument(
+        "--validate-pupil",
+        action="store_true",
+        help="Validation mode: recompute pupil/probability for parity. Use on a test subject, not full batch.",
+    )
+    parser.add_argument(
+        "--postprocess-workers",
+        type=int,
+        default=4,
+        help="CPU workers for full-class postprocessing (default: 4).",
+    )
     parser.add_argument("--allow-model-mismatch", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
@@ -91,6 +107,9 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if args.postprocess_workers <= 0:
+        raise ValueError("--postprocess-workers must be positive")
+
     output_root = args.output.resolve()
     if not output_root.is_dir():
         raise FileNotFoundError(output_root)
@@ -105,7 +124,10 @@ def main() -> int:
     }
 
     if requested is None:
-        subjects = sorted((subject for subject in grouped if subject not in excluded), key=lambda x: int(x[4:]))
+        subjects = sorted(
+            (subject for subject in grouped if subject not in excluded),
+            key=lambda x: int(x[4:]),
+        )
     else:
         missing = [subject for subject in requested if subject not in grouped]
         if missing:
@@ -137,6 +159,9 @@ def main() -> int:
                 "output_root": str(output_root),
                 "selected_count": len(selections),
                 "excluded_subjects": sorted(excluded),
+                "pupil_validation_mode": bool(args.validate_pupil),
+                "postprocess_workers": int(args.postprocess_workers),
+                "ritnet_method": "640x400 FP32 fixed-b16",
                 "selections": selections,
                 "dry_run": bool(args.dry_run),
             },
@@ -162,9 +187,13 @@ def main() -> int:
             str(config_path),
             "--device",
             str(args.device),
+            "--postprocess-workers",
+            str(args.postprocess_workers),
         ]
         if args.force:
             command.append("--force")
+        if args.validate_pupil:
+            command.append("--validate-pupil")
         if args.allow_model_mismatch:
             command.append("--allow-model-mismatch")
 
@@ -178,6 +207,8 @@ def main() -> int:
                 "status": status,
                 "returncode": completed.returncode,
                 "run_dir": str(run_dir),
+                "pupil_validation_mode": bool(args.validate_pupil),
+                "postprocess_workers": int(args.postprocess_workers),
             }
         )
         if completed.returncode != 0 and not continue_on_error:

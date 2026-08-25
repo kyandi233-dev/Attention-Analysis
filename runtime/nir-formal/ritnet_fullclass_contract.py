@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 EXTENSION_SCHEMA_VERSION = 1
-EXTENSION_VERSION = "ritnet-fullclass-v1"
+EXTENSION_VERSION = "ritnet-fullclass-v1.1-fast"
 
 CLASS_BACKGROUND = 0
 CLASS_SCLERA = 1

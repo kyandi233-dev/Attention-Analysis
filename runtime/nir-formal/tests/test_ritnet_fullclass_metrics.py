@@ -7,11 +7,12 @@ import cv2
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
-if str(HERE) not in sys.path:
-    sys.path.insert(0, str(HERE))
+PACKAGE_ROOT = HERE.parent
+if str(PACKAGE_ROOT) not in sys.path:
+    sys.path.insert(0, str(PACKAGE_ROOT))
 
 from ritnet_fullclass_contract import subject_output_paths
-from ritnet_fullclass_metrics import summarize_fullclass
+from ritnet_fullclass_metrics import summarize_fullclass, summarize_fullclass_from_source
 
 
 def synthetic_labels() -> np.ndarray:
@@ -20,6 +21,20 @@ def synthetic_labels() -> np.ndarray:
     cv2.ellipse(labels, (160, 80), (42, 38), 0, 0, 360, 2, -1)
     cv2.ellipse(labels, (160, 80), (18, 16), 0, 0, 360, 3, -1)
     return labels
+
+
+def source_pupil_from_reference(reference: dict) -> dict[str, str]:
+    return {
+        "ritnet_found": "True",
+        "pupil_center_x": str(reference["pupil_center_x"]),
+        "pupil_center_y": str(reference["pupil_center_y"]),
+        "pupil_axis_a": str(reference["pupil_axis_a"]),
+        "pupil_axis_b": str(reference["pupil_axis_b"]),
+        "pupil_angle_deg": str(reference["pupil_angle_deg"]),
+        "pupil_mask_area": str(reference["pupil_contour_area"]),
+        "pupil_equiv_diameter": str(reference["pupil_equiv_diameter"]),
+        "pupil_confidence": str(reference["pupil_confidence"]),
+    }
 
 
 def test_fullclass_counts_geometry_and_normalization():
@@ -45,6 +60,31 @@ def test_fullclass_counts_geometry_and_normalization():
     assert result["pupil_confidence"] > 0.89
 
 
+def test_fast_path_reuses_source_pupil_without_changing_normalized_geometry():
+    labels = synthetic_labels()
+    probs = np.full(labels.shape, 0.9, dtype=np.float32)
+    reference = summarize_fullclass(labels, probs, analysis_size=(320, 160))
+    source = source_pupil_from_reference(reference)
+    fast = summarize_fullclass_from_source(labels, source, analysis_size=(320, 160))
+
+    assert fast["pupil_fit_valid"] is True
+    assert fast["iris_outer_fit_valid"] is True
+    assert fast["normalization_valid"] is True
+    assert np.isclose(
+        fast["pupil_to_iris_diameter_ratio"],
+        reference["pupil_to_iris_diameter_ratio"],
+        rtol=0,
+        atol=1e-6,
+    )
+    assert np.isclose(
+        fast["pupil_to_iris_ellipse_area_ratio"],
+        reference["pupil_to_iris_ellipse_area_ratio"],
+        rtol=0,
+        atol=1e-6,
+    )
+    assert np.isclose(fast["pupil_confidence"], 0.9, atol=1e-6)
+
+
 def test_fullclass_empty_pupil_is_not_normalizable():
     labels = synthetic_labels()
     labels[labels == 3] = 2
@@ -53,6 +93,25 @@ def test_fullclass_empty_pupil_is_not_normalizable():
 
     assert result["pupil_fit_valid"] is False
     assert result["iris_outer_fit_valid"] is True
+    assert result["normalization_valid"] is False
+    assert result["pupil_to_iris_diameter_ratio"] is None
+
+
+def test_fast_path_missing_source_pupil_is_not_normalizable():
+    labels = synthetic_labels()
+    source = {
+        "ritnet_found": "False",
+        "pupil_center_x": "",
+        "pupil_center_y": "",
+        "pupil_axis_a": "",
+        "pupil_axis_b": "",
+        "pupil_angle_deg": "",
+        "pupil_mask_area": "",
+        "pupil_equiv_diameter": "",
+        "pupil_confidence": "0",
+    }
+    result = summarize_fullclass_from_source(labels, source, analysis_size=(320, 160))
+    assert result["pupil_fit_valid"] is False
     assert result["normalization_valid"] is False
     assert result["pupil_to_iris_diameter_ratio"] is None
 

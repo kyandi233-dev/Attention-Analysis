@@ -1,19 +1,16 @@
-"""RITnet full-class DirectML adapter for post-hoc ocular extension.
+"""Fast RITnet full-class DirectML adapter for post-hoc ocular extension.
 
-This module intentionally does not change the frozen production pupil-only
-runtime. It reuses the same ONNX, preprocessing, fixed batch=16 and analysis
-geometry, but retains all four hard segmentation classes for downstream
-metrics.
+Production mode requests only the hard four-class label output. Validation mode
+can additionally request the pupil-probability output to reproduce the frozen
+source pupil result. RITnet remains FP32, 640x400, fixed batch=16.
 """
 from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 
-from ritnet_fullclass_metrics import summarize_fullclass
 from ritnet_runtime import RitnetRuntime
 
 
@@ -44,22 +41,16 @@ class RitnetFullClassRuntime:
         self.precision = self.base.precision
         self.providers = list(self.base.providers)
         self.weights = Path(weights)
-        self.last_timing: dict[str, float | int | str] = {}
+        self.label_output_name = self.base.output_names[0]
+        self.pupil_probability_output_name = self.base.output_names[1]
 
-    def infer_batch(self, roi_grays: list[np.ndarray]) -> list[dict[str, Any]]:
+    def prepare_batch(
+        self,
+        roi_grays: list[np.ndarray],
+    ) -> tuple[np.ndarray, int, dict[str, float | int | str]]:
+        """CPU-only preprocessing, safe to run while previous batch is on DirectML."""
         if not roi_grays:
-            self.last_timing = {
-                "batch_size": 0,
-                "valid_batch_size": 0,
-                "padded_count": 0,
-                "precision": self.precision,
-                "preprocess_ms": 0.0,
-                "gpu_and_transfer_ms": 0.0,
-                "postprocess_ms": 0.0,
-                "total_ms": 0.0,
-            }
-            return []
-
+            raise ValueError("prepare_batch requires at least one ROI")
         valid_batch_size = len(roi_grays)
         if valid_batch_size > self.FIXED_BATCH_SIZE:
             raise ValueError(
@@ -67,46 +58,79 @@ class RitnetFullClassRuntime:
                 f"got {valid_batch_size}"
             )
 
-        total_started = time.perf_counter()
-        preprocess_started = time.perf_counter()
+        started = time.perf_counter()
         images = [self.base._preprocess_one(roi) for roi in roi_grays]
         padded_count = self.FIXED_BATCH_SIZE - valid_batch_size
         if padded_count:
             images.extend([images[-1]] * padded_count)
+
         tensor = np.stack(images, axis=0).astype(np.float32, copy=False)
         tensor = ((tensor / np.float32(255.0) - np.float32(0.5)) / np.float32(0.5))[
             :, None, :, :
         ]
         tensor = np.ascontiguousarray(tensor, dtype=np.float32)
-        preprocess_ms = (time.perf_counter() - preprocess_started) * 1000.0
-
-        gpu_started = time.perf_counter()
-        labels_batch, pupil_prob_batch = self.base.session.run(
-            self.base.output_names,
-            {self.base.input_name: tensor},
-        )
-        labels_batch = np.asarray(labels_batch[:valid_batch_size], dtype=np.uint8)
-        pupil_prob_batch = np.asarray(
-            pupil_prob_batch[:valid_batch_size],
-            dtype=np.float32,
-        )
-        gpu_and_transfer_ms = (time.perf_counter() - gpu_started) * 1000.0
-
-        post_started = time.perf_counter()
-        results = [
-            summarize_fullclass(labels, pupil_prob, self.analysis_size)
-            for labels, pupil_prob in zip(labels_batch, pupil_prob_batch)
-        ]
-        postprocess_ms = (time.perf_counter() - post_started) * 1000.0
-
-        self.last_timing = {
-            "batch_size": self.FIXED_BATCH_SIZE,
+        timing = {
             "valid_batch_size": valid_batch_size,
             "padded_count": padded_count,
+            "preprocess_ms": (time.perf_counter() - started) * 1000.0,
+        }
+        return tensor, valid_batch_size, timing
+
+    def infer_prepared(
+        self,
+        tensor: np.ndarray,
+        valid_batch_size: int,
+        *,
+        include_pupil_probability: bool = False,
+    ) -> tuple[np.ndarray, np.ndarray | None, dict[str, float | int | str]]:
+        """Run one prepared fixed-b16 tensor; production requests labels only."""
+        output_names = (
+            [self.label_output_name, self.pupil_probability_output_name]
+            if include_pupil_probability
+            else [self.label_output_name]
+        )
+        started = time.perf_counter()
+        outputs = self.base.session.run(
+            output_names,
+            {self.base.input_name: tensor},
+        )
+        labels_batch = np.asarray(
+            outputs[0][:valid_batch_size],
+            dtype=np.uint8,
+        )
+        pupil_prob_batch = None
+        if include_pupil_probability:
+            pupil_prob_batch = np.asarray(
+                outputs[1][:valid_batch_size],
+                dtype=np.float32,
+            )
+
+        timing = {
+            "batch_size": self.FIXED_BATCH_SIZE,
+            "valid_batch_size": int(valid_batch_size),
             "precision": self.precision,
-            "preprocess_ms": preprocess_ms,
-            "gpu_and_transfer_ms": gpu_and_transfer_ms,
-            "postprocess_ms": postprocess_ms,
+            "labels_only": not include_pupil_probability,
+            "gpu_and_transfer_ms": (time.perf_counter() - started) * 1000.0,
+        }
+        return labels_batch, pupil_prob_batch, timing
+
+    def infer_batch(
+        self,
+        roi_grays: list[np.ndarray],
+        *,
+        include_pupil_probability: bool = False,
+    ) -> tuple[np.ndarray, np.ndarray | None, dict[str, float | int | str]]:
+        """Compatibility wrapper for benchmarks/tests."""
+        total_started = time.perf_counter()
+        tensor, valid, prep = self.prepare_batch(roi_grays)
+        labels, probs, gpu = self.infer_prepared(
+            tensor,
+            valid,
+            include_pupil_probability=include_pupil_probability,
+        )
+        timing: dict[str, float | int | str] = {
+            **prep,
+            **gpu,
             "total_ms": (time.perf_counter() - total_started) * 1000.0,
         }
-        return results
+        return labels, probs, timing

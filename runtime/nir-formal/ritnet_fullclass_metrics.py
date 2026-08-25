@@ -7,7 +7,7 @@ system (320x160 in the current formal NIR pipeline).
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Mapping
 
 import cv2
 import numpy as np
@@ -122,8 +122,6 @@ def _ocular_aperture_metrics(mask: np.ndarray) -> dict[str, Any]:
     width = x_max - x_min + 1
     height = y_max - y_min + 1
 
-    # Avoid single extreme edge columns. Use the central 80% of the visible
-    # ocular horizontal span and summarize per-column vertical apertures.
     left = x_min + int(round(0.10 * max(0, width - 1)))
     right = x_min + int(round(0.90 * max(0, width - 1)))
     heights: list[int] = []
@@ -154,52 +152,101 @@ def _ocular_aperture_metrics(mask: np.ndarray) -> dict[str, Any]:
     }
 
 
-def summarize_fullclass(
-    labels: np.ndarray,
-    pupil_probability: np.ndarray | None,
-    analysis_size: tuple[int, int] = (320, 160),
+def _coerce_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return float(text)
+    except (TypeError, ValueError):
+        return None
+
+
+def _coerce_bool(value: Any) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y"}:
+        return True
+    if text in {"0", "false", "no", "n"}:
+        return False
+    if not text:
+        return None
+    return None
+
+
+def _source_pupil_geometry(
+    source: Mapping[str, Any],
+    pupil_mask: np.ndarray,
 ) -> dict[str, Any]:
-    """Convert one RITnet label map into full-class ocular metrics.
-
-    ``labels`` is the model-resolution hard argmax label map. It is resized by
-    nearest-neighbour interpolation to ``analysis_size`` before all class counts
-    and geometry are computed. The current ONNX exposes only the full hard label
-    map plus class-3 probability, so iris/sclera/background class probabilities
-    are intentionally not invented here.
-    """
-    analysis_w, analysis_h = map(int, analysis_size)
-    resized = cv2.resize(
-        np.asarray(labels, dtype=np.uint8),
-        (analysis_w, analysis_h),
-        interpolation=cv2.INTER_NEAREST,
+    """Reconstruct the already-frozen pupil geometry from source eyes.csv."""
+    found = _coerce_bool(source.get("ritnet_found"))
+    cx = _coerce_float(source.get("pupil_center_x"))
+    cy = _coerce_float(source.get("pupil_center_y"))
+    axis_a = _coerce_float(source.get("pupil_axis_a"))
+    axis_b = _coerce_float(source.get("pupil_axis_b"))
+    angle = _coerce_float(source.get("pupil_angle_deg"))
+    contour_area = _coerce_float(
+        source.get("pupil_mask_area")
+        if source.get("pupil_mask_area") not in (None, "")
+        else source.get("pupil_contour_area")
     )
+    equiv_diameter = _coerce_float(source.get("pupil_equiv_diameter"))
+    fit_valid = bool(
+        found
+        and cx is not None
+        and cy is not None
+        and axis_a is not None
+        and axis_b is not None
+        and axis_a > 0
+        and axis_b > 0
+    )
+    short_axis = long_axis = ellipse_area = geom_mean = None
+    if fit_valid:
+        short_axis, long_axis = sorted((float(axis_a), float(axis_b)))
+        ellipse_area = float(np.pi * float(axis_a) * float(axis_b) / 4.0)
+        geom_mean = float(np.sqrt(float(axis_a) * float(axis_b)))
+    return {
+        "found": bool(found),
+        "fit_valid": fit_valid,
+        "center_x": cx,
+        "center_y": cy,
+        "axis_a": axis_a,
+        "axis_b": axis_b,
+        "short_axis": short_axis,
+        "long_axis": long_axis,
+        "angle_deg": angle,
+        "contour_area": contour_area,
+        "ellipse_area": ellipse_area,
+        "equiv_diameter": equiv_diameter,
+        "geom_mean_diameter": geom_mean,
+        "touches_roi_edge": _touches_edge(pupil_mask),
+    }
 
-    masks = {class_id: resized == class_id for class_id in CLASS_MAPPING}
+
+def _assemble_result(
+    *,
+    resized: np.ndarray,
+    masks: dict[int, np.ndarray],
+    counts: dict[int, int],
+    pupil_geom: dict[str, Any],
+    iris_geom: dict[str, Any],
+    iris_contour: np.ndarray | None,
+    pupil_confidence: float | None,
+    analysis_size: tuple[int, int],
+) -> dict[str, Any]:
+    analysis_w, analysis_h = map(int, analysis_size)
     total_pixels = int(analysis_w * analysis_h)
-    counts = {class_id: int(mask.sum()) for class_id, mask in masks.items()}
     ocular = masks[CLASS_SCLERA] | masks[CLASS_IRIS] | masks[CLASS_PUPIL]
-    iris_outer = masks[CLASS_IRIS] | masks[CLASS_PUPIL]
-
-    pupil_geom, pupil_contour = _ellipse_geometry(masks[CLASS_PUPIL])
-    iris_geom, iris_contour = _ellipse_geometry(iris_outer)
-    ocular_components, ocular_largest_fraction = _component_metrics(ocular)
-    aperture = _ocular_aperture_metrics(ocular)
-
-    pupil_confidence = None
-    if pupil_probability is not None:
-        native_pupil = np.asarray(labels) == CLASS_PUPIL
-        probs = np.asarray(pupil_probability, dtype=np.float32)
-        if native_pupil.any() and probs.shape == native_pupil.shape:
-            pupil_confidence = float(probs[native_pupil].mean())
-        elif native_pupil.any():
-            raise ValueError(
-                f"pupil_probability shape {probs.shape} does not match labels {native_pupil.shape}"
-            )
-        else:
-            pupil_confidence = 0.0
-
     iris_outer_pixels = int(counts[CLASS_IRIS] + counts[CLASS_PUPIL])
     ocular_pixels = int(counts[CLASS_SCLERA] + iris_outer_pixels)
+
+    ocular_components, ocular_largest_fraction = _component_metrics(ocular)
+    aperture = _ocular_aperture_metrics(ocular)
 
     diameter_ratio = None
     ellipse_area_ratio = None
@@ -249,6 +296,7 @@ def summarize_fullclass(
         and iris_geom["fit_valid"]
         and not pupil_geom["touches_roi_edge"]
         and not iris_geom["touches_roi_edge"]
+        and pupil_center_in_iris_outer is True
         and float(iris_geom["geom_mean_diameter"] or 0.0)
         > float(pupil_geom["geom_mean_diameter"] or 0.0)
     )
@@ -292,7 +340,6 @@ def summarize_fullclass(
         for key, value in geometry.items():
             result[f"{prefix}_{key}"] = value
 
-    # Make the exact hard-class accounting auditable.
     if (
         result["background_pixels"]
         + result["sclera_pixels"]
@@ -303,3 +350,78 @@ def summarize_fullclass(
         raise AssertionError("RITnet class counts do not sum to the analysis frame size")
 
     return result
+
+
+def _prepare_masks(
+    labels: np.ndarray,
+    analysis_size: tuple[int, int],
+) -> tuple[np.ndarray, dict[int, np.ndarray], dict[int, int]]:
+    analysis_w, analysis_h = map(int, analysis_size)
+    resized = cv2.resize(
+        np.asarray(labels, dtype=np.uint8),
+        (analysis_w, analysis_h),
+        interpolation=cv2.INTER_NEAREST,
+    )
+    masks = {class_id: resized == class_id for class_id in CLASS_MAPPING}
+    counts = {class_id: int(mask.sum()) for class_id, mask in masks.items()}
+    return resized, masks, counts
+
+
+def summarize_fullclass(
+    labels: np.ndarray,
+    pupil_probability: np.ndarray | None,
+    analysis_size: tuple[int, int] = (320, 160),
+) -> dict[str, Any]:
+    """Validation/reference path that recomputes pupil geometry from the label map."""
+    resized, masks, counts = _prepare_masks(labels, analysis_size)
+    iris_outer = masks[CLASS_IRIS] | masks[CLASS_PUPIL]
+    pupil_geom, _ = _ellipse_geometry(masks[CLASS_PUPIL])
+    iris_geom, iris_contour = _ellipse_geometry(iris_outer)
+
+    pupil_confidence = None
+    if pupil_probability is not None:
+        native_pupil = np.asarray(labels) == CLASS_PUPIL
+        probs = np.asarray(pupil_probability, dtype=np.float32)
+        if native_pupil.any() and probs.shape == native_pupil.shape:
+            pupil_confidence = float(probs[native_pupil].mean())
+        elif native_pupil.any():
+            raise ValueError(
+                f"pupil_probability shape {probs.shape} does not match labels {native_pupil.shape}"
+            )
+        else:
+            pupil_confidence = 0.0
+
+    return _assemble_result(
+        resized=resized,
+        masks=masks,
+        counts=counts,
+        pupil_geom=pupil_geom,
+        iris_geom=iris_geom,
+        iris_contour=iris_contour,
+        pupil_confidence=pupil_confidence,
+        analysis_size=analysis_size,
+    )
+
+
+def summarize_fullclass_from_source(
+    labels: np.ndarray,
+    source: Mapping[str, Any],
+    analysis_size: tuple[int, int] = (320, 160),
+) -> dict[str, Any]:
+    """Fast production path using the source formal pupil geometry/confidence."""
+    resized, masks, counts = _prepare_masks(labels, analysis_size)
+    iris_outer = masks[CLASS_IRIS] | masks[CLASS_PUPIL]
+    pupil_geom = _source_pupil_geometry(source, masks[CLASS_PUPIL])
+    iris_geom, iris_contour = _ellipse_geometry(iris_outer)
+    pupil_confidence = _coerce_float(source.get("pupil_confidence"))
+
+    return _assemble_result(
+        resized=resized,
+        masks=masks,
+        counts=counts,
+        pupil_geom=pupil_geom,
+        iris_geom=iris_geom,
+        iris_contour=iris_contour,
+        pupil_confidence=pupil_confidence,
+        analysis_size=analysis_size,
+    )
