@@ -1,0 +1,92 @@
+from __future__ import annotations
+
+import numpy as np
+import pandas as pd
+
+from attention_pipeline.nir_behavior.alignment import (
+    build_nir_indices,
+    build_probe_windows,
+    build_trial_windows,
+)
+from attention_pipeline.nir_behavior.behavior_qc import add_behavior_qc
+from attention_pipeline.nir_behavior.contract import WindowSpec
+
+
+def _behavior() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "subject": ["sub-031"] * 4,
+            "block_num": [1, 1, 1, 1],
+            "trial_num": [1, 2, 3, 4],
+            "global_trial_index": [1, 2, 3, 4],
+            "absolute_onset_time": [1000.0, 2150.0, 3300.0, 4450.0],
+            "stimulus_name": ["go1", "go2", "nogo", "go3"],
+            "stimulus_size": [100, 100, 100, 100],
+            "is_no_go": [0, 0, 1, 0],
+            "response": [1, 0, 1, 1],
+            "rt": [300.0, np.nan, 250.0, 350.0],
+            "response_time": [1300.0, np.nan, 3550.0, 4800.0],
+            "correct": [1, 0, 0, 1],
+            "commission": [0, 0, 1, 0],
+            "omission": [0, 1, 0, 0],
+            "raw_keypresses": ["1300", "", "3550;4400", "4800"],
+            "prestimulus_press_ms": [np.nan, 2145.0, np.nan, np.nan],
+            "is_probe": [0, 1, 0, 1],
+            "probe_response": [np.nan, 2, np.nan, 1],
+            "probe_rt": [np.nan, 700, np.nan, 600],
+            "probe_vigilance": [np.nan, 3, np.nan, 4],
+            "probe_vigilance_rt": [np.nan, 500, np.nan, 550],
+            "probe_onset_time": [np.nan, 3000.0, np.nan, 5600.0],
+        }
+    )
+
+
+def _nir() -> pd.DataFrame:
+    times = np.arange(500.0, 6000.0, 100.0)
+    rows = []
+    for eye, offset in (("left", 0.0), ("right", 0.01)):
+        for idx, time in enumerate(times):
+            rows.append(
+                {
+                    "subject": "sub-031",
+                    "block_num": 1,
+                    "eye": eye,
+                    "unix_ms": time,
+                    "frame_idx": idx,
+                    "fullclass_pupil_to_iris_diameter_ratio": 0.4
+                    + offset
+                    + idx * 0.0001,
+                    "fullclass_normalization_valid": True,
+                    "fullclass_ocular_aperture_ratio_median": 0.30 + offset,
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def test_behavior_qc_preserves_scoring_and_flags_prestimulus() -> None:
+    frame = add_behavior_qc(_behavior())
+    assert frame.loc[1, "omission"] == 1
+    assert bool(frame.loc[1, "prestimulus_press_flag"])
+    assert bool(frame.loc[1, "ambiguous_omission_flag"])
+    assert frame.loc[1, "prestimulus_delta_to_onset_ms"] == -5.0
+    assert frame.loc[2, "n_raw_keypresses"] == 2
+
+
+def test_trial_window_keeps_eyes_separate() -> None:
+    trials = add_behavior_qc(_behavior())
+    indices = build_nir_indices(_nir(), "sub-031")
+    specs = [WindowSpec("pre_1s", "state", -1000, 0)]
+    result = build_trial_windows(trials, indices, specs)
+    assert len(result) == len(trials) * 2
+    assert set(result["eye"]) == {"left", "right"}
+    assert result["pir_median"].notna().any()
+
+
+def test_probe_window_marks_previous_probe_crossing() -> None:
+    trials = add_behavior_qc(_behavior())
+    indices = build_nir_indices(_nir(), "sub-031")
+    specs = [WindowSpec("pre_3s", "probe_state", -3000, 0)]
+    result = build_probe_windows(trials, indices, specs)
+    second_probe = result[result["probe_index_global"] == 2]
+    assert len(second_probe) == 2
+    assert second_probe["window_crosses_previous_probe"].all()
