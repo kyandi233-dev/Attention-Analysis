@@ -10,6 +10,8 @@ from attention_pipeline.nir_behavior.alignment import (
 )
 from attention_pipeline.nir_behavior.behavior_qc import add_behavior_qc
 from attention_pipeline.nir_behavior.contract import WindowSpec
+from attention_pipeline.nir_behavior.coverage import build_window_coverage_report
+from attention_pipeline.nir_behavior.diagnostics import _break_large_gaps
 
 
 def _behavior() -> pd.DataFrame:
@@ -90,3 +92,25 @@ def test_probe_window_marks_previous_probe_crossing() -> None:
     second_probe = result[result["probe_index_global"] == 2]
     assert len(second_probe) == 2
     assert second_probe["window_crosses_previous_probe"].all()
+
+
+def test_coverage_report_keeps_block_eye_window_groups() -> None:
+    trials = add_behavior_qc(_behavior())
+    indices = build_nir_indices(_nir(), "sub-031")
+    specs = [WindowSpec("pre_1s", "state", -1000, 0)]
+    windows = build_trial_windows(trials, indices, specs)
+    report = build_window_coverage_report(windows, level="trial")
+    assert len(report) == 2
+    assert set(report["eye"]) == {"left", "right"}
+    assert report["n_windows"].eq(4).all()
+    assert report["pir_valid_fraction_median"].eq(1.0).all()
+    assert report["nir_rows_per_sec_median"].gt(0).all()
+
+
+def test_diagnostic_line_breaks_long_missing_intervals() -> None:
+    x = np.array([0.0, 1.0, 5.0, 6.0])
+    y = np.array([0.3, 0.31, 0.29, 0.30])
+    out_x, out_y = _break_large_gaps(x, y, max_gap_sec=2.5)
+    assert len(out_x) == 5
+    assert np.isnan(out_x[2])
+    assert np.isnan(out_y[2])
