@@ -13,27 +13,22 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from pathlib import Path
 
 from attention_pipeline.config import load_config
 from attention_pipeline.rgb.audit import run_audit
-
-
-def _output_root(config) -> Path:
-    raw = config.section("output").get("root", "outputs/rgb-dev")
-    path = Path(str(raw))
-    if not path.is_absolute():
-        path = (config.path.parent.parent / path).resolve()
-    path.mkdir(parents=True, exist_ok=True)
-    return path
+from attention_pipeline.rgb.paths import RGBOutputLayout
 
 
 def stage_audit(config) -> dict[str, object]:
-    root = _output_root(config) / "audit"
-    root.mkdir(parents=True, exist_ok=True)
+    layout = RGBOutputLayout.from_config(config)
     inventory, duplicates = run_audit(config)
-    inventory_path = root / "rgb_inventory.csv"
-    duplicate_path = root / "rgb_duplicate_subjects.csv"
+
+    # Dataset-level audit files live directly under Beijing-RGB. There is no
+    # extra audit/ wrapper directory.
+    inventory_path = layout.dataset_file("rgb_inventory.csv")
+    duplicate_path = layout.dataset_file("rgb_duplicate_subjects.csv")
+    summary_path = layout.dataset_file("audit_summary.json")
+
     inventory.to_csv(inventory_path, index=False, encoding="utf-8-sig")
     duplicates.to_csv(duplicate_path, index=False, encoding="utf-8-sig")
 
@@ -54,7 +49,7 @@ def stage_audit(config) -> dict[str, object]:
         "inventory": str(inventory_path),
         "duplicates": str(duplicate_path),
     }
-    (root / "audit_summary.json").write_text(
+    summary_path.write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     return summary
