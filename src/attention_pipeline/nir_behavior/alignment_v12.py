@@ -141,13 +141,17 @@ def augment_window_metadata(
             if rate is not None and available_duration_sec > 0
             else None
         )
-        n_rows = float(getattr(row, "n_nir_rows", 0) or 0)
+        index = indices.get((block_num, eye))
+        n_rows_available = (
+            index.count(available_start, available_end)
+            if index is not None and available_duration_sec > 0
+            else 0
+        )
         internal_coverage = (
-            min(1.0, n_rows / expected_rows)
+            min(1.0, float(n_rows_available) / expected_rows)
             if expected_rows is not None and expected_rows > 0
             else None
         )
-        index = indices.get((block_num, eye))
         max_gap = (
             _max_temporal_gap_sec(index.times_ms, available_start, available_end)
             if index is not None and available_duration_sec > 0
@@ -166,6 +170,7 @@ def augment_window_metadata(
                 "window_truncated_by_block_end": bool(requested_end > block_end),
                 "sampling_rate_hz_estimate": rate,
                 "expected_nir_rows_available": expected_rows,
+                "n_nir_rows_available": int(n_rows_available),
                 "internal_coverage_fraction": internal_coverage,
                 "max_temporal_gap_sec": max_gap,
             }
