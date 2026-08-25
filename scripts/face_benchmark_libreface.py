@@ -18,6 +18,29 @@ def _with_benchmark_index(df: pd.DataFrame, indices: list[int]) -> pd.DataFrame:
     return out
 
 
+def _load_cached_alignment(path: Path, expected_indices: set[int]) -> tuple[pd.DataFrame, list[int], list[str]] | None:
+    if not path.exists():
+        return None
+    try:
+        alignment = pd.read_parquet(path)
+    except Exception:
+        return None
+    required = {"benchmark_index", "alignment_success", "aligned_image_path"}
+    if not required.issubset(alignment.columns):
+        return None
+    observed = set(pd.to_numeric(alignment["benchmark_index"], errors="coerce").dropna().astype(int).tolist())
+    if observed != expected_indices:
+        return None
+    ok = alignment[alignment["alignment_success"].fillna(False).astype(bool)].copy()
+    if ok.empty:
+        return None
+    aligned_paths = [str(Path(p)) for p in ok["aligned_image_path"].tolist()]
+    if any(not Path(p).exists() for p in aligned_paths):
+        return None
+    success_indices = pd.to_numeric(ok["benchmark_index"], errors="raise").astype(int).tolist()
+    return alignment, success_indices, aligned_paths
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run LibreFace 2.0 on shared RGB Face benchmark images")
     parser.add_argument("--benchmark-dir", required=True, help=".../_test/face-benchmark/sub-XXX")
@@ -47,48 +70,54 @@ def main() -> None:
     temp_dir.mkdir(parents=True, exist_ok=True)
     weights_dir.mkdir(parents=True, exist_ok=True)
 
-    aligned_paths: list[str] = []
-    success_indices: list[int] = []
-    headposes: list[object] = []
-    landmarks: list[object] = []
-    alignment_rows: list[dict[str, object]] = []
+    alignment_path = root / "libreface_alignment.parquet"
+    expected_indices = set(pd.to_numeric(sample["benchmark_index"], errors="raise").astype(int).tolist())
+    cached = _load_cached_alignment(alignment_path, expected_indices)
+    alignment_reused = cached is not None
 
-    align_start = time.perf_counter()
-    for row in sample.itertuples(index=False):
-        benchmark_index = int(row.benchmark_index)
-        image_path = str(row.image_path)
-        try:
-            aligned_path, headpose, landmark_data = get_aligned_image(
-                image_path, temp_dir=str(temp_dir), verbose=False
-            )
-            if not aligned_path:
-                raise RuntimeError("get_aligned_image returned no aligned path")
-            aligned_paths.append(str(aligned_path))
-            success_indices.append(benchmark_index)
-            headposes.append(headpose)
-            landmarks.append(landmark_data)
-            alignment_rows.append({
-                "benchmark_index": benchmark_index,
-                "alignment_success": True,
-                "alignment_error": None,
-                "aligned_image_path": str(aligned_path),
-                "headpose_json": json.dumps(headpose, ensure_ascii=False, default=str),
-                "landmarks_json": json.dumps(landmark_data, ensure_ascii=False, default=str),
-            })
-        except Exception as exc:
-            alignment_rows.append({
-                "benchmark_index": benchmark_index,
-                "alignment_success": False,
-                "alignment_error": f"{type(exc).__name__}: {exc}",
-                "aligned_image_path": None,
-                "headpose_json": None,
-                "landmarks_json": None,
-            })
-    alignment_sec = time.perf_counter() - align_start
-    alignment = pd.DataFrame(alignment_rows)
-    alignment.to_parquet(root / "libreface_alignment.parquet", index=False, engine="pyarrow", compression="zstd")
-    if not aligned_paths:
-        raise RuntimeError("LibreFace aligned zero benchmark faces")
+    if cached is not None:
+        alignment, success_indices, aligned_paths = cached
+        alignment_sec = 0.0
+        print(f"[libreface] reusing cached alignment: {len(success_indices)}/{len(sample)} faces")
+    else:
+        aligned_paths: list[str] = []
+        success_indices: list[int] = []
+        alignment_rows: list[dict[str, object]] = []
+
+        align_start = time.perf_counter()
+        for row in sample.itertuples(index=False):
+            benchmark_index = int(row.benchmark_index)
+            image_path = str(row.image_path)
+            try:
+                aligned_path, headpose, landmark_data = get_aligned_image(
+                    image_path, temp_dir=str(temp_dir), verbose=False
+                )
+                if not aligned_path:
+                    raise RuntimeError("get_aligned_image returned no aligned path")
+                aligned_paths.append(str(aligned_path))
+                success_indices.append(benchmark_index)
+                alignment_rows.append({
+                    "benchmark_index": benchmark_index,
+                    "alignment_success": True,
+                    "alignment_error": None,
+                    "aligned_image_path": str(aligned_path),
+                    "headpose_json": json.dumps(headpose, ensure_ascii=False, default=str),
+                    "landmarks_json": json.dumps(landmark_data, ensure_ascii=False, default=str),
+                })
+            except Exception as exc:
+                alignment_rows.append({
+                    "benchmark_index": benchmark_index,
+                    "alignment_success": False,
+                    "alignment_error": f"{type(exc).__name__}: {exc}",
+                    "aligned_image_path": None,
+                    "headpose_json": None,
+                    "landmarks_json": None,
+                })
+        alignment_sec = time.perf_counter() - align_start
+        alignment = pd.DataFrame(alignment_rows)
+        alignment.to_parquet(alignment_path, index=False, engine="pyarrow", compression="zstd")
+        if not aligned_paths:
+            raise RuntimeError("LibreFace aligned zero benchmark faces")
 
     au_start = time.perf_counter()
     detected_aus, au_intensities = get_au_intensities_and_detect_aus_video(
@@ -127,8 +156,6 @@ def main() -> None:
     gaze_df = _with_benchmark_index(pd.DataFrame(gaze), success_indices)
     gaze_df.to_parquet(root / "libreface_gaze.parquet", index=False, engine="pyarrow", compression="zstd")
 
-    # Convenience merged table; component parquet files above preserve the native
-    # outputs separately so no candidate field is discarded through early harmonization.
     merged = sample.merge(alignment, on="benchmark_index", how="left")
     for prefix, component in [
         ("au_detection", au_detection),
@@ -158,6 +185,7 @@ def main() -> None:
         "expected_input_images": int(len(sample)),
         "aligned_faces": int(len(success_indices)),
         "alignment_valid_fraction": len(success_indices) / len(sample) if len(sample) else None,
+        "alignment_reused": alignment_reused,
         "device": args.device,
         "batch_size": int(args.batch_size),
         "num_workers": int(args.num_workers),
@@ -176,7 +204,7 @@ def main() -> None:
             "torch": torch_version,
         },
         "outputs": {
-            "alignment": str(root / "libreface_alignment.parquet"),
+            "alignment": str(alignment_path),
             "au_detection": str(root / "libreface_au_detection.parquet"),
             "au_intensity": str(root / "libreface_au_intensity.parquet"),
             "expression": str(root / "libreface_expression.parquet"),
