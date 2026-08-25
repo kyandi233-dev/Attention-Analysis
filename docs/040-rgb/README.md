@@ -2,7 +2,7 @@
 
 > 2026-08-25（Asia/Shanghai）｜`rgb-dev`：RGB 模态处于正式视频方法验证阶段；分支基于 `amd-DirectML`。
 
-> **后续 RGB 开发前优先阅读：** 本页 → [`044-RGB输出Schema与信息保留原则.md`](044-RGB输出Schema与信息保留原则.md) → 当前具体方法文档。新增模型字段、QC 或全量运行前必须先检查 044，避免因过早过滤而重新运行昂贵模型。
+> **后续 RGB 开发前优先阅读：** 本页 → [`044-RGB输出Schema与信息保留原则.md`](044-RGB输出Schema与信息保留原则.md) → [`045-RGB开发环境与运行指令.md`](045-RGB开发环境与运行指令.md) → 当前具体方法文档。新增模型字段、QC 或全量运行前必须先检查 044，运行命令前若不确定环境则先检查 045。
 
 RGB 主线为 **Face、Pose、Motion**。
 
@@ -48,7 +48,7 @@ scripts/face_benchmark_pyfeat.py
 scripts/face_benchmark_libreface.py
 ```
 
-两者使用独立 benchmark 环境，不把 Py-Feat/LibreFace 的深度学习依赖硬塞进当前 `attention-rgb` 环境。完整 benchmark 规则见 `042-面部分析工具与Benchmark.md`。
+两者使用独立 benchmark 环境，不把 Py-Feat/LibreFace 的深度学习依赖硬塞进当前 `attention-rgb` 环境。完整 benchmark 规则见 `042-面部分析工具与Benchmark.md`；环境与运行命令矩阵见 `045-RGB开发环境与运行指令.md`。
 
 ## 已完成的其他环节
 
@@ -67,4 +67,5 @@ scripts/face_benchmark_libreface.py
 - [`042-面部分析工具与Benchmark.md`](042-面部分析工具与Benchmark.md)
 - [`043-姿态与运动量分析方法.md`](043-姿态与运动量分析方法.md)
 - [`044-RGB输出Schema与信息保留原则.md`](044-RGB输出Schema与信息保留原则.md)：**开发前必读。**
+- [`045-RGB开发环境与运行指令.md`](045-RGB开发环境与运行指令.md)：**环境/命令速查。**
 - [`../050-decisions/053-RGB分析路线与开发边界.md`](../050-decisions/053-RGB分析路线与开发边界.md)
