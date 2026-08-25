@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 
 from attention_pipeline.config import load_config
-from attention_pipeline.nir_behavior.alignment import run_subject_alignment
+from attention_pipeline.nir_behavior.alignment_v12 import run_subject_alignment_v12
 from attention_pipeline.nir_behavior.discovery import (
     alignment_output_root,
     selected_subjects,
@@ -47,7 +47,7 @@ def main() -> int:
     results = []
     for index, subject in enumerate(subjects, start=1):
         print(f"[ALIGN {index}/{len(subjects)}] {subject}")
-        result = run_subject_alignment(
+        result = run_subject_alignment_v12(
             config,
             subject,
             force=bool(args.force),
