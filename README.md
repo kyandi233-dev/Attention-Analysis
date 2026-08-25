@@ -4,16 +4,16 @@
 
 ## 当前 NVIDIA 四分类补跑：先看这里
 
-RTX 5060 工作站当前正式任务不是重新跑完整 YOLO + RITnet，而是**复用既有正式 `eyes.csv` 和原 AVI，只重新运行 RITnet 四分类**，补齐 iris/sclera/background、pupil/iris normalization 和 sparse QC。
+RTX 5070 工作站当前正式任务不是重新跑完整 YOLO + RITnet，而是**复用既有正式 `eyes.csv` 和原 AVI，只重新运行 RITnet 四分类**，补齐 iris/sclera/background、pupil/iris normalization 和 sparse QC。
 
-从 GitHub 拉取、激活 Conda 环境、检查 RTX 5060 / CUDA / `CUDAExecutionProvider`、检查 `J:/Data`、运行 pytest、dry-run、单被试验收、72 人正式补跑、断点恢复和输出检查的完整终端命令统一放在根目录：
+从 GitHub 拉取、激活 Conda 环境、检查 RTX 5070 / CUDA / `CUDAExecutionProvider`、检查 `J:/Data`、运行 pytest、dry-run、单被试验收、72 人正式补跑、断点恢复和输出检查的完整终端命令统一放在根目录：
 
 **[`NVIDIA-RITnet全分类补跑使用说明.md`](NVIDIA-RITnet全分类补跑使用说明.md)**
 
 当前 NVIDIA 机器固定信息：
 
 ```text
-GPU: NVIDIA GeForce RTX 5060
+GPU: NVIDIA GeForce RTX 5070
 Conda env: D:\conda_envs\eye-ai
 repo: D:\Project\厚粲杯\08_算法\01_Attention-Analysis_nvidia-cuda
 data root: J:\Data
@@ -39,7 +39,7 @@ D:\Project\厚粲杯\11_数据\01_Attention-Analysis_nvidia-cuda_formal_NIR
 
 | 我想找 | 入口 |
 |---|---|
-| **RTX 5060 当前 RITnet 四分类正式补跑** | **[`NVIDIA-RITnet全分类补跑使用说明.md`](NVIDIA-RITnet全分类补跑使用说明.md)** |
+| **RTX 5070 当前 RITnet 四分类正式补跑** | **[`NVIDIA-RITnet全分类补跑使用说明.md`](NVIDIA-RITnet全分类补跑使用说明.md)** |
 | RITnet full-class 技术说明 | [`runtime/nir-formal/RITNET_FULLCLASS_EXTENSION.md`](runtime/nir-formal/RITNET_FULLCLASS_EXTENSION.md) |
 | NIR formal 运行/故障恢复规则 | [`runtime/nir-formal/RUNBOOK.md`](runtime/nir-formal/RUNBOOK.md) |
 | NVIDIA runtime 安装说明 | [`runtime/nir-formal/INSTALL.md`](runtime/nir-formal/INSTALL.md) |
@@ -88,7 +88,7 @@ NIR × SART downstream alignment/analysis
 
 ## 当前 NVIDIA 正式原始数据根
 
-当前 `nvidia-cuda` 分支对应的 RTX 5060 工作站使用：
+当前 `nvidia-cuda` 分支对应的 RTX 5070 工作站使用：
 
 ```text
 J:/Data
