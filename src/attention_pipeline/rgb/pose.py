@@ -204,10 +204,11 @@ def run_pose_test(config: Config, subject: str) -> dict[str, object]:
     baseline_duration_sec = float(focuswave.get("baseline_duration_sec", 180))
     expected_blocks = int(focuswave.get("expected_blocks", 2))
     trial_duration_ms = int(focuswave.get("trial_duration_ms", 1150))
-    inference_fps = float(pose_cfg.get("inference_fps", 10.0) or 10.0)
+    inference_fps = float(pose_cfg.get("inference_fps", 5.0) or 5.0)
     if inference_fps <= 0:
         raise ValueError("pose.inference_fps must be > 0")
     inference_interval_ms = 1000.0 / inference_fps
+    decode_sampled_frames_only = bool(pose_cfg.get("decode_sampled_frames_only", True))
 
     layout = RGBOutputLayout.from_config(config)
     model_path_raw = str(pose_cfg.get("model_path", "_test/pose_landmarker_lite.task"))
@@ -271,12 +272,21 @@ def run_pose_test(config: Config, subject: str) -> dict[str, object]:
     try:
         with PoseLandmarker.create_from_options(options) as landmarker:
             for video_position in range(start_position, end_position + 1):
-                ok, frame = cap.read()
-                if not ok or frame is None:
-                    raise RuntimeError(f"Failed to read {subject} RGB frame at {video_position}")
                 capture_idx, unix_ms = timestamps[video_position]
-                if unix_ms + 1e-9 < next_sample_unix_ms:
-                    continue
+
+                if decode_sampled_frames_only:
+                    if not cap.grab():
+                        raise RuntimeError(f"Failed to grab {subject} RGB frame at {video_position}")
+                    if unix_ms + 1e-9 < next_sample_unix_ms:
+                        continue
+                    ok, frame = cap.retrieve()
+                else:
+                    ok, frame = cap.read()
+                    if unix_ms + 1e-9 < next_sample_unix_ms:
+                        continue
+                if not ok or frame is None:
+                    raise RuntimeError(f"Failed to decode {subject} RGB frame at {video_position}")
+
                 while next_sample_unix_ms <= unix_ms:
                     next_sample_unix_ms += inference_interval_ms
 
@@ -349,6 +359,8 @@ def run_pose_test(config: Config, subject: str) -> dict[str, object]:
         },
         "parameters": {
             "requested_inference_fps": inference_fps,
+            "decode_sampled_frames_only": decode_sampled_frames_only,
+            "formal_landmark_scope": str(pose_cfg.get("formal_landmark_scope", "upper_body")),
             "min_pose_detection_confidence": float(pose_cfg.get("min_pose_detection_confidence", 0.5)),
             "min_pose_presence_confidence": float(pose_cfg.get("min_pose_presence_confidence", 0.5)),
             "min_tracking_confidence": float(pose_cfg.get("min_tracking_confidence", 0.5)),
@@ -362,6 +374,7 @@ def run_pose_test(config: Config, subject: str) -> dict[str, object]:
             "mediapipe": mp_version,
             "numpy": np.__version__,
             "pandas": pd.__version__,
+            "video_decode": "grab_all_retrieve_sampled" if decode_sampled_frames_only else "decode_all",
         },
         "source": {
             "video": str(files.video),
