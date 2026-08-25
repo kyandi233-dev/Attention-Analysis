@@ -56,6 +56,7 @@ def build_window_coverage_report(
         raise ValueError("level must be 'trial' or 'probe'")
     required = set(_GROUP_COLUMNS) | {
         "n_nir_rows",
+        "n_nir_rows_available",
         "requested_duration_sec",
         "available_duration_sec",
         "available_duration_fraction",
@@ -75,11 +76,13 @@ def build_window_coverage_report(
         raise ValueError(f"coverage input missing schema-v2 columns: {sorted(missing)}")
 
     frame = windows.copy()
-    n_rows = pd.to_numeric(frame["n_nir_rows"], errors="coerce")
+    n_rows_available = pd.to_numeric(frame["n_nir_rows_available"], errors="coerce")
     available_duration = pd.to_numeric(
         frame["available_duration_sec"], errors="coerce"
     )
-    frame["nir_rows_per_available_sec"] = n_rows / available_duration.replace(0, np.nan)
+    frame["nir_rows_per_available_sec"] = (
+        n_rows_available / available_duration.replace(0, np.nan)
+    )
     frame["boundary_truncated"] = (
         frame["window_truncated_by_block_start"].fillna(False).astype(bool)
         | frame["window_truncated_by_block_end"].fillna(False).astype(bool)
@@ -101,7 +104,11 @@ def build_window_coverage_report(
             float(truncated_any.mean()) if len(group) else None
         )
 
-        zero_rows = pd.to_numeric(group["n_nir_rows"], errors="coerce").fillna(0).eq(0)
+        zero_rows = (
+            pd.to_numeric(group["n_nir_rows_available"], errors="coerce")
+            .fillna(0)
+            .eq(0)
+        )
         record["n_zero_nir_windows"] = int(zero_rows.sum())
         record["zero_nir_window_fraction"] = float(zero_rows.mean()) if len(group) else None
 
@@ -109,7 +116,8 @@ def build_window_coverage_report(
             ("requested_duration_sec", "requested_duration_sec"),
             ("available_duration_sec", "available_duration_sec"),
             ("available_duration_fraction", "available_duration_fraction"),
-            ("n_nir_rows", "nir_rows"),
+            ("n_nir_rows", "nir_rows_requested"),
+            ("n_nir_rows_available", "nir_rows_available"),
             ("nir_rows_per_available_sec", "nir_rows_per_available_sec"),
             ("sampling_rate_hz_estimate", "sampling_rate_hz_estimate"),
             ("expected_nir_rows_available", "expected_nir_rows_available"),
