@@ -8,6 +8,8 @@ import sys
 from attention_pipeline.config import load_config
 from attention_pipeline.rgb.audit import run_audit
 from attention_pipeline.rgb.face_benchmark import run_face_benchmark_sample
+from attention_pipeline.rgb.face_continuous import run_face_continuous_sample
+from attention_pipeline.rgb.face_continuous_qc import run_face_continuous_qc
 from attention_pipeline.rgb.face_libreface_qc import run_libreface_benchmark_qc
 from attention_pipeline.rgb.face_pyfeat_qc import run_pyfeat_benchmark_qc
 from attention_pipeline.rgb.gaps import run_gap_audit
@@ -96,6 +98,7 @@ def main() -> None:
             "audit", "gaps", "motion", "motion-qc", "motion-review",
             "pose", "pose-qc", "pose-features", "face-sample",
             "face-pyfeat-qc", "face-libreface-qc",
+            "face-continuous-sample", "face-continuous-qc",
         ],
         default="audit",
     )
@@ -126,8 +129,12 @@ def main() -> None:
             result = run_face_benchmark_sample(config, args.subject)
         elif args.stage == "face-pyfeat-qc":
             result = run_pyfeat_benchmark_qc(config, args.subject)
-        else:
+        elif args.stage == "face-libreface-qc":
             result = run_libreface_benchmark_qc(config, args.subject)
+        elif args.stage == "face-continuous-sample":
+            result = run_face_continuous_sample(config, args.subject)
+        else:
+            result = run_face_continuous_qc(config, args.subject)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     print(f"[rgb:{args.stage}] complete", file=sys.stderr)
 
