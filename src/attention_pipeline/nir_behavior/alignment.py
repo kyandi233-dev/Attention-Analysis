@@ -42,13 +42,22 @@ class NirEyeIndex:
     subject: str
     block_num: int
     eye: str
-    frame: pd.DataFrame
     times_ms: np.ndarray
+    pir: np.ndarray
+    pir_valid: np.ndarray
+    oar: np.ndarray
+    roi_clipped: np.ndarray | None = None
+    ritnet_found: np.ndarray | None = None
+    ocular_fragmented_candidate: np.ndarray | None = None
 
-    def slice(self, start_ms: float, end_ms: float) -> pd.DataFrame:
+    def bounds(self, start_ms: float, end_ms: float) -> tuple[int, int]:
         left = int(np.searchsorted(self.times_ms, start_ms, side="left"))
         right = int(np.searchsorted(self.times_ms, end_ms, side="left"))
-        return self.frame.iloc[left:right]
+        return left, right
+
+    def count(self, start_ms: float, end_ms: float) -> int:
+        left, right = self.bounds(start_ms, end_ms)
+        return max(0, right - left)
 
 
 def _normalize_eye(value: Any) -> str:
@@ -124,72 +133,93 @@ def build_nir_indices(
             if frame.empty:
                 continue
             frame = frame.sort_values("unix_ms").reset_index(drop=True)
+            component_count = (
+                pd.to_numeric(frame["fullclass_ocular_component_count"], errors="coerce")
+                if "fullclass_ocular_component_count" in frame.columns
+                else None
+            )
+            largest_fraction = (
+                pd.to_numeric(
+                    frame["fullclass_ocular_largest_component_fraction"], errors="coerce"
+                )
+                if "fullclass_ocular_largest_component_fraction" in frame.columns
+                else None
+            )
+            fragmented = None
+            if component_count is not None and largest_fraction is not None:
+                fragmented = (
+                    component_count.gt(1) & largest_fraction.lt(0.90)
+                ).fillna(False).to_numpy(dtype=bool)
             result[(block_num, eye)] = NirEyeIndex(
                 subject=subject,
                 block_num=block_num,
                 eye=eye,
-                frame=frame,
                 times_ms=frame["unix_ms"].to_numpy(dtype=float),
+                pir=pd.to_numeric(frame[PIR_COLUMN], errors="coerce").to_numpy(dtype=float),
+                pir_valid=frame[PIR_VALID_COLUMN].fillna(False).to_numpy(dtype=bool),
+                oar=pd.to_numeric(frame[OAR_COLUMN], errors="coerce").to_numpy(dtype=float),
+                roi_clipped=(
+                    frame["roi_clipped"].fillna(False).to_numpy(dtype=bool)
+                    if "roi_clipped" in frame.columns
+                    else None
+                ),
+                ritnet_found=(
+                    frame["ritnet_found"].fillna(False).to_numpy(dtype=bool)
+                    if "ritnet_found" in frame.columns
+                    else None
+                ),
+                ocular_fragmented_candidate=fragmented,
             )
     return result
 
 
-def _window_nir_features(frame: pd.DataFrame) -> dict[str, Any]:
-    result: dict[str, Any] = {"n_nir_rows": int(len(frame))}
-    if frame.empty:
-        for prefix in ("pir", "oar"):
-            result.update(summarize_signal(np.array([]), np.array([]), prefix))
-        result.update(
-            {
-                "pir_valid_fraction": None,
-                "oar_valid_fraction": None,
-                "roi_clipped_fraction": None,
-                "ritnet_found_fraction": None,
-                "ocular_fragmented_candidate_fraction": None,
-            }
+def _window_nir_features(
+    index: NirEyeIndex | None, start_ms: float, end_ms: float
+) -> dict[str, Any]:
+    if index is None:
+        n_rows = 0
+        times = np.array([], dtype=float)
+        pir_values = np.array([], dtype=float)
+        oar_values = np.array([], dtype=float)
+        roi_clipped = ritnet_found = fragmented = None
+    else:
+        left, right = index.bounds(start_ms, end_ms)
+        n_rows = max(0, right - left)
+        times = index.times_ms[left:right]
+        pir_raw = index.pir[left:right]
+        pir_gate = index.pir_valid[left:right]
+        pir_values = np.where(pir_gate, pir_raw, np.nan)
+        oar_values = index.oar[left:right]
+        roi_clipped = (
+            index.roi_clipped[left:right] if index.roi_clipped is not None else None
         )
-        return result
+        ritnet_found = (
+            index.ritnet_found[left:right] if index.ritnet_found is not None else None
+        )
+        fragmented = (
+            index.ocular_fragmented_candidate[left:right]
+            if index.ocular_fragmented_candidate is not None
+            else None
+        )
 
-    times = frame["unix_ms"].to_numpy(dtype=float)
-    pir_raw = pd.to_numeric(frame[PIR_COLUMN], errors="coerce").to_numpy(dtype=float)
-    pir_gate = frame[PIR_VALID_COLUMN].fillna(False).to_numpy(dtype=bool)
-    pir_values = np.where(pir_gate, pir_raw, np.nan)
-    oar_values = pd.to_numeric(frame[OAR_COLUMN], errors="coerce").to_numpy(dtype=float)
-
+    result: dict[str, Any] = {"n_nir_rows": int(n_rows)}
     result.update(summarize_signal(times, pir_values, "pir"))
     result.update(summarize_signal(times, oar_values, "oar"))
-    result["pir_valid_fraction"] = float(np.isfinite(pir_values).mean())
-    result["oar_valid_fraction"] = float(np.isfinite(oar_values).mean())
-
-    if "roi_clipped" in frame.columns:
-        result["roi_clipped_fraction"] = float(
-            frame["roi_clipped"].fillna(False).astype(bool).mean()
-        )
-    else:
-        result["roi_clipped_fraction"] = None
-    if "ritnet_found" in frame.columns:
-        result["ritnet_found_fraction"] = float(
-            frame["ritnet_found"].fillna(False).astype(bool).mean()
-        )
-    else:
-        result["ritnet_found_fraction"] = None
-
-    if {
-        "fullclass_ocular_component_count",
-        "fullclass_ocular_largest_component_fraction",
-    }.issubset(frame.columns):
-        component_count = pd.to_numeric(
-            frame["fullclass_ocular_component_count"], errors="coerce"
-        )
-        largest_fraction = pd.to_numeric(
-            frame["fullclass_ocular_largest_component_fraction"], errors="coerce"
-        )
-        fragmented = component_count.gt(1) & largest_fraction.lt(0.90)
-        result["ocular_fragmented_candidate_fraction"] = float(
-            fragmented.fillna(False).mean()
-        )
-    else:
-        result["ocular_fragmented_candidate_fraction"] = None
+    result["pir_valid_fraction"] = (
+        float(np.isfinite(pir_values).mean()) if n_rows else None
+    )
+    result["oar_valid_fraction"] = (
+        float(np.isfinite(oar_values).mean()) if n_rows else None
+    )
+    result["roi_clipped_fraction"] = (
+        float(np.mean(roi_clipped)) if roi_clipped is not None and n_rows else None
+    )
+    result["ritnet_found_fraction"] = (
+        float(np.mean(ritnet_found)) if ritnet_found is not None and n_rows else None
+    )
+    result["ocular_fragmented_candidate_fraction"] = (
+        float(np.mean(fragmented)) if fragmented is not None and n_rows else None
+    )
     return result
 
 
@@ -250,10 +280,11 @@ def add_trial_nir_linkage(
             next_onset = getattr(row, "next_trial_onset_time")
             if pd.isna(next_onset):
                 next_onset = onset + 1150.0
-            if index is None or not np.isfinite(onset):
-                counts.append(0)
-            else:
-                counts.append(len(index.slice(onset, float(next_onset))))
+            counts.append(
+                index.count(onset, float(next_onset))
+                if index is not None and np.isfinite(onset)
+                else 0
+            )
         df[f"nir_rows_trial_{eye}"] = counts
         df[f"nir_has_trial_{eye}"] = pd.Series(counts).gt(0)
     return df
@@ -276,10 +307,6 @@ def build_trial_windows(
             end_ms = onset + spec.end_offset_ms
             n_probes = _count_probes_in_window(block_probes, start_ms, end_ms)
             for eye in EYES:
-                index = indices.get((block_num, eye))
-                frame = (
-                    index.slice(start_ms, end_ms) if index is not None else pd.DataFrame()
-                )
                 record: dict[str, Any] = {
                     "subject": trial.subject,
                     "block_num": block_num,
@@ -302,7 +329,9 @@ def build_trial_windows(
                         else None
                     ),
                 }
-                record.update(_window_nir_features(frame))
+                record.update(
+                    _window_nir_features(indices.get((block_num, eye)), start_ms, end_ms)
+                )
                 rows.append(record)
     return pd.DataFrame(rows)
 
@@ -310,47 +339,13 @@ def build_trial_windows(
 def _behavior_window_features(frame: pd.DataFrame) -> dict[str, Any]:
     result: dict[str, Any] = {
         "n_trials": int(len(frame)),
-        "n_go": int(
-            pd.to_numeric(frame.get("is_no_go"), errors="coerce").eq(0).sum()
-        )
-        if len(frame)
-        else 0,
-        "n_nogo": int(
-            pd.to_numeric(frame.get("is_no_go"), errors="coerce").eq(1).sum()
-        )
-        if len(frame)
-        else 0,
-        "n_commission": int(
-            pd.to_numeric(frame.get("commission"), errors="coerce").eq(1).sum()
-        )
-        if len(frame)
-        else 0,
-        "n_omission": int(
-            pd.to_numeric(frame.get("omission"), errors="coerce").eq(1).sum()
-        )
-        if len(frame)
-        else 0,
-        "n_prestimulus_press": int(
-            frame.get("prestimulus_press_flag", pd.Series(dtype=bool))
-            .fillna(False)
-            .sum()
-        )
-        if len(frame)
-        else 0,
-        "n_ambiguous_omission": int(
-            frame.get("ambiguous_omission_flag", pd.Series(dtype=bool))
-            .fillna(False)
-            .sum()
-        )
-        if len(frame)
-        else 0,
-        "n_anticipatory_candidate": int(
-            frame.get("anticipatory_candidate_flag", pd.Series(dtype=bool))
-            .fillna(False)
-            .sum()
-        )
-        if len(frame)
-        else 0,
+        "n_go": int(pd.to_numeric(frame["is_no_go"], errors="coerce").eq(0).sum()) if len(frame) else 0,
+        "n_nogo": int(pd.to_numeric(frame["is_no_go"], errors="coerce").eq(1).sum()) if len(frame) else 0,
+        "n_commission": int(pd.to_numeric(frame["commission"], errors="coerce").eq(1).sum()) if len(frame) else 0,
+        "n_omission": int(pd.to_numeric(frame["omission"], errors="coerce").eq(1).sum()) if len(frame) else 0,
+        "n_prestimulus_press": int(frame["prestimulus_press_flag"].fillna(False).sum()) if len(frame) else 0,
+        "n_ambiguous_omission": int(frame["ambiguous_omission_flag"].fillna(False).sum()) if len(frame) else 0,
+        "n_anticipatory_candidate": int(frame["anticipatory_candidate_flag"].fillna(False).sum()) if len(frame) else 0,
     }
     if frame.empty:
         result.update(
@@ -414,6 +409,7 @@ def build_probe_windows(
     ].shift(1)
 
     rows: list[dict[str, Any]] = []
+    onset_values = pd.to_numeric(trials["absolute_onset_time"], errors="coerce")
     for probe in probes.itertuples(index=False):
         probe_onset = float(probe.probe_onset_time)
         block_num = int(probe.block_num)
@@ -424,22 +420,14 @@ def build_probe_windows(
             end_ms = probe_onset + spec.end_offset_ms
             behavior_frame = trials[
                 (trials["block_num"] == block_num)
-                & pd.to_numeric(trials["absolute_onset_time"], errors="coerce").ge(
-                    start_ms
-                )
-                & pd.to_numeric(trials["absolute_onset_time"], errors="coerce").lt(
-                    end_ms
-                )
+                & onset_values.ge(start_ms)
+                & onset_values.lt(end_ms)
             ]
             behavior_features = _behavior_window_features(behavior_frame)
             crosses_previous = bool(
                 previous_probe is not None and start_ms <= previous_probe < end_ms
             )
             for eye in EYES:
-                index = indices.get((block_num, eye))
-                frame = (
-                    index.slice(start_ms, end_ms) if index is not None else pd.DataFrame()
-                )
                 record: dict[str, Any] = {
                     "subject": probe.subject,
                     "block_num": block_num,
@@ -472,7 +460,9 @@ def build_probe_windows(
                     "eye": eye,
                 }
                 record.update(behavior_features)
-                record.update(_window_nir_features(frame))
+                record.update(
+                    _window_nir_features(indices.get((block_num, eye)), start_ms, end_ms)
+                )
                 rows.append(record)
     return pd.DataFrame(rows)
 
