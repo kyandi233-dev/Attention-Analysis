@@ -36,53 +36,86 @@ def _minimum(values: pd.Series) -> float | None:
     return float(np.min(array)) if array.size else None
 
 
+def _maximum(values: pd.Series) -> float | None:
+    array = _finite(values)
+    return float(np.max(array)) if array.size else None
+
+
 def build_window_coverage_report(
     windows: pd.DataFrame,
     *,
     level: str,
 ) -> pd.DataFrame:
-    """Summarize descriptive NIR coverage without imposing exclusion thresholds.
+    """Summarize schema-v2 coverage without imposing exclusion thresholds.
 
-    The report is grouped by subject × block × eye × configured window. It keeps
-    both row-density and metric-validity information so later cohort QC can
-    distinguish "few NIR rows exist" from "rows exist but PIR normalization is
-    invalid". No group is classified as good/bad here.
+    Boundary/design truncation is reported separately from internal NIR
+    missingness. ``oar_available_fraction`` means that a finite OAR value exists;
+    it is not a validated blink/eye-state quality label.
     """
     if level not in {"trial", "probe"}:
         raise ValueError("level must be 'trial' or 'probe'")
     required = set(_GROUP_COLUMNS) | {
         "n_nir_rows",
+        "requested_duration_sec",
+        "available_duration_sec",
+        "available_duration_fraction",
+        "window_truncated_by_block_start",
+        "window_truncated_by_block_end",
+        "sampling_rate_hz_estimate",
+        "expected_nir_rows_available",
+        "internal_coverage_fraction",
+        "max_temporal_gap_sec",
         "pir_valid_fraction",
-        "oar_valid_fraction",
+        "oar_available_fraction",
         "roi_clipped_fraction",
         "ritnet_found_fraction",
     }
     missing = required - set(windows.columns)
     if missing:
-        raise ValueError(f"coverage input missing columns: {sorted(missing)}")
+        raise ValueError(f"coverage input missing schema-v2 columns: {sorted(missing)}")
 
     frame = windows.copy()
-    duration_sec = (
-        pd.to_numeric(frame["window_end_offset_ms"], errors="coerce")
-        - pd.to_numeric(frame["window_start_offset_ms"], errors="coerce")
-    ) / 1000.0
     n_rows = pd.to_numeric(frame["n_nir_rows"], errors="coerce")
-    frame["nir_rows_per_sec"] = n_rows / duration_sec.replace(0, np.nan)
+    available_duration = pd.to_numeric(
+        frame["available_duration_sec"], errors="coerce"
+    )
+    frame["nir_rows_per_available_sec"] = n_rows / available_duration.replace(0, np.nan)
+    frame["boundary_truncated"] = (
+        frame["window_truncated_by_block_start"].fillna(False).astype(bool)
+        | frame["window_truncated_by_block_end"].fillna(False).astype(bool)
+    )
 
     records: list[dict[str, Any]] = []
     for keys, group in frame.groupby(_GROUP_COLUMNS, dropna=False, sort=True):
         record = dict(zip(_GROUP_COLUMNS, keys, strict=True))
         record["level"] = level
         record["n_windows"] = int(len(group))
+
+        truncated_start = group["window_truncated_by_block_start"].fillna(False).astype(bool)
+        truncated_end = group["window_truncated_by_block_end"].fillna(False).astype(bool)
+        truncated_any = group["boundary_truncated"].fillna(False).astype(bool)
+        record["n_boundary_truncated_start"] = int(truncated_start.sum())
+        record["n_boundary_truncated_end"] = int(truncated_end.sum())
+        record["n_boundary_truncated_windows"] = int(truncated_any.sum())
+        record["boundary_truncated_window_fraction"] = (
+            float(truncated_any.mean()) if len(group) else None
+        )
+
         zero_rows = pd.to_numeric(group["n_nir_rows"], errors="coerce").fillna(0).eq(0)
         record["n_zero_nir_windows"] = int(zero_rows.sum())
         record["zero_nir_window_fraction"] = float(zero_rows.mean()) if len(group) else None
 
         for column, prefix in (
+            ("requested_duration_sec", "requested_duration_sec"),
+            ("available_duration_sec", "available_duration_sec"),
+            ("available_duration_fraction", "available_duration_fraction"),
             ("n_nir_rows", "nir_rows"),
-            ("nir_rows_per_sec", "nir_rows_per_sec"),
+            ("nir_rows_per_available_sec", "nir_rows_per_available_sec"),
+            ("sampling_rate_hz_estimate", "sampling_rate_hz_estimate"),
+            ("expected_nir_rows_available", "expected_nir_rows_available"),
+            ("internal_coverage_fraction", "internal_coverage_fraction"),
             ("pir_valid_fraction", "pir_valid_fraction"),
-            ("oar_valid_fraction", "oar_valid_fraction"),
+            ("oar_available_fraction", "oar_available_fraction"),
             ("roi_clipped_fraction", "roi_clipped_fraction"),
             ("ritnet_found_fraction", "ritnet_found_fraction"),
         ):
@@ -90,25 +123,44 @@ def build_window_coverage_report(
             record[f"{prefix}_p10"] = _quantile(group[column], 0.10)
             record[f"{prefix}_min"] = _minimum(group[column])
 
+        record["max_temporal_gap_sec_median"] = _median(group["max_temporal_gap_sec"])
+        record["max_temporal_gap_sec_p90"] = _quantile(group["max_temporal_gap_sec"], 0.90)
+        record["max_temporal_gap_sec_max"] = _maximum(group["max_temporal_gap_sec"])
         records.append(record)
 
     return pd.DataFrame(records)
 
 
 def coverage_overview(report: pd.DataFrame) -> dict[str, Any]:
-    """Small JSON-friendly overview for the subject alignment summary."""
+    """Small JSON-friendly overview for one subject alignment summary."""
     if report.empty:
         return {"groups": 0}
     return {
         "groups": int(len(report)),
         "pir_valid_fraction_group_median": _median(report["pir_valid_fraction_median"]),
         "pir_valid_fraction_group_p10": _quantile(report["pir_valid_fraction_p10"], 0.10),
-        "oar_valid_fraction_group_median": _median(report["oar_valid_fraction_median"]),
-        "oar_valid_fraction_group_p10": _quantile(report["oar_valid_fraction_p10"], 0.10),
-        "nir_rows_per_sec_group_median": _median(report["nir_rows_per_sec_median"]),
-        "zero_nir_window_fraction_group_max": (
-            float(pd.to_numeric(report["zero_nir_window_fraction"], errors="coerce").max())
-            if pd.to_numeric(report["zero_nir_window_fraction"], errors="coerce").notna().any()
-            else None
+        "oar_available_fraction_group_median": _median(
+            report["oar_available_fraction_median"]
+        ),
+        "oar_available_fraction_group_p10": _quantile(
+            report["oar_available_fraction_p10"], 0.10
+        ),
+        "internal_coverage_fraction_group_median": _median(
+            report["internal_coverage_fraction_median"]
+        ),
+        "internal_coverage_fraction_group_p10": _quantile(
+            report["internal_coverage_fraction_p10"], 0.10
+        ),
+        "nir_rows_per_available_sec_group_median": _median(
+            report["nir_rows_per_available_sec_median"]
+        ),
+        "boundary_truncated_window_fraction_group_max": _maximum(
+            report["boundary_truncated_window_fraction"]
+        ),
+        "zero_nir_window_fraction_group_max": _maximum(
+            report["zero_nir_window_fraction"]
+        ),
+        "max_temporal_gap_sec_group_max": _maximum(
+            report["max_temporal_gap_sec_max"]
         ),
     }
