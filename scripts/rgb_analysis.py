@@ -7,6 +7,7 @@ import sys
 
 from attention_pipeline.config import load_config
 from attention_pipeline.rgb.audit import run_audit
+from attention_pipeline.rgb.face_benchmark import run_face_benchmark_sample
 from attention_pipeline.rgb.gaps import run_gap_audit
 from attention_pipeline.rgb.motion import run_motion_test
 from attention_pipeline.rgb.motion_qc import run_motion_qc
@@ -91,7 +92,7 @@ def main() -> None:
         "--stage",
         choices=[
             "audit", "gaps", "motion", "motion-qc", "motion-review",
-            "pose", "pose-qc", "pose-features",
+            "pose", "pose-qc", "pose-features", "face-sample",
         ],
         default="audit",
     )
@@ -116,8 +117,10 @@ def main() -> None:
             result = run_pose_test(config, args.subject)
         elif args.stage == "pose-qc":
             result = run_pose_qc(config, args.subject)
-        else:
+        elif args.stage == "pose-features":
             result = run_pose_features(config, args.subject)
+        else:
+            result = run_face_benchmark_sample(config, args.subject)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     print(f"[rgb:{args.stage}] complete", file=sys.stderr)
 
