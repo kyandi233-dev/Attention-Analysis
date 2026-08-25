@@ -12,7 +12,7 @@ RGB 当前目标不是直接生成“注意力分数”，而是从正式实验 
 |---|---|---|---|
 | Face | **Py-Feat vs LibreFace 2.0** | AU、表情；Py-Feat 额外覆盖 head pose、gaze、valence/arousal、FaceMesh 等 | **待 benchmark 后二选一** |
 | Pose | **MediaPipe Pose** | 33 个身体关键点及其派生的上半身运动、手臂运动、躯干姿态/稳定性 | **当前默认路线** |
-| Motion | **OpenCV Motion Energy** | 全局运动量 + 亮度/帧差 QC | **sub-031 full-FPS pilot 已通过 gap 关键验收** |
+| Motion | **OpenCV Motion Energy** | 全局运动量 + 亮度/帧差 QC | **sub-031 full-FPS pilot 已通过 gap 关键验收，进入分布 QC** |
 
 暂不把 YuNet、YOLO Pose、Action Recognition、rPPG、HR/HRV 纳入第一阶段正式 RGB 主链。它们只有在当前三条路线出现明确缺口时再作为候选。
 
@@ -84,11 +84,35 @@ D:\_AttentionData\Beijing-RGB\_test\
 - 运行约 593.4 s，实测处理速度约 78.3 fps；
 - zstd Parquet 约 3.0 MB；
 - 4 行触发 gap reset，3,564 行仅标记为 irregular-dt QC；
-- 已人工核对：Block2 的 13.853 s 与 0.758 s gap、Block1 的 102 ms gap 均为 `motion_valid=False` 且 `global_motion_energy=NaN`；
-- 98 ms 的较大但未超过 reset 阈值的间隔仍保留 Motion 值，符合当前开发参数；
-- 因此“跨 gap 不计算伪运动、但保留当前帧身份和其他低成本测量”的关键逻辑通过首个正式视频压力测试。
+- 4 个 reset 已逐条核对：102 ms（Block1）、101 ms（interblock transition）、13.853 s（Block2）、758 ms（Block2）；
+- 4 行全部是**纯 timestamp gap**，`capture_missing_frame_indices_before=0`，没有 capture-index 缺号；
+- 四行均为 `motion_valid=False` / `global_motion_energy=NaN`；98 ms 间隔未超过当前 reset 阈值，仍保留 Motion；
+- 因此“跨真实断流不计算伪运动、但保留当前帧身份和其他测量”的关键逻辑通过首个正式视频压力测试。
 
-Manifest 同时记录 Git commit、config SHA256、FocusWave provenance、原始 source paths/size/mtime、视频元数据、分析时间窗、Motion 参数、运行环境、行数、phase coverage、处理速度与输出大小。当前还需把 4 个 gap-reset 行逐条复核，并检查亮度/帧差分布与代表性视频片段后，才冻结正式 Motion 参数。
+## 已实现：RGB-4 Motion 分布 QC
+
+不重新读取视频，只分析已经生成的 Motion Parquet：
+
+```powershell
+python scripts/rgb_analysis.py --stage motion-qc --subject sub-031
+```
+
+输出单个文件：
+
+```text
+D:\_AttentionData\Beijing-RGB\_test\sub-031_motion-qc.json
+```
+
+该 JSON 汇总：
+
+- `dt_ms` 的 min / P50 / P75 / P90 / P95 / P99 / max；
+- `<=40`、`41–48`、`49–66`、`67–100`、`>100 ms` 时间间隔计数；
+- irregular-dt 比例；
+- Motion Energy、Motion rate、changed-pixel ratio、绝对亮度变化的分位数；
+- Motion 与绝对亮度变化、changed-pixel ratio、dt 的 Pearson 相关；
+- 最大 timestamp gap、最高 Motion、最大亮度变化的代表行（含 frame/timestamp/phase/block/trial 上下文）。
+
+这一阶段用于判断当前 `irregular_dt_multiple=1.5` 是否过敏，以及高 Motion 是否可能主要由曝光/整体亮度跳变驱动。它不重新跑 Motion，也不额外生成一批 CSV/图像。
 
 ## 输出目录约定
 
@@ -121,10 +145,10 @@ D:\_AttentionData\
 
 - [`041-RGB分析目标与数据流.md`](041-RGB分析目标与数据流.md)：RGB 要分析什么、数据怎么流动、最后得到什么。
 - [`042-面部分析工具与Benchmark.md`](042-面部分析工具与Benchmark.md)：Py-Feat 与 LibreFace 的能力、环境和比较标准。
-- [`043-姿态与运动量分析方法.md`](043-姿态与运动量分析方法.md)：MediaPipe Pose 与 Motion Energy 的角色、定义和 pilot 规则。
+- [`043-姿态与运动量分析方法.md`](043-姿态与运动量分析方法.md)：MediaPipe Pose 与 Motion Energy 的角色、定义和 pilot/QC 规则。
 - [`044-RGB输出Schema与信息保留原则.md`](044-RGB输出Schema与信息保留原则.md)：**开发前必读；定义 raw 输出、QC、manifest 和“先保留后筛选”原则。**
 - [`../050-decisions/053-RGB分析路线与开发边界.md`](../050-decisions/053-RGB分析路线与开发边界.md)：当前路线为何这样选，以及哪些内容尚未冻结。
 
 ## 当前工程边界
 
-`rgb-dev` 只表示开发/验证分支，不代表 RGB 已正式冻结或全量完成。当前已建立配置、数据发现、详细时间轴解析、数据审计、timestamp gap QC、行为 trial/probe 映射、Motion Energy 单被试 pilot 和统一输出路径；Motion 的 gap 关键逻辑已通过 `sub-031` 压力测试，但正式阈值与完整 QC 仍未冻结。Face/Pose 仍需各自 pilot/benchmark。
+`rgb-dev` 只表示开发/验证分支，不代表 RGB 已正式冻结或全量完成。当前已建立配置、数据发现、详细时间轴解析、数据审计、timestamp gap QC、行为 trial/probe 映射、Motion Energy 单被试 pilot、Motion 分布 QC 和统一输出路径。Motion 的 gap 关键逻辑已通过 `sub-031` 压力测试，但正式 irregular-dt/reset 阈值仍需根据 Motion QC 结果与代表视频 spot-check 冻结。Face/Pose 仍需各自 pilot/benchmark。
