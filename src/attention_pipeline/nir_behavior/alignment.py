@@ -27,6 +27,7 @@ from .contract import (
     parse_window_specs,
     subject_output_paths,
 )
+from .coverage import build_window_coverage_report, coverage_overview
 from .discovery import (
     NirSource,
     alignment_output_root,
@@ -567,11 +568,15 @@ def run_subject_alignment(
     trial_level = add_trial_nir_linkage(trials, indices)
     trial_windows = build_trial_windows(trial_level, indices, trial_specs)
     probe_windows = build_probe_windows(trial_level, indices, probe_specs)
+    trial_coverage = build_window_coverage_report(trial_windows, level="trial")
+    probe_coverage = build_window_coverage_report(probe_windows, level="probe")
 
     paths["subject_dir"].mkdir(parents=True, exist_ok=True)
     trial_level.to_csv(paths["trial_level"], index=False, encoding="utf-8-sig")
     trial_windows.to_csv(paths["trial_windows"], index=False, encoding="utf-8-sig")
     probe_windows.to_csv(paths["probe_windows"], index=False, encoding="utf-8-sig")
+    trial_coverage.to_csv(paths["trial_coverage"], index=False, encoding="utf-8-sig")
+    probe_coverage.to_csv(paths["probe_coverage"], index=False, encoding="utf-8-sig")
 
     created_at = datetime.now(timezone.utc).isoformat()
     manifest = {
@@ -589,6 +594,8 @@ def run_subject_alignment(
             "trial_level": str(paths["trial_level"]),
             "trial_windows": str(paths["trial_windows"]),
             "probe_windows": str(paths["probe_windows"]),
+            "trial_coverage": str(paths["trial_coverage"]),
+            "probe_coverage": str(paths["probe_coverage"]),
             "qc_dir": str(paths["qc_dir"]),
         },
         "principles": {
@@ -599,6 +606,7 @@ def run_subject_alignment(
             "oar_primary": OAR_COLUMN,
             "roi_clipped_is_exclusion_gate": False,
             "left_right_fused": False,
+            "coverage_thresholds_applied": False,
         },
     }
     _atomic_json(paths["manifest"], manifest)
@@ -631,17 +639,30 @@ def run_subject_alignment(
             "rt_lt_150_trials": int(trial_level["rt_candidate_lt_150_flag"].sum()),
             "rt_lt_200_trials": int(trial_level["rt_candidate_lt_200_flag"].sum()),
         },
+        "coverage": {
+            "trial": {
+                "path": str(paths["trial_coverage"]),
+                **coverage_overview(trial_coverage),
+            },
+            "probe": {
+                "path": str(paths["probe_coverage"]),
+                **coverage_overview(probe_coverage),
+            },
+            "note": "Descriptive only; no exclusion threshold is frozen at prototype stage.",
+        },
     }
 
     if make_diagnostics:
         from .diagnostics import generate_diagnostics
 
+        diagnostics_config = config.section("diagnostics")
         summary["diagnostics"] = generate_diagnostics(
             subject,
             nir,
             trial_level,
             probe_windows,
             paths,
+            max_line_gap_sec=float(diagnostics_config.get("max_line_gap_sec", 2.5)),
         )
     _atomic_json(paths["summary"], summary)
     _atomic_json(
@@ -655,6 +676,8 @@ def run_subject_alignment(
                 str(paths["trial_level"]),
                 str(paths["trial_windows"]),
                 str(paths["probe_windows"]),
+                str(paths["trial_coverage"]),
+                str(paths["probe_coverage"]),
                 str(paths["manifest"]),
                 str(paths["summary"]),
             ],
