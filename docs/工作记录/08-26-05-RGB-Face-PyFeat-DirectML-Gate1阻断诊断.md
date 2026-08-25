@@ -113,7 +113,7 @@ python scripts/face_directml_diagnose.py `
 1. ORT core 的 graph-node CPU EP fallback；
 2. Python `InferenceSession` constructor 的 provider fallback。
 
-v0.1 只通过 `session.disable_cpu_ep_fallback=1` 禁掉了第 1 层；当 strict session creation 因 DML 无法完整覆盖图而失败时，Python wrapper 默认 `enable_fallback=1` 会捕获异常并重新用 fallback provider 创建 session，因此原始 strict 错误被掩盖，最后看到的是成功的 CPU fallback session。
+v0.1 只通过 `session.disable_cpu_ep_fallback=1` 禁掉了第 1 层；当 strict session creation 因 DML 无法完整覆盖图而失败时，Python wrapper 默认 `enable_fallback=1` 可能捕获异常并重新用 fallback provider 创建 session。因此 v0.1 无法把 `status=ok` 当作 strict-DML 证据。
 
 修复后的 `rgb-face-directml-diagnostic-v0.2` 在 strict 模式同时：
 
@@ -125,4 +125,35 @@ providers = [DmlExecutionProvider]
 
 即同时关闭 graph-node fallback 与 Python constructor fallback。对应代码 commit：`1c811ab`（`fix(rgb): disable Python EP fallback in strict DML diagnostic`）。
 
-因此 v0.1 diagnostic 只作为“诊断工具自身发现双层 fallback”的工作记录，不用于判断 Py-Feat multitask DML compatibility。下一次运行 v0.2 后得到的 strict error 才是正式阻断诊断证据。
+因此 v0.1 diagnostic 只作为“诊断工具自身发现双层 fallback”的工作记录，不用于判断 Py-Feat multitask DML compatibility。
+
+## 7. Strict diagnostic v0.2：provider 列表仍不足以判断实际执行
+
+v0.2 实机运行后，strict 模式已经明确记录：
+
+```text
+requested_providers = [DmlExecutionProvider]
+python_wrapper_fallback_enabled = false
+status = ok
+```
+
+但 `session.get_providers()` 仍返回：
+
+```text
+DmlExecutionProvider
+CPUExecutionProvider
+```
+
+这个结果修正了前一轮的一个过强推断：**不能仅凭 `session.get_providers()` 中出现 CPU 就认定发生了 CPU fallback。** ORT Python 的 `get_providers()` 表示 session 中注册的 execution providers，不是“本次 graph 节点实际由哪些 EP 执行”的执行证据。v0.2 因此既不能证明全 DML，也不能证明 CPU fallback。
+
+为了避免继续用 provider 注册列表推断执行，diagnostic 升级到 v0.3：
+
+1. fallback-allowed 和 strict 两种模式都开启 ORT profiling；
+2. 实际统计 profile 中 `DmlExecutionProvider` 与 `CPUExecutionProvider` kernel events；
+3. strict 模式继续保持 `session.disable_cpu_ep_fallback=1`、`enable_fallback=0`、只请求 DML；
+4. 最终以 profile 的实际 kernel provider 为判据，而不是 `session.get_providers()`；
+5. 如果 normal 模式为 CPU、strict 模式却能 DML-only，需要先解释 provider partition / session-option 行为，再决定是否修改科学模型。
+
+对应代码 commit：`ae8ee92`（`fix(rgb): profile actual providers in strict DML diagnostic`）。
+
+因此当前下一步不是拆模型，而是先运行 v0.3，取得同一 ONNX 在 normal 与 strict 条件下的实际 provider kernel 证据。
