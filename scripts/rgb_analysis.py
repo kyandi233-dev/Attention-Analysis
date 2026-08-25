@@ -12,6 +12,7 @@ from attention_pipeline.rgb.face_continuous import run_face_continuous_sample
 from attention_pipeline.rgb.face_continuous_qc import run_face_continuous_qc
 from attention_pipeline.rgb.face_libreface_qc import run_libreface_benchmark_qc
 from attention_pipeline.rgb.face_pyfeat_qc import run_pyfeat_benchmark_qc
+from attention_pipeline.rgb.face_visual_review import run_face_visual_review
 from attention_pipeline.rgb.gaps import run_gap_audit
 from attention_pipeline.rgb.motion import run_motion_test
 from attention_pipeline.rgb.motion_qc import run_motion_qc
@@ -98,7 +99,7 @@ def main() -> None:
             "audit", "gaps", "motion", "motion-qc", "motion-review",
             "pose", "pose-qc", "pose-features", "face-sample",
             "face-pyfeat-qc", "face-libreface-qc",
-            "face-continuous-sample", "face-continuous-qc",
+            "face-continuous-sample", "face-continuous-qc", "face-visual-review",
         ],
         default="audit",
     )
@@ -133,8 +134,10 @@ def main() -> None:
             result = run_libreface_benchmark_qc(config, args.subject)
         elif args.stage == "face-continuous-sample":
             result = run_face_continuous_sample(config, args.subject)
-        else:
+        elif args.stage == "face-continuous-qc":
             result = run_face_continuous_qc(config, args.subject)
+        else:
+            result = run_face_visual_review(config, args.subject)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     print(f"[rgb:{args.stage}] complete", file=sys.stderr)
 
