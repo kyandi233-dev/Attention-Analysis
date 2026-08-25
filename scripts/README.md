@@ -10,8 +10,11 @@
 | `sart_bbb_v3_0_analysis.py` | **历史、可执行** | 2026-08-16 FocusWave v3.0 BBB 行为分析重跑入口 |
 | `face_export_libreface_onnx.py` | **RGB 开发** | 在 LibreFace reference 环境导出当前 AU / expression / gaze 模型为 ONNX，并记录源权重 hash |
 | `face_export_pyfeat_onnx.py` | **RGB 开发** | 在 Py-Feat reference 环境导出 Detectorv2 RetinaFace + multitask scientific core 为 ONNX |
-| `face_directml_probe.py` | **RGB 开发** | 在独立 DirectML 环境执行 AMD Gate-1：provider / fallback / batch model-core smoke benchmark |
-| `face_directml_diagnose.py` | **RGB 开发** | 对 Gate-1 fallback 模型执行 strict-DML/禁止 CPU fallback 诊断，并记录 ONNX operator inventory |
+| `face_directml_probe.py` | **RGB 开发** | AMD Gate-1：provider / fallback / batch model-core smoke benchmark；v0.2 禁止 Python wrapper 静默整体退回 CPU |
+| `face_directml_diagnose.py` | **RGB 开发/诊断** | strict-DML 与实际 ORT kernel profiling；用于解释异常 Gate-1，不是正式 pipeline |
+| `face_real_prepare_libreface.py` | **RGB 开发/real-300** | 在 LibreFace reference 环境 fresh 执行 alignment + MediaPipe gaze feature CPU 前处理，不重跑 PyTorch heads |
+| `face_real_directml.py` | **RGB 开发/real-300** | 在独立 DirectML 环境运行 LibreFace ONNX heads 或完整 Py-Feat raw-frame DirectML pipeline |
+| `face_real_parity.py` | **RGB 开发/real-300** | 将新 DML real-300 输出与既有 CPU reference parquet 做 coverage / bbox / scientific outputs parity |
 
 当前 BB 行为分析默认配置为 `configs/behavior_formal.yaml`：
 
@@ -35,4 +38,15 @@ PYTHONPATH=src python scripts/sart_bbb_v3_0_analysis.py --stage all
 
 旧 BBB 的计划、报告和图仍保存在 `docs/030-behavior/history/BBB-v3.0/`；Git 历史分支 `history/behavior-bbb-v3.0` 继续作为完整旧仓库快照。当前正式结果解释只认 v3.1.3 的 BB 管线，历史 BBB 入口不得被误作当前分析。
 
-RGB Face DirectML 当前按 `docs/工作记录/08-26-05-RGB-Face-PyFeat-DirectML-Gate1阻断诊断.md` 续接。Gate-1 只验证 ONNX 模型是否能在 `DmlExecutionProvider` 上稳定创建/执行、是否出现 CPU fallback，以及 batch 1/8/16/32 的 model-core 基础吞吐；**它不替代现有 300 帧 reference parity / end-to-end benchmark，也不用于提前冻结 Face backend。** Py-Feat 当前 RetinaFace 已进入 DML，但 multitask scientific core 完全落在 CPU；先用 `face_directml_diagnose.py` 定位 provider 阻断，再决定最小修复。
+## RGB Face DirectML 当前阶段
+
+LibreFace 与 Py-Feat Gate 0/1 均已通过。Gate-1 只证明 ONNX / `DmlExecutionProvider` / fallback / batch 的 model-core 可运行性，**不能替代真实 300 帧 CPU-reference parity 与 raw-frame end-to-end**。
+
+当前下一步固定为同一 `face-continuous/sub-031` 300 帧的 real-input 验证：
+
+1. LibreFace：fresh CPU-side alignment + MediaPipe gaze feature extraction → DirectML AU / expression / gaze heads；
+2. Py-Feat：raw RGB → RetinaFace DML → decode/NMS → isotropic square-pad crop → multitask DML；
+3. `face_real_parity.py` 与既有 `libreface_*.parquet` / `pyfeat_raw.parquet` 对照；
+4. 速度与 parity 分开解释，再决定是否冻结 Face backend。
+
+Real-300 的完整命令与输出约定见 `docs/040-rgb/045-RGB开发环境与运行指令.md` 及最新 `docs/工作记录/08-26-07-RGB-Face-真实300帧DirectML验证实现.md`。
