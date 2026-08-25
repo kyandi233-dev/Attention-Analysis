@@ -8,7 +8,7 @@ pipeline:
 paths:
   behavior_config: "configs/behavior_formal.yaml"
   nir_source_roots:
-    - "D:/_AttentionData/Beijing-NIR/amd-directml/formal"
+    - "D:/_AttentionData/Beijing-NIR/amd-directml"
     - "runtime/nir-formal/outputs/amd-directml/formal"
     - "outputs/amd-directml/formal"
   output_root: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v1"
