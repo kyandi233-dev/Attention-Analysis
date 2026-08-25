@@ -24,7 +24,8 @@ AttributeError: 'MessageFactory' object has no attribute 'GetPrototype'
 LibreFace reference/export 环境后续固定：
 
 ```powershell
-python -m pip install --force-reinstall "protobuf==3.20.3" "onnx==1.16.2"
+python -m pip uninstall -y onnx protobuf
+python -m pip install "protobuf==3.20.3" "onnx==1.16.2"
 python -c "import google.protobuf, mediapipe, onnx; print('protobuf', google.protobuf.__version__); print('mediapipe', mediapipe.__version__); print('onnx', onnx.__version__)"
 ```
 
@@ -36,7 +37,7 @@ mediapipe 0.10.5
 onnx 1.16.2
 ```
 
-以后不得在 `attention-face-libreface` 中裸执行 `pip install onnx`。DirectML runtime 仍使用独立 `attention-face-directml` 环境，因此该 pin 只用于 LibreFace PyTorch checkpoint → ONNX 的 Gate 0 导出，不限制独立 DirectML 环境的 ORT 版本。
+这里刻意只重装 `onnx/protobuf`，不使用 `--force-reinstall`，避免连带重装或升级已有稳定的 NumPy、Torch 等依赖。以后不得在 `attention-face-libreface` 中裸执行 `pip install onnx`。DirectML runtime 仍使用独立 `attention-face-directml` 环境，因此该 pin 只用于 LibreFace PyTorch checkpoint → ONNX 的 Gate 0 导出，不限制独立 DirectML 环境的 ORT 版本。
 
 ## 3. Windows checkpoint path 问题
 
@@ -72,6 +73,7 @@ D:/.../AU_Recognition/weights/combined_repvgg.pt
 
 - `fd28e32`：`fix(rgb): make LibreFace ONNX export Windows-safe`
 - `b16335b`：`docs(rgb): pin LibreFace ONNX export dependencies`
+- `f6360b8`：`docs(rgb): avoid force-reinstall in LibreFace export env`
 
 045 已同步写入 LibreFace export 的 protobuf/ONNX 固定版本与 Windows 路径说明。
 
