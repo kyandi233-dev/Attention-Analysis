@@ -19,6 +19,18 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def _libreface_path(path: Path) -> str:
+    """Return a Windows-safe path for LibreFace's slash-splitting downloader.
+
+    LibreFace 0.2.0 derives the checkpoint parent with
+    ``model_path.split('/')`` instead of ``os.path.dirname``.  A normal
+    ``str(Path(...))`` on Windows therefore becomes a backslash-only path and
+    makes LibreFace call ``os.makedirs('')``.  Forward slashes are valid on
+    Windows, so normalize only the paths passed into LibreFace.
+    """
+    return path.resolve().as_posix()
+
+
 def _export(
     torch: Any,
     model: Any,
@@ -52,7 +64,7 @@ def _export(
 def _au_opts(weights_dir: Path) -> SimpleNamespace:
     return SimpleNamespace(
         seed=0,
-        ckpt_path=str(weights_dir / "AU_Recognition" / "weights" / "combined_repvgg.pt"),
+        ckpt_path=_libreface_path(weights_dir / "AU_Recognition" / "weights" / "combined_repvgg.pt"),
         weights_download_id="1CbnBr8OBt8Wb73sL1ENcrtrWAFWSSRv0",
         image_inference=False,
         au_recognition_data_root="",
@@ -96,7 +108,7 @@ def _expression_opts(weights_dir: Path) -> SimpleNamespace:
         train_csv="training_filtered.csv",
         test_csv="validation_filtered.csv",
         data_root="",
-        ckpt_path=str(weights_dir / "Facial_Expression_Recognition" / "weights" / "repvgg.pt"),
+        ckpt_path=_libreface_path(weights_dir / "Facial_Expression_Recognition" / "weights" / "repvgg.pt"),
         weights_download_id="1yPBUjPhkwcIkRLt47-JJRLRD7rCwPIVU",
         data="AffectNet",
         image_size=224,
@@ -128,7 +140,7 @@ def _gaze_opts(weights_dir: Path, feat_dim: int) -> SimpleNamespace:
     return SimpleNamespace(
         seed=0,
         data_root="",
-        ckpt_path=str(weights_dir / "gaze_estimation" / "weights" / "mlp.pt"),
+        ckpt_path=_libreface_path(weights_dir / "gaze_estimation" / "weights" / "mlp.pt"),
         weights_download_id="1AC20oXAV37I-OPfTtkalSJA5SfdCqXXJ",
         data="Gaze360",
         fold="all",
@@ -290,6 +302,7 @@ def main() -> None:
         "notes": [
             "This export intentionally targets the current LibreFace Python reference used by this project, rather than assuming an older derivative ONNX/NuGet package has identical weights.",
             "MediaPipe alignment/head pose/landmarks and gaze feature extraction remain CPU-side preprocessing; only the learned AU/expression/gaze models are moved to ONNX Runtime DirectML.",
+            "LibreFace 0.2.0 uses slash-based checkpoint parent parsing; checkpoint paths are normalized to forward slashes for Windows compatibility.",
         ],
     }
     manifest_path = output_dir / "libreface2_onnx_export_manifest.json"
