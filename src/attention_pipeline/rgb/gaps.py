@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import asdict
-
 import pandas as pd
 
 from attention_pipeline.config import Config
@@ -49,11 +47,10 @@ def _block_from_phase(phase: str) -> int | None:
 def subject_timestamp_gaps(files: RGBSubjectFiles, config: Config) -> list[dict[str, object]]:
     """Return timestamp gaps above the development warning threshold.
 
-    All existing AVI rows remain addressable by their physical video position and
-    their original FocusWave capture frame index. A capture-index jump is not
-    treated as a subject-level failure; the gap is preserved as QC so downstream
-    frame-difference / velocity features can mark the first post-gap sample as
-    missing instead of creating a false movement spike.
+    Existing AVI rows remain addressable by physical video position and original
+    FocusWave capture frame index. Capture-index jumps are QC, not automatic
+    subject failure. Downstream temporal features can therefore mark the first
+    post-gap sample missing rather than create a false movement spike.
     """
     rows = read_rgb_timestamps(files.timestamps)
     if len(rows) < 2 or not files.master_timeline.exists():
