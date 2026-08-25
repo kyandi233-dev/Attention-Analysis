@@ -8,7 +8,7 @@ RGB 主线为 **Face、Pose、Motion**。
 
 | 分支 | 当前工具路线 | 当前状态 |
 |---|---|---|
-| Face | Py-Feat vs LibreFace 2.0 | **现在进入 benchmark** |
+| Face | Py-Feat Detectorv2 vs LibreFace 2.0 | **benchmark 已进入共同输入抽样阶段** |
 | Pose | MediaPipe Tasks Pose Landmarker | **sub-031 10 fps representative pilot/QC/features 已完成** |
 | Motion | OpenCV Motion Energy | **sub-031 global Motion pilot/QC/review 已完成** |
 
@@ -18,22 +18,37 @@ RGB 主线为 **Face、Pose、Motion**。
 
 逐 landmark QC 进一步确认当前 RGB 机位的真实边界：nose 和双肩质量极高且始终在画面内；肘、腕、髋大多属于画外模型外推。Raw 层仍保存全部 33 个 landmark，但 derived 层使用 visibility + presence + in-frame 质量门控。
 
-修正版 `rgb-pose-features-v0.2` 在 `sub-031` 上得到：
-
-- 15,494 个 Pose 时点；
-- 2 个 >300 ms gap reset；
-- shoulder motion 有效 15,491 行；
-- elbow motion 有效 0 行；
-- wrist motion 有效 6 行；
-- trunk angle 有效 0 行。
-
-因此当前 Pose 主测量明确收敛到 **shoulder motion / shoulder center / shoulder-line posture**。腕、肘、髋保留为其他被试可能可用的 opportunistic 指标，但不作为当前机位的必需测量；`upper_body_motion` 也不宽泛解释为完整上半身运动，因为在本机位下它可能实际由 shoulder-only 组成。
+修正版 `rgb-pose-features-v0.2` 在 `sub-031` 上得到：15,494 个 Pose 时点、2 个 >300 ms gap reset、shoulder motion 有效 15,491 行、elbow 0 行、wrist 6 行、trunk angle 0 行。因此当前 Pose 主测量收敛到 **shoulder motion / shoulder center / shoulder-line posture**；腕、肘、髋为 opportunistic 指标。
 
 `body_motion_energy` 与 Pose-derived motion 不同：前者是在人体 ROI 内计算像素帧差，需要重新消费视频。为避免现在再次独立扫描大体积 AVI，它留到 Face backend 冻结后，与 Motion/Pose/Face 的正式统一视频读取一起实现。
 
-## 下一步：Face benchmark
+## 当前：Face benchmark
 
-Pose 已完成首个 representative 正式视频所需的速度、coverage、landmark QC 和派生特征 sanity check，不再作为 Face 的前置阻塞项。下一开发步骤直接进入 **Py-Feat vs LibreFace 2.0 benchmark**，重点比较 AU、head pose、gaze、expression/VA 的输出覆盖、稳定性、缺失率、正式视频鲁棒性、速度和 AMD/DirectML 可行性。
+第一轮不让 Py-Feat 与 LibreFace 各自直接跑完整长视频，而先提取**同一批、确定性、按 phase 分层的 350 张正式视频帧**：
+
+```powershell
+python scripts/rgb_analysis.py --stage face-sample --subject sub-031
+```
+
+输出：
+
+```text
+D:\_AttentionData\Beijing-RGB\_test\face-benchmark\sub-031\
+├── frames\
+├── sub-031_face-benchmark_frames.csv
+└── sub-031_face-benchmark_manifest.json
+```
+
+每张图保留原始 `video_frame_position`、`capture_frame_idx`、`unix_ms`、phase/block 和可映射行为上下文。两个候选后续必须读取这同一批图片，先比较安装稳定性、face coverage、原生输出覆盖、缺失/多人处理和 CPU 速度，再决定是否需要连续窗口和 DirectML benchmark。
+
+Face candidate runner 已单独放在：
+
+```text
+scripts/face_benchmark_pyfeat.py
+scripts/face_benchmark_libreface.py
+```
+
+两者使用独立 benchmark 环境，不把 Py-Feat/LibreFace 的深度学习依赖硬塞进当前 `attention-rgb` 环境。完整 benchmark 规则见 `042-面部分析工具与Benchmark.md`。
 
 ## 已完成的其他环节
 
