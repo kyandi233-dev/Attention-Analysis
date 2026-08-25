@@ -12,6 +12,7 @@ dependencies = [
   "pandas>=2.0",
   "PyYAML>=6.0",
   "opencv-python>=4.8",
+  "pyarrow>=15.0",
   "scipy>=1.10",
   "matplotlib>=3.8",
   "statsmodels>=0.14",
