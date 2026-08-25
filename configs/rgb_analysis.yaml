@@ -65,12 +65,14 @@ face:
 pose:
   enabled: true
   backend: mediapipe_pose
-  status: pilot
+  status: pilot_validated_10fps
   schema_version: "rgb-pose-landmarks-v0.1"
   model_variant: lite
   model_path: "_test/pose_landmarker_lite.task"
   model_url: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
-  inference_fps: 5.0
+  # sub-031 benchmark: 10 fps full formal span completed in ~7.15 min at
+  # ~36.1 inference/s with 100% pose-frame coverage, so retain 10 fps.
+  inference_fps: 10.0
   num_poses: 2
   min_pose_detection_confidence: 0.5
   min_pose_presence_confidence: 0.5
@@ -79,6 +81,17 @@ pose:
   decode_sampled_frames_only: true
   normalize_motion_by_body_scale: true
   formal_landmark_scope: upper_body
+  upper_body_landmarks:
+    - nose
+    - left_shoulder
+    - right_shoulder
+    - left_elbow
+    - right_elbow
+    - left_wrist
+    - right_wrist
+  optional_trunk_landmarks:
+    - left_hip
+    - right_hip
   target_outputs:
     - wrist_motion
     - elbow_motion
