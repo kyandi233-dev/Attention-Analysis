@@ -43,16 +43,49 @@ python scripts/rgb_analysis.py --stage audit
 - RGB 录制范围是否完整覆盖真实 180 s baseline 开始到第二个正式 block 结束；
 - 同一被试是否在多个有效数据根重复出现。
 
-输出默认写到仓库外运行结果目录：
+frame index 不连续本身不再自动排除被试。只要 AVI 实际帧数与 timestamp 行数一一对应、Unix 时间单调且覆盖正式实验时间轴，局部采集 gap 会作为 QC/missing 处理。`sub-033` 因此保留用于正式 RGB 分析并需要 gap QC；`sub-9504` 继续作为配置排除对象。
+
+## 输出目录约定
+
+RGB 分析结果不写入 Git 仓库，统一放到与 `Beijing-NIR` 并列的外部目录：
 
 ```text
-outputs/rgb-dev/audit/
-├── rgb_inventory.csv
-├── rgb_duplicate_subjects.csv
-└── audit_summary.json
+D:\_AttentionData\
+└── Beijing-RGB\
+    ├── _test\
+    ├── rgb_inventory.csv
+    ├── rgb_duplicate_subjects.csv
+    ├── audit_summary.json
+    ├── rgb_timestamp_gaps.csv              # 后续 gap QC
+    ├── rgb_batch_summary.csv               # 后续正式 batch 汇总
+    ├── sub-031\
+    │   ├── sub-031_motion_raw.parquet
+    │   ├── sub-031_pose_landmarks.parquet
+    │   ├── sub-031_face_raw.parquet
+    │   ├── sub-031_rgb_features.parquet
+    │   ├── sub-031_rgb_summary.csv
+    │   ├── sub-031_qc.csv
+    │   └── sub-031_manifest.json
+    └── sub-032\
+        └── ...
 ```
 
-这一阶段只回答“正式 RGB 数据是否完整、是否能与 FocusWave 时间轴可靠对齐”。只有 audit 通过后，才进入 Motion Energy、MediaPipe Pose 和 Face benchmark。
+结构规则：
+
+- 数据集级 inventory/QC/summary 直接放 `Beijing-RGB` 根目录，不额外套 `audit/`、`formal/` 等层级；
+- pilot、benchmark、DirectML 对比等测试输出统一放 `_test/`；
+- 只有真正产生某个被试结果时才创建 `sub-XXX/`；
+- 每个被试目录内部的文件仍重复带 `sub-XXX_` 前缀，避免文件被复制或单独查看时失去身份信息；
+- 不建立 `face/`、`pose/`、`motion/`、`raw/`、`processed/` 等额外空套子目录；
+- RGB 不额外建立 `amd-directml/` 层，因为后续可能同时包含 OpenCV/MediaPipe CPU 与 ONNX Runtime DirectML 等不同 backend，实际 backend 写入 manifest/config。
+
+当前 `audit` 会直接生成：
+
+```text
+D:\_AttentionData\Beijing-RGB\rgb_inventory.csv
+D:\_AttentionData\Beijing-RGB\rgb_duplicate_subjects.csv
+D:\_AttentionData\Beijing-RGB\audit_summary.json
+```
 
 ## 文档入口
 
@@ -63,4 +96,4 @@ outputs/rgb-dev/audit/
 
 ## 当前工程边界
 
-`rgb-dev` 只表示开发/验证分支，不代表 RGB 已正式冻结或全量完成。当前已建立配置、数据发现、时间轴解析和数据审计入口；Face/Pose/Motion 模型适配、DirectML 导出、QC 阈值、采样率和全量运行参数仍必须经过 pilot/benchmark 后再冻结。
+`rgb-dev` 只表示开发/验证分支，不代表 RGB 已正式冻结或全量完成。当前已建立配置、数据发现、时间轴解析、数据审计和统一输出路径模块；Face/Pose/Motion 模型适配、DirectML 导出、QC 阈值、采样率和全量运行参数仍必须经过 pilot/benchmark 后再冻结。
