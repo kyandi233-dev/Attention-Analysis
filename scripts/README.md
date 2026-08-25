@@ -13,8 +13,11 @@
 | `face_directml_probe.py` | **RGB 开发** | AMD Gate-1：provider / fallback / batch model-core smoke benchmark；v0.2 禁止 Python wrapper 静默整体退回 CPU |
 | `face_directml_diagnose.py` | **RGB 开发/诊断** | strict-DML 与实际 ORT kernel profiling；用于解释异常 Gate-1，不是正式 pipeline |
 | `face_real_prepare_libreface.py` | **RGB 开发/real-300** | 在 LibreFace reference 环境 fresh 执行 alignment + MediaPipe gaze feature CPU 前处理，不重跑 PyTorch heads |
-| `face_real_directml.py` | **RGB 开发/real-300** | 在独立 DirectML 环境运行 LibreFace ONNX heads 或完整 Py-Feat raw-frame DirectML pipeline |
-| `face_real_parity.py` | **RGB 开发/real-300** | 将新 DML real-300 输出与既有 CPU reference parquet 做 coverage / bbox / scientific outputs parity |
+| `face_real_directml_libreface.py` | **RGB 开发/real-300 当前入口** | LibreFace fresh prep → DirectML AU/expression/gaze heads；同时保留 native AU probabilities 与 derived outputs |
+| `face_real_directml_pyfeat.py` | **RGB 开发/real-300 当前入口** | raw RGB → RetinaFace DirectML → decode/NMS → square-reflect crop → multitask DirectML；保留 raw + canonical scientific outputs |
+| `face_real_parity_v02.py` | **RGB 开发/real-300 当前入口** | 与既有 CPU reference 做 coverage、bbox、68/478 landmarks、AU、emotion、VA、pose、gaze、blendshape/headpose parity |
+| `face_real_directml.py` | **RGB 开发/real-300 早期原型** | 首版合并 runner；保留历史，不作为当前推荐入口 |
+| `face_real_parity.py` | **RGB 开发/real-300 早期原型** | 首版 parity；保留历史，不作为当前推荐入口 |
 
 当前 BB 行为分析默认配置为 `configs/behavior_formal.yaml`：
 
@@ -42,11 +45,24 @@ PYTHONPATH=src python scripts/sart_bbb_v3_0_analysis.py --stage all
 
 LibreFace 与 Py-Feat Gate 0/1 均已通过。Gate-1 只证明 ONNX / `DmlExecutionProvider` / fallback / batch 的 model-core 可运行性，**不能替代真实 300 帧 CPU-reference parity 与 raw-frame end-to-end**。
 
-当前下一步固定为同一 `face-continuous/sub-031` 300 帧的 real-input 验证：
+当前固定使用同一 `face-continuous/sub-031` 300 帧进行 real-input 验证：
 
-1. LibreFace：fresh CPU-side alignment + MediaPipe gaze feature extraction → DirectML AU / expression / gaze heads；
-2. Py-Feat：raw RGB → RetinaFace DML → decode/NMS → isotropic square-pad crop → multitask DML；
-3. `face_real_parity.py` 与既有 `libreface_*.parquet` / `pyfeat_raw.parquet` 对照；
-4. 速度与 parity 分开解释，再决定是否冻结 Face backend。
+1. LibreFace：`face_real_prepare_libreface.py` fresh 执行 CPU-side alignment + MediaPipe gaze features；随后 `face_real_directml_libreface.py` 运行 DirectML heads；
+2. Py-Feat：`face_real_directml_pyfeat.py` 从 raw RGB 开始完成 RetinaFace DML → decode/NMS → isotropic square-pad/reflection crop → multitask DML；
+3. `face_real_parity_v02.py` 分别与既有 `libreface_*.parquet` / `pyfeat_raw.parquet` 做逐字段 parity；
+4. 速度与 parity 分开解释，再结合 coverage、信息完整性和工程复杂度冻结 backend。
 
-Real-300 的完整命令与输出约定见 `docs/040-rgb/045-RGB开发环境与运行指令.md` 及最新 `docs/工作记录/08-26-07-RGB-Face-真实300帧DirectML验证实现.md`。
+### 信息保留原则
+
+real-300 不是为了只生成当前马上要画图的几个变量，而是验证未来正式 pipeline 的完整保存能力。当前入口因此保留：
+
+- LibreFace：fresh alignment/headpose/landmarks、1404 gaze features、AU intensity/detection 原始 probabilities、derived AU、8-class expression scores/label、gaze；
+- Py-Feat：RetinaFace decoded bbox/score/5-point landmarks、20 AU probabilities、7 emotion probabilities、V/A、raw + canonical gaze、raw + canonical pose、478 normalized mesh、478 original-frame mesh、dlib-68 compatibility view、52 blendshapes、frame provenance；
+- multi-face 不在这一层静默过滤；primary-face 规则继续等 backend 冻结后决定；
+- Py-Feat identity branch 继续按 Gate-0 scientific-core 决策排除，不为本项目单被试视频测量增加额外工程成本。
+
+Real-300 的完整命令、输出目录和判定边界见最新工作记录：
+
+```text
+docs/工作记录/08-26-07-RGB-Face-真实300帧DirectML验证实现.md
+```
