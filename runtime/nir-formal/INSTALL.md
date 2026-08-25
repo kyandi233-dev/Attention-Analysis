@@ -4,6 +4,8 @@
 
 运行接续、故障恢复、`.run.lock`、`completion.json` 状态判断和“看到什么状态下一步做什么”的规则见 [`RUNBOOK.md`](RUNBOOK.md)。后续执行者不应仅依赖聊天上下文判断正式任务状态。
 
+原始行为时间线缺失时的受限任务窗恢复规则见 [`RECOVERY.md`](RECOVERY.md)。恢复结果单独输出并标记为 `recovery_complete`，不得混入正式完整 NIR 结果。
+
 ## 1. 获取当前分支
 
 ```powershell

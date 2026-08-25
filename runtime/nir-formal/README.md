@@ -113,6 +113,8 @@ python run_pipeline.py formal `
 
 ## 输出与恢复
 
+原始 `master_timeline.csv` 缺失但行为 Block CSV 和模态绝对时间戳仍可审计的场次，使用 [`RECOVERY.md`](RECOVERY.md) 的受限任务窗流程。该流程对 NIR 和毫米波分别使用各自的时间戳映射，不使用 RGB 帧号替代，不修改原始文件；NIR recovery 结果状态为 `recovery_complete`，不能作为正式 `complete`。
+
 默认正式输出根为：
 
 ```text
@@ -121,7 +123,7 @@ outputs/formal
 
 实际全量结果应保存在仓库外独立分析目录；仓库中的相对输出设置主要用于 runtime 自检和可复现说明。
 
-单次运行目录名包含 subject、FocusWave release、RITnet batch size、precision，ORT profile 另带 `ort-cuda`。`skip_completed: true` 只会跳过通过身份、phase、帧集合、计数和产物校验的 `completion.json: complete`；只有 `summary.json`、smoke、partial、读帧失败或损坏 marker 都会重跑。`--max-frames` 或非完整 phase 只会发布 `smoke_complete`，读帧失败发布 `failed` 并返回非零码。
+单次运行目录名包含 subject、FocusWave release、RITnet batch size、precision，ORT profile 另带 `ort-cuda`。`skip_completed: true` 只会跳过通过身份、phase、帧集合、计数和产物校验的 `completion.json: complete`；只有 `summary.json`、smoke、partial、读帧失败或损坏 marker 都会重跑。`--max-frames` 或普通非完整 phase 只会发布 `smoke_complete`；带 `--recovery-timeline` 的隔离任务窗运行在所有帧完整时发布 `recovery_complete`；读帧失败发布 `failed` 并返回非零码。
 
 ## 代码边界
 

@@ -70,14 +70,16 @@ def _event_time(rows: list[dict[str, object]], event: str) -> int:
     return int(_one_event(rows, event)["unix_ms"])
 
 
-def _map_interval_to_frames(
+def _map_interval_to_frame_windows(
     phase: str,
     segment: int,
     start_ms: int,
     end_ms: int,
     source: str,
     unix_by_frame: dict[int, int],
-) -> PhaseWindow:
+    *,
+    split_frame_gaps: bool = False,
+) -> list[PhaseWindow]:
     if end_ms <= start_ms:
         raise ValueError(f"Invalid {phase} interval: {start_ms}..{end_ms}")
     if not unix_by_frame:
@@ -92,19 +94,57 @@ def _map_interval_to_frames(
 
     selected = pairs[start_pos : end_pos + 1]
     frame_ids = [frame_idx for _, frame_idx in selected]
-    if any(b - a != 1 for a, b in zip(frame_ids, frame_ids[1:])):
+    if any(b - a != 1 for a, b in zip(frame_ids, frame_ids[1:])) and not split_frame_gaps:
         raise ValueError(f"NIR frame-index gap inside {phase} interval")
+    chunks: list[list[int]] = [[]]
+    for frame_idx in frame_ids:
+        if chunks[-1] and frame_idx - chunks[-1][-1] != 1:
+            chunks.append([])
+        chunks[-1].append(frame_idx)
+    return [
+        PhaseWindow(
+            phase=phase,
+            segment=int(segment) + offset,
+            start_unix_ms=(
+                start_ms
+                if offset == 0
+                else unix_by_frame[chunks[offset][0]]
+            ),
+            end_unix_ms=(
+                end_ms
+                if offset == len(chunks) - 1
+                else unix_by_frame[chunks[offset][-1]] + 1
+            ),
+            start_frame_idx=chunk[0],
+            end_frame_idx=chunk[-1],
+            n_frames=len(chunk),
+            source=source,
+        )
+        for offset, chunk in enumerate(chunks)
+        if chunk
+    ]
 
-    return PhaseWindow(
-        phase=phase,
-        segment=int(segment),
-        start_unix_ms=int(start_ms),
-        end_unix_ms=int(end_ms),
-        start_frame_idx=frame_ids[0],
-        end_frame_idx=frame_ids[-1],
-        n_frames=len(frame_ids),
-        source=source,
+
+def _map_interval_to_frames(
+    phase: str,
+    segment: int,
+    start_ms: int,
+    end_ms: int,
+    source: str,
+    unix_by_frame: dict[int, int],
+) -> PhaseWindow:
+    """Strict single-window mapping retained for normal formal runs and tests."""
+    windows = _map_interval_to_frame_windows(
+        phase,
+        segment,
+        start_ms,
+        end_ms,
+        source,
+        unix_by_frame,
     )
+    if len(windows) != 1:
+        raise ValueError(f"NIR frame-index gap inside {phase} interval")
+    return windows[0]
 
 
 def _baseline_interval(rows: list[dict[str, object]], default_duration_sec: float) -> tuple[int, int, str]:
@@ -174,7 +214,11 @@ def _practice_intervals(
     ]
 
 
-def _block_intervals(rows: list[dict[str, object]]) -> dict[int, tuple[int, int, str]]:
+def _block_intervals(
+    rows: list[dict[str, object]],
+    *,
+    source: str = "master_timeline",
+) -> dict[int, tuple[int, int, str]]:
     starts: dict[int, int] = {}
     stops: dict[int, int] = {}
     for row in rows:
@@ -182,15 +226,15 @@ def _block_intervals(rows: list[dict[str, object]]) -> dict[int, tuple[int, int,
         if not match:
             continue
         number = int(match.group("num"))
-        if row["event"] == "block_start":
+        if row["event"] in {"block_start", "reconstructed_block_start"}:
             starts[number] = int(row["unix_ms"])
-        elif row["event"] == "block_stop":
+        elif row["event"] in {"block_stop", "reconstructed_block_stop"}:
             stops[number] = int(row["unix_ms"])
     result: dict[int, tuple[int, int, str]] = {}
     for number in sorted(set(starts) | set(stops)):
         if number not in starts or number not in stops:
             raise ValueError(f"Missing start/stop marker for Block{number}")
-        result[number] = (starts[number], stops[number], "master_timeline")
+        result[number] = (starts[number], stops[number], source)
     return result
 
 
@@ -201,34 +245,78 @@ def resolve_phase_windows(
     *,
     baseline_duration_sec: float = 180.0,
     practice_trial_duration_ms: int = 1150,
+    timeline_path: Path | None = None,
+    timeline_source: str | None = None,
 ) -> list[PhaseWindow]:
-    """Resolve requested FocusWave v3.1.3 phases to inclusive frame windows."""
+    """Resolve requested phases to inclusive frame windows.
+
+    ``timeline_path`` is an explicit recovery hook. It is intentionally opt-in:
+    normal formal runs continue to read the subject's original
+    ``beh/master_timeline.csv``. Recovery timelines must contain the same
+    ``event,detail,unix_ms`` columns and should be kept outside the raw data
+    directory.
+    """
     subject_dir = video.parent.parent
     beh_dir = subject_dir / "beh"
-    timeline_path = beh_dir / "master_timeline.csv"
-    rows = _read_master_timeline(timeline_path)
-    blocks = _block_intervals(rows)
+    resolved_timeline = timeline_path or (beh_dir / "master_timeline.csv")
+    rows = _read_master_timeline(resolved_timeline)
+    source = timeline_source or (
+        "master_timeline" if timeline_path is None else "external_recovery_timeline"
+    )
+    blocks = _block_intervals(rows, source=source)
 
     requested = [str(value).strip().lower() for value in phases if str(value).strip()]
     windows: list[PhaseWindow] = []
+
+    def append_interval(
+        phase: str,
+        segment: int,
+        start_ms: int,
+        end_ms: int,
+        source: str,
+    ) -> None:
+        if timeline_path is not None:
+            windows.extend(
+                _map_interval_to_frame_windows(
+                    phase,
+                    segment,
+                    start_ms,
+                    end_ms,
+                    source,
+                    unix_by_frame,
+                    split_frame_gaps=True,
+                )
+            )
+        else:
+            windows.append(
+                _map_interval_to_frames(
+                    phase,
+                    segment,
+                    start_ms,
+                    end_ms,
+                    source,
+                    unix_by_frame,
+                )
+            )
+
     for phase in requested:
         if phase == "baseline":
             start_ms, end_ms, source = _baseline_interval(rows, baseline_duration_sec)
-            windows.append(_map_interval_to_frames(phase, 1, start_ms, end_ms, source, unix_by_frame))
+            append_interval(phase, 1, start_ms, end_ms, source)
         elif phase == "instructions":
             start_ms, end_ms, source = _instructions_interval(rows)
-            windows.append(_map_interval_to_frames(phase, 1, start_ms, end_ms, source, unix_by_frame))
+            append_interval(phase, 1, start_ms, end_ms, source)
         elif phase == "practice":
             for segment, (start_ms, end_ms, source) in enumerate(
                 _practice_intervals(beh_dir, rows, int(practice_trial_duration_ms)), start=1
             ):
-                windows.append(_map_interval_to_frames(phase, segment, start_ms, end_ms, source, unix_by_frame))
+                append_interval(phase, segment, start_ms, end_ms, source)
         elif phase.startswith("block") and phase[5:].isdigit():
             number = int(phase[5:])
             if number not in blocks:
                 raise ValueError(f"Requested {phase}, but no matching block markers were found")
             start_ms, end_ms, source = blocks[number]
-            windows.append(_map_interval_to_frames(phase, 1, start_ms, end_ms, source, unix_by_frame))
+            append_interval(phase, 1, start_ms, end_ms, source)
         else:
             raise ValueError(f"Unsupported formal phase: {phase}")
 

@@ -799,7 +799,17 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
         phases,
         baseline_duration_sec=float(config["formal"].get("baseline_duration_sec", 180)),
         practice_trial_duration_ms=int(config["formal"].get("practice_trial_duration_ms", 1150)),
+        timeline_path=Path(args.recovery_timeline).resolve()
+        if getattr(args, "recovery_timeline", None)
+        else None,
+        timeline_source=(
+            "reconstructed_task_timeline"
+            if getattr(args, "recovery_timeline", None)
+            else None
+        ),
     )
+
+    recovery_mode = bool(getattr(args, "recovery_timeline", None))
 
     yolo_batch_size = int(
         getattr(args, "yolo_batch_size", None)
@@ -865,6 +875,8 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
         suffixes.append("ort-cuda")
     if not is_full_phase_run:
         suffixes.append("partial-" + "-".join(phases))
+    if recovery_mode:
+        suffixes.append("recovery")
     if args.max_frames is not None:
         suffixes.append(f"smoke{args.max_frames}")
     run_suffix = "_" + "_".join(suffixes) if suffixes else ""
@@ -894,6 +906,12 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
         "ritnet_batch_size": batch_size if ritnet else 0,
         "yolo_batch_size": yolo_batch_size,
         "max_frames": args.max_frames,
+        "recovery_mode": recovery_mode,
+        "timeline_file": (
+            str(Path(args.recovery_timeline).resolve())
+            if recovery_mode
+            else str((video.parent.parent / "beh" / "master_timeline.csv").resolve())
+        ),
     }
     run_id = hashlib.sha256(
         json.dumps(
@@ -915,6 +933,7 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
         "unexpected_frame_count": 0,
         "truncated_for_smoke_test": False,
         "partial_phase_selection": not is_full_phase_run,
+        "recovery_mode": recovery_mode,
         "required_artifacts": list(REQUIRED_ARTIFACTS),
         "started_at_utc": started_at_utc,
         "finished_at_utc": None,
@@ -1167,7 +1186,7 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
     summary = {
         "subject": subject,
         "video": video_identity,
-        "mode": "formal",
+        "mode": "recovery" if recovery_mode else "formal",
         "inference_backend": backend,
         "focuswave_release": release,
         "phases": phases,
@@ -1198,7 +1217,7 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
                 "package": config["package"],
                 "config": config,
                 "effective_parameters": {
-                    "mode": "formal",
+                    "mode": "recovery" if recovery_mode else "formal",
                     "inference_backend": backend,
                     "focuswave_release": release,
                     "min_subject_number": minimum,
@@ -1215,6 +1234,8 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
                     "overlay_stride": overlay_stride,
                     "device": device,
                     "max_frames": args.max_frames,
+                    "recovery_mode": recovery_mode,
+                    "timeline_file": run_identity["timeline_file"],
                 },
                 "phase_windows": window_dicts,
                 "python": sys.version,
@@ -1246,7 +1267,7 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
     artifact_complete = (
         not read_failed
         and not stop_requested
-        and is_full_phase_run
+        and (is_full_phase_run or recovery_mode)
         and decoded_frames == len(expected_keys)
         and len(frame_rows) == len(expected_keys)
         and not missing_expected
@@ -1271,7 +1292,7 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
         print(json.dumps({"output": str(out.resolve()), **summary}, ensure_ascii=False, indent=2))
         return 3
 
-    if args.max_frames is not None or not is_full_phase_run:
+    if args.max_frames is not None or (not is_full_phase_run and not recovery_mode):
         final_payload["status"] = "smoke_complete"
         write_completion(out, final_payload)
         print(json.dumps({"output": str(out.resolve()), **summary}, ensure_ascii=False, indent=2))
@@ -1292,9 +1313,13 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
         print(json.dumps({"output": str(out.resolve()), **summary}, ensure_ascii=False, indent=2))
         return 4
 
-    final_payload["status"] = "complete"
+    final_payload["status"] = "recovery_complete" if recovery_mode else "complete"
     write_completion(out, final_payload)
-    published = validate_completion(out, run_identity)
+    published = validate_completion(
+        out,
+        run_identity,
+        accepted_statuses=("recovery_complete",) if recovery_mode else ("complete",),
+    )
     if not published.valid:
         final_payload["status"] = "failed"
         final_payload["validation_error"] = published.reason
@@ -1423,6 +1448,14 @@ def parse_args() -> argparse.Namespace:
     formal_parser.add_argument(
         "--phases",
         help="Comma-separated phases; default comes from config.yaml",
+    )
+    formal_parser.add_argument(
+        "--recovery-timeline",
+        type=Path,
+        help=(
+            "External reconstructed task timeline for an isolated recovery run. "
+            "The result is marked recovery_complete and is never treated as formal complete."
+        ),
     )
     return parser.parse_args()
 

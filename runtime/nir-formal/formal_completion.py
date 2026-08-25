@@ -24,7 +24,7 @@ REQUIRED_ARTIFACTS = (
     "summary.json",
     "run_manifest.json",
 )
-TERMINAL_STATUSES = {"complete", "smoke_complete", "failed"}
+TERMINAL_STATUSES = {"complete", "recovery_complete", "smoke_complete", "failed"}
 
 
 @dataclass(frozen=True)
@@ -313,13 +313,15 @@ def validate_completion(
     if effective.get("max_frames") != marker.get("max_frames"):
         return CompletionValidation(False, "manifest max_frames mismatch", marker)
 
-    if marker.get("status") == "complete":
+    if marker.get("status") in {"complete", "recovery_complete"}:
         if (
             marker.get("max_frames") is not None
             or marker.get("truncated_for_smoke_test")
-            or marker.get("partial_phase_selection")
+            or (marker.get("status") == "complete" and marker.get("partial_phase_selection"))
         ):
-            return CompletionValidation(False, "complete run cannot be truncated", marker)
+            return CompletionValidation(False, "published run cannot be truncated", marker)
+        if marker.get("status") == "recovery_complete" and marker.get("recovery_mode") is not True:
+            return CompletionValidation(False, "recovery_complete requires recovery_mode", marker)
         if int(marker.get("decoded_frames", -1)) != len(expected_keys):
             return CompletionValidation(False, "decoded_frames mismatch", marker)
         if missing or unexpected or failure_count:
@@ -388,6 +390,8 @@ def _formal_guard_spec() -> tuple[Path, dict[str, Any]] | None:
     is_full_phase_run = phases == configured_phases
     max_frames_text = _arg_value("--max-frames")
     max_frames = int(max_frames_text) if max_frames_text is not None else None
+    recovery_timeline_text = _arg_value("--recovery-timeline")
+    recovery_mode = bool(recovery_timeline_text)
 
     release = str(config["formal"].get("focuswave_release", "v3.1.3"))
     output_text = _arg_value("--output")
@@ -403,6 +407,8 @@ def _formal_guard_spec() -> tuple[Path, dict[str, Any]] | None:
         suffixes.append("ort-cuda")
     if not is_full_phase_run:
         suffixes.append("partial-" + "-".join(phases))
+    if recovery_mode:
+        suffixes.append("recovery")
     if max_frames is not None:
         suffixes.append(f"smoke{max_frames}")
     run_suffix = "_" + "_".join(suffixes) if suffixes else ""
@@ -426,6 +432,14 @@ def _formal_guard_spec() -> tuple[Path, dict[str, Any]] | None:
         "yolo_batch_size": yolo_batch_size,
         "max_frames": max_frames,
         "partial_phase_selection": not is_full_phase_run,
+        "recovery_mode": recovery_mode,
+        "timeline_file": (
+            str(Path(recovery_timeline_text).resolve())
+            if recovery_timeline_text
+            else str((Path(video_identity).parent.parent / "beh" / "master_timeline.csv").resolve())
+            if video_identity
+            else None
+        ),
         "processed_frames": 0,
         "decoded_frames": 0,
         "failure_stage": "initialization",

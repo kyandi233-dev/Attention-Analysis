@@ -137,3 +137,31 @@ def test_video_read_failure_cannot_validate_as_complete(tmp_path):
     result = validate_completion(run_dir, identity)
     assert not result.valid
     assert "failed frames" in result.reason
+
+
+def test_recovery_complete_accepts_complete_external_task_windows(tmp_path):
+    run_dir, identity = _make_run(tmp_path)
+    marker = json.loads((run_dir / "completion.json").read_text(encoding="utf-8"))
+    timeline = tmp_path / "reconstructed_timeline.csv"
+    timeline.touch()
+    marker.update(
+        {
+            "status": "recovery_complete",
+            "partial_phase_selection": True,
+            "recovery_mode": True,
+            "timeline_file": str(timeline.resolve()),
+        }
+    )
+    identity = {
+        **identity,
+        "partial_phase_selection": True,
+        "recovery_mode": True,
+        "timeline_file": str(timeline.resolve()),
+    }
+    write_completion(run_dir, marker)
+    result = validate_completion(
+        run_dir,
+        identity,
+        accepted_statuses=("recovery_complete",),
+    )
+    assert result.valid
