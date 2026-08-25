@@ -82,7 +82,7 @@ LibreFace gaze 全部 300 帧有效，但连续稳定性较弱：
 - gaze pitch lag-1≈0.626，median step≈1.50°，p95≈8.10°，max≈17.22°；
 - gaze yaw lag-1≈0.425，median step≈5.68°，p95≈17.30°，max≈41.81°。
 
-在本任务连续 10 fps 窗口中，尤其 gaze yaw 出现较大的高频变化。没有 gaze ground truth，不能直接判为错误，但在可视化 review 前**不把 LibreFace gaze 作为正式主变量**。
+在本任务连续 10 fps 窗口中，尤其 gaze yaw 出现较大的高频变化。没有 gaze ground truth，不能直接判为错误，但当前**不把 LibreFace gaze 作为正式主变量**。
 
 LibreFace head pose 连续性较好：pitch/roll/yaw lag-1 分别约 0.787 / 0.749 / 0.874。与 Py-Feat 的 cross-model rank correlation 为 Pitch≈0.718、Roll≈0.693、Yaw≈-0.407；Yaw 的负号可能受到两套工具坐标/符号约定影响，不能直接按原符号解释为相反运动。
 
@@ -145,24 +145,37 @@ AMD benchmark 使用现有完全相同的连续 300 帧，并同时报告：
 
 ## 6. 可视化 review：替代繁琐人工逐帧标注
 
-不要求人工逐帧进行 FACS 编码。Py-Feat 官方本身支持 478 FaceMesh、gaze arrow、AU 驱动 mesh 和动画等 visualization；本项目另外增加统一的 side-by-side review，使两套候选在同一原图上直接可见。
+不要求人工逐帧进行 FACS 编码。当前采用模型预测 overlay 做快速 sanity check；它用于直接看 landmark/mesh 是否贴合、gaze 是否明显抖动、head pose 是否与真实转头一致，以及 AU/expression 是否出现明显不合理变化。
 
-新增 stage：
+stage 保持：
 
 ```powershell
 python scripts/rgb_analysis.py --stage face-visual-review --subject sub-031
 ```
 
-它读取已有连续 30 秒结果，不重新运行模型，生成：
+它读取已有连续 30 秒结果，不重新运行模型。当前 v0.2 输出：
 
 ```text
 D:\_AttentionData\Beijing-RGB\_test\face-continuous\sub-031\
-└── sub-031_face-visual-review.mp4
+├── sub-031_face-visual-review-v2.mp4
+└── sub-031_face-visual-review-v2_manifest.json
 ```
 
-视频左侧为 Py-Feat：face bbox、68 landmark、gaze direction cue、head pose 与当前 top AU；右侧为 LibreFace：MediaPipe landmarks（可解析时）、gaze direction cue、head pose 与 AU intensity。该视频用于肉眼检查模型预测是否与真实动作方向一致。
+v0.2 相比旧版做了语义统一：
 
-**注意：overlay 是模型预测的可视化，不是人工 ground truth。** 它可以快速发现明显 jitter、方向错误、漏脸和 AU/gaze 与画面不一致，但不能据此计算严格准确率。
+- Py-Feat 不再只展示 68-point compatibility landmarks，而读取已保存的完整 478-point mesh，并与 LibreFace 尽量按相同 FaceMesh 关键轮廓展示；
+- 眼睛/眼睑与 iris landmarks 单独区分；
+- **黄色箭头只表示 gaze**，不是 head pose；
+- **红 X / 绿 Y / 蓝 Z 三轴表示 head pose**；
+- AU 在视频中附中文含义；
+- Py-Feat AU 明确标记为 0–1 probability-like output；LibreFace AU intensity 明确标记为 0–5；两边数值不能直接按绝对值比较；
+- Py-Feat 显示 7 类 emotion 中的 top probability；
+- LibreFace 显示当前 8 类 expression label；
+- LibreFace `Alignment=True/False` 改为“人脸对齐：成功/失败”。
+
+两套 AU 都使用 FACS AU 编号，但输出集合和量纲不同。LibreFace 的 12 个 binary AU detection 不是“另外 12 个坏掉的 AU”；它是独立的 0/1 detection 任务，而 12 个 AU intensity 是 0–5 连续强度任务。当前持续窗口中 binary 输出多数为常数，因此正式连续分析优先 intensity，binary 仍保留 raw/event 信息。
+
+**注意：overlay 是模型预测的可视化，不是人工 ground truth。** 它可以快速发现明显 jitter、方向错误、漏脸和输出与画面不一致，但不能据此计算严格准确率。
 
 ## 7. 当前候选定位
 
@@ -172,7 +185,7 @@ D:\_AttentionData\Beijing-RGB\_test\face-continuous\sub-031\
 | CPU end-to-end | 0.528 image/s | **4.452 image/s** |
 | AU 连续性 | 18/20 有变化，lag-1 中位≈0.723 | 12 intensity 均变化，lag-1 中位≈0.648 |
 | binary AU | 不适用 | 多数常数，不作为主连续指标 |
-| gaze | 连续性相对较好 | yaw 高频变化较大，待 visual review |
+| gaze | 连续性相对较好 | yaw 高频变化较大，visual review 继续核验 |
 | head pose | 连续性高 | 连续性高；需统一坐标符号 |
 | expression | 7 类概率 + VA | categorical label 在本窗口恒定 |
 | 信息完整性 | **明显更高** | 较精简 |
@@ -185,4 +198,4 @@ D:\_AttentionData\Beijing-RGB\_test\face-continuous\sub-031\
 
 Face 是昂贵推理，继续遵循 `044-RGB输出Schema与信息保留原则.md`：候选推理保存原生可用字段；multi-face 不在 raw 层静默删除；QC 先 flag；正式结果记录 candidate/version/model/device/batch/source-frame manifest。
 
-主 `attention-rgb` 环境负责 sample/QC/比较/visual review；Py-Feat 使用独立 Python 3.11 环境；LibreFace 使用独立 Python 3.9 环境。DirectML benchmark 将使用独立环境，避免污染当前稳定的候选 reference runtime。
+主 `attention-rgb` 环境负责 sample/QC/比较/visual review；Py-Feat 使用独立 Python 3.11 环境；LibreFace 使用独立 Python 3.9 环境。DirectML benchmark 使用独立 `attention-face-directml` 环境，避免污染当前稳定的候选 reference runtime。
