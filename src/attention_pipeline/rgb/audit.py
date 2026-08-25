@@ -117,6 +117,7 @@ def _exclusion(config: Config, subject: str) -> tuple[bool, str]:
 
 def audit_subject(files: RGBSubjectFiles, config: Config) -> dict[str, object]:
     focuswave = config.section("focuswave")
+    qc = config.section("qc")
     timestamps = read_rgb_timestamps(files.timestamps)
     excluded, exclusion_reason = _exclusion(config, files.subject)
     row: dict[str, object] = {
@@ -141,6 +142,9 @@ def audit_subject(files: RGBSubjectFiles, config: Config) -> dict[str, object]:
     nominal_count = int(row["video_frame_count_nominal"] or 0)
     timestamp_count = int(row["timestamp_rows"] or 0)
     row["video_timestamp_count_delta"] = nominal_count - timestamp_count
+    row["video_timestamp_one_to_one"] = bool(
+        row["video_open_ok"] and timestamp_count > 0 and nominal_count == timestamp_count
+    )
 
     if timestamps and files.master_timeline.exists():
         try:
@@ -172,13 +176,24 @@ def audit_subject(files: RGBSubjectFiles, config: Config) -> dict[str, object]:
         row["formal_timeline_parse_ok"] = False
         row["formal_timeline_error"] = "missing RGB timestamps or master_timeline.csv"
 
+    gap_warning_ms = int(qc.get("timestamp_gap_warning_ms", 100) or 100)
+    max_gap = row.get("timestamp_max_interval_ms")
+    missing_indices = int(row.get("timestamp_missing_frame_indices") or 0)
+    row["needs_gap_qc"] = bool(
+        missing_indices > 0 or (max_gap is not None and int(max_gap) > gap_warning_ms)
+    )
+
+    # Structural usability is intentionally gap-tolerant. Capture-index gaps and
+    # time gaps are treated as missing observations, not as a reason to discard
+    # an otherwise synchronized recording. Downstream code must map AVI frame
+    # position to timestamp CSV row order and preserve gaps as missing time.
     row["basic_complete"] = bool(
         row["video_open_ok"]
         and row["timestamps_exists"]
         and row["master_timeline_exists"]
         and row["block1_behavior_exists"]
         and row["block2_behavior_exists"]
-        and row["timestamp_frame_index_contiguous"]
+        and row["video_timestamp_one_to_one"]
         and row["timestamp_unix_monotonic"]
         and row["formal_timeline_parse_ok"]
         and row["rgb_covers_formal_start"]
