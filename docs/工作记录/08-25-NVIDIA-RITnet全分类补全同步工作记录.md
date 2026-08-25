@@ -4,6 +4,8 @@
 
 正式 NIR 已经完成，但历史 `eyes.csv` 仅将 RITnet pupil 类转成正式数值变量。AMD 分支已完成 post-hoc full-class 修复并在 `sub-031` 上验证，因此本次将同一分析口径同步到 `nvidia-cuda`，同时补齐 NIR↔行为数据对齐方法文档。
 
+本次 NVIDIA 实际目标机器 GPU 为 **NVIDIA GeForce RTX 5060**。此前对话/部分旧说明中把这台机器记成 RTX 4060，属于硬件型号记录错误；本次同步后的性能评估与后续正式运行均以 RTX 5060 为准。
+
 本次原则：不删除、不覆盖历史正式结果；不重新跑 YOLO；不改变 RITnet 输入分辨率或 FP 精度。
 
 ## 2. 冻结方法
@@ -60,7 +62,7 @@ ritnet-fullclass-v1.2-fast-qc
 nvidia-v1.2-ritnet-fullclass
 ```
 
-该 tag 应指向本次 NVIDIA 同步 commit。若连接工具无法直接创建 Git tag，在 NVIDIA 本地拉取同步 commit 后执行：
+该 tag 应指向本次 NVIDIA 同步后的最终通过 CI 的 commit。若连接工具无法直接创建 Git tag，在 NVIDIA 本地拉取最终 commit 后执行：
 
 ```powershell
 git tag -a nvidia-v1.2-ritnet-fullclass -m "NVIDIA CUDA RITnet full-class v1.2 fast QC"
@@ -87,7 +89,7 @@ throughput: 132.78 ROI/s
 QC images: 154
 ```
 
-这验证了“复用 source frame_idx + ROI 坐标、只重跑 RITnet”的修复路线以及 sparse QC 输出。NVIDIA 使用不同 execution provider，因此在 72 人全量前仍应对 1 名完整被试执行一次 CUDA parity + speed benchmark。
+这验证了“复用 source frame_idx + ROI 坐标、只重跑 RITnet”的修复路线以及 sparse QC 输出。NVIDIA RTX 5060 使用不同 execution provider，因此在 72 人全量前仍应对 1 名完整被试执行一次 CUDA parity + speed benchmark。
 
 ## 6. NVIDIA 全量前检查
 
@@ -115,10 +117,10 @@ timing_cpu_work_ms / timing_gpu_ms
 
 ## 7. 时间预算原则
 
-AMD 44 名可用实际 fast-qc `sub-031` 速度作初步预算；NVIDIA 72 名在新 CUDA full-class 代码实测前不写死一个未经测量的单人耗时。首名 NVIDIA 被试结束后直接用：
+AMD 44 名可用实际 fast-qc `sub-031` 速度作初步预算；NVIDIA RTX 5060 的 72 名在新 CUDA full-class 代码完成首名实测前不写死未经测量的单人耗时。首名 NVIDIA 被试结束后直接用：
 
 ```text
 72人理论耗时 = 单人 elapsed_sec × 72
 ```
 
-两台电脑并行运行时，总墙钟时间由较慢的一台决定，不应把 AMD 44 人和 NVIDIA 72 人的小时数简单相加。
+按 AMD `sub-031` 的 616.26 秒作为保守同速上界，44 人约 7.5 小时；RTX 5060 只跑 RITnet full-class、跳过 YOLO，预期单人约 7–10 分钟时，72 人约 8.4–12 小时。两台电脑并行运行时，总墙钟时间由较慢的一台决定，当前应预留约 9–12 小时，并在 RTX 5060 首名 benchmark 后按实测值收紧预算。
