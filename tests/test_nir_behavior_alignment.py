@@ -125,7 +125,30 @@ def test_schema_v2_internal_coverage_uses_available_duration() -> None:
     ].iloc[0]
     assert np.isclose(first["sampling_rate_hz_estimate"], 10.0)
     assert np.isclose(first["expected_nir_rows_available"], 1.0)
+    assert first["n_nir_rows_available"] == 1
     assert np.isclose(first["internal_coverage_fraction"], 1.0)
+
+
+def test_schema_v2_detects_internal_gap_without_boundary_truncation() -> None:
+    trials = add_behavior_qc(_behavior())
+    nir = _nir()
+    gap = (
+        nir["unix_ms"].ge(1500.0)
+        & nir["unix_ms"].lt(1900.0)
+        & nir["eye"].eq("left")
+    )
+    indices = build_nir_indices(nir.loc[~gap].copy(), "sub-031")
+    specs = [WindowSpec("pre_1s", "state", -1000, 0)]
+    windows = augment_window_metadata(
+        build_trial_windows(trials, indices, specs), trials, indices
+    )
+    second = windows[
+        (windows["trial_num"] == 2) & (windows["eye"] == "left")
+    ].iloc[0]
+    assert not bool(second["window_truncated_by_block_start"])
+    assert not bool(second["window_truncated_by_block_end"])
+    assert second["internal_coverage_fraction"] < 1.0
+    assert second["max_temporal_gap_sec"] >= 0.5
 
 
 def test_coverage_report_keeps_block_eye_window_groups() -> None:
