@@ -7,7 +7,8 @@ Fast production mode:
 - requests labels_u8 only from ONNX;
 - reuses the frozen source pupil geometry/confidence from eyes.csv;
 - overlaps CPU decode/crop/preprocess with DirectML inference;
-- postprocesses independent eye label maps in a small worker pool.
+- postprocesses independent eye label maps in a small worker pool;
+- saves deterministic sparse QC label/overlay images without changing analysis.
 
 Validation mode (``--validate-pupil``) additionally requests pupil probability
 and recomputes pupil geometry so parity against the original formal eyes.csv can
@@ -41,12 +42,21 @@ from ritnet_fullclass_contract import (
     CLASS_MAPPING,
     EXTENSION_SCHEMA_VERSION,
     EXTENSION_VERSION,
+    QC_ANOMALY_LIMIT_PER_REASON_PER_PHASE,
+    QC_OVERLAY_ALPHA,
+    QC_PALETTE_BGR,
+    QC_STRIDE_FRAMES,
     normalize_subject,
     subject_output_paths,
 )
 from ritnet_fullclass_metrics import (
     summarize_fullclass,
     summarize_fullclass_from_source,
+)
+from ritnet_fullclass_qc import (
+    QCSampler,
+    build_qc_anchor_frames,
+    save_qc_pair,
 )
 from ritnet_fullclass_runtime import RitnetFullClassRuntime
 
@@ -68,6 +78,26 @@ def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
         with temporary.open("w", encoding="utf-8", newline="\n") as handle:
             json.dump(payload, handle, ensure_ascii=False, indent=2)
             handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def atomic_write_csv(
+    path: Path,
+    rows: list[dict[str, Any]],
+    fieldnames: list[str],
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with temporary.open("w", newline="", encoding="utf-8-sig") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(rows)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)
@@ -192,15 +222,27 @@ def extension_completion_valid(
         marker = load_json(path)
     except Exception:
         return False
-    return bool(
+
+    if not bool(
         marker.get("schema_version") == EXTENSION_SCHEMA_VERSION
         and marker.get("extension_version") == EXTENSION_VERSION
         and marker.get("status") == "complete"
         and marker.get("source_eyes_sha256") == source_eyes_sha256
         and marker.get("ritnet_model_sha256") == ritnet_model_sha256
         and bool(marker.get("pupil_validation_mode")) == bool(pupil_validation_mode)
+        and int(marker.get("qc_stride_frames", -1)) == QC_STRIDE_FRAMES
+        and int(marker.get("qc_anomaly_limit_per_reason_per_phase", -1))
+        == QC_ANOMALY_LIMIT_PER_REASON_PER_PHASE
         and all(Path(value).is_file() for value in marker.get("required_artifacts", []))
-    )
+    ):
+        return False
+
+    qc_dir = Path(str(marker.get("qc_dir", "")))
+    expected_images = int(marker.get("qc_image_count", -1))
+    if expected_images < 0 or not qc_dir.is_dir():
+        return False
+    actual_images = sum(1 for _ in qc_dir.glob("*.png"))
+    return actual_images == expected_images
 
 
 def parse_args() -> argparse.Namespace:
@@ -311,6 +353,12 @@ def main() -> int:
     min_frame, max_frame = target_frames[0], target_frames[-1]
     target_set = set(target_frames)
 
+    qc_anchor_frames = build_qc_anchor_frames(rows, QC_STRIDE_FRAMES)
+    qc_sampler = QCSampler(
+        qc_anchor_frames,
+        anomaly_limit_per_reason_per_phase=QC_ANOMALY_LIMIT_PER_REASON_PER_PHASE,
+    )
+
     analysis_size = (int(config["roi"]["width"]), int(config["roi"]["height"]))
     runtime = RitnetFullClassRuntime(
         PACKAGE_ROOT,
@@ -362,6 +410,22 @@ def main() -> int:
         if name not in source_fields
     ]
 
+    qc_index_fields = [
+        "subject",
+        "phase",
+        "phase_segment",
+        "frame_idx",
+        "video_time_ms",
+        "unix_ms",
+        "eye",
+        "reason",
+        "ritnet_found",
+        "roi_clipped",
+        "normalization_valid",
+        "labels_file",
+        "overlay_file",
+    ]
+
     started_at = datetime.now(timezone.utc).isoformat()
     completion_base = {
         "schema_version": EXTENSION_SCHEMA_VERSION,
@@ -385,6 +449,11 @@ def main() -> int:
         "source_pupil_reused": not bool(args.validate_pupil),
         "pupil_validation_mode": bool(args.validate_pupil),
         "postprocess_workers": int(args.postprocess_workers),
+        "qc_stride_frames": QC_STRIDE_FRAMES,
+        "qc_anomaly_limit_per_reason_per_phase": QC_ANOMALY_LIMIT_PER_REASON_PER_PHASE,
+        "qc_dir": str(outputs["qc_dir"]),
+        "qc_index": str(outputs["qc_index"]),
+        "qc_image_count": 0,
         "expected_rows": len(rows),
         "processed_rows": 0,
         "started_at_utc": started_at,
@@ -393,9 +462,13 @@ def main() -> int:
             str(outputs["csv"]),
             str(outputs["summary"]),
             str(outputs["manifest"]),
+            str(outputs["qc_index"]),
         ],
     }
     atomic_write_json(outputs["completion"], completion_base)
+
+    # Versioned subject-specific QC directory; existing artifacts are never deleted.
+    outputs["qc_dir"].mkdir(parents=True, exist_ok=True)
 
     cap = cv2.VideoCapture(str(video))
     if not cap.isOpened():
@@ -411,12 +484,14 @@ def main() -> int:
     gpu_ms = 0.0
     postprocess_cpu_ms = 0.0
     csv_write_ms = 0.0
+    qc_image_write_ms = 0.0
 
     processed_rows = 0
     normalization_valid_count = 0
     parity_ok_count = 0
     parity_mismatch_count = 0
     fraction_sums = defaultdict(float)
+    qc_records: list[dict[str, Any]] = []
     wall_started = time.perf_counter()
 
     def produce_batch() -> dict[str, Any] | None:
@@ -499,12 +574,15 @@ def main() -> int:
 
     def consume_batch(
         writer: csv.DictWriter,
-        batch_futures: list[tuple[dict[str, str], Future]],
+        batch_futures: list[
+            tuple[dict[str, str], np.ndarray, np.ndarray, Future]
+        ],
     ) -> None:
         nonlocal processed_rows, normalization_valid_count
         nonlocal parity_ok_count, parity_mismatch_count, postprocess_cpu_ms, csv_write_ms
+        nonlocal qc_image_write_ms
 
-        for source_row, future in batch_futures:
+        for source_row, roi_gray, labels, future in batch_futures:
             metrics, parity, post_ms = future.result()
             postprocess_cpu_ms += post_ms
             output_row: dict[str, Any] = dict(source_row)
@@ -516,6 +594,35 @@ def main() -> int:
             write_started = time.perf_counter()
             writer.writerow(output_row)
             csv_write_ms += (time.perf_counter() - write_started) * 1000.0
+
+            reasons = qc_sampler.select(source_row, metrics)
+            if reasons:
+                qc_started = time.perf_counter()
+                labels_path, overlay_path = save_qc_pair(
+                    outputs["qc_dir"],
+                    subject,
+                    source_row,
+                    roi_gray,
+                    labels,
+                )
+                qc_image_write_ms += (time.perf_counter() - qc_started) * 1000.0
+                qc_records.append(
+                    {
+                        "subject": subject,
+                        "phase": source_row.get("phase"),
+                        "phase_segment": source_row.get("phase_segment"),
+                        "frame_idx": source_row.get("frame_idx"),
+                        "video_time_ms": source_row.get("video_time_ms"),
+                        "unix_ms": source_row.get("unix_ms"),
+                        "eye": source_row.get("eye"),
+                        "reason": "+".join(reasons),
+                        "ritnet_found": source_row.get("ritnet_found"),
+                        "roi_clipped": source_row.get("roi_clipped"),
+                        "normalization_valid": bool(metrics.get("normalization_valid")),
+                        "labels_file": str(labels_path.relative_to(run_dir)),
+                        "overlay_file": str(overlay_path.relative_to(run_dir)),
+                    }
+                )
 
             processed_rows += 1
             normalization_valid_count += int(bool(metrics.get("normalization_valid")))
@@ -536,7 +643,9 @@ def main() -> int:
         max_workers=int(args.postprocess_workers),
         thread_name_prefix="ritnet-post",
     )
-    post_batches: deque[list[tuple[dict[str, str], Future]]] = deque()
+    post_batches: deque[
+        list[tuple[dict[str, str], np.ndarray, np.ndarray, Future]]
+    ] = deque()
 
     try:
         outputs["csv"].parent.mkdir(parents=True, exist_ok=True)
@@ -560,20 +669,23 @@ def main() -> int:
                 )
                 gpu_ms += (time.perf_counter() - gpu_started) * 1000.0
 
-                futures: list[tuple[dict[str, str], Future]] = []
-                for index, (source_row, _) in enumerate(batch["items"]):
+                futures: list[
+                    tuple[dict[str, str], np.ndarray, np.ndarray, Future]
+                ] = []
+                for index, (source_row, roi_gray) in enumerate(batch["items"]):
                     probability = (
                         pupil_prob_batch[index]
                         if pupil_prob_batch is not None
                         else None
                     )
+                    labels = labels_batch[index]
                     future = post_pool.submit(
                         postprocess_one,
                         source_row,
-                        labels_batch[index],
+                        labels,
                         probability,
                     )
-                    futures.append((source_row, future))
+                    futures.append((source_row, roi_gray, labels, future))
                 post_batches.append(futures)
 
                 if len(post_batches) >= 2:
@@ -589,6 +701,9 @@ def main() -> int:
     elapsed = time.perf_counter() - wall_started
     if processed_rows != len(rows):
         raise RuntimeError(f"Processed {processed_rows} rows but expected {len(rows)}")
+
+    atomic_write_csv(outputs["qc_index"], qc_records, qc_index_fields)
+    qc_image_count = len(qc_records) * 2
 
     summary = {
         "subject": subject,
@@ -613,12 +728,24 @@ def main() -> int:
         "pupil_parity_ok_fraction": (
             parity_ok_count / processed_rows if args.validate_pupil else None
         ),
+        "qc_sampling": {
+            "stride_frames": QC_STRIDE_FRAMES,
+            "phase_first_middle_last": True,
+            "anomaly_limit_per_reason_per_phase": QC_ANOMALY_LIMIT_PER_REASON_PER_PHASE,
+            "anchor_frame_count": len(qc_anchor_frames),
+            "saved_eye_pairs": len(qc_records),
+            "image_count": qc_image_count,
+            "reason_counts": dict(sorted(qc_sampler.reason_counts.items())),
+            "qc_dir": str(outputs["qc_dir"]),
+            "qc_index": str(outputs["qc_index"]),
+        },
         "timing_cpu_work_ms": {
             "decode": decode_cpu_ms,
             "roi_crop": crop_cpu_ms,
             "preprocess": preprocess_cpu_ms,
             "postprocess_sum_across_workers": postprocess_cpu_ms,
             "csv_write": csv_write_ms,
+            "qc_image_write": qc_image_write_ms,
         },
         "timing_gpu_ms": gpu_ms,
         "mean_class_fractions": {
@@ -656,6 +783,25 @@ def main() -> int:
         "source_pupil_reused": not bool(args.validate_pupil),
         "pupil_validation_mode": bool(args.validate_pupil),
         "postprocess_workers": int(args.postprocess_workers),
+        "primary_pupil_metric": "fullclass_pupil_to_iris_diameter_ratio",
+        "qc_sampling": {
+            "stride_frames": QC_STRIDE_FRAMES,
+            "phase_first_middle_last": True,
+            "anomaly_limit_per_reason_per_phase": QC_ANOMALY_LIMIT_PER_REASON_PER_PHASE,
+            "formats": ["labels.png", "overlay.png"],
+            "overlay_alpha": QC_OVERLAY_ALPHA,
+            "palette_bgr": {
+                str(key): list(value) for key, value in QC_PALETTE_BGR.items()
+            },
+            "anomaly_reasons": [
+                "roi_clipped",
+                "ritnet_missing",
+                "normalization_invalid",
+                "ocular_fragmented",
+            ],
+            "qc_dir": str(outputs["qc_dir"]),
+            "qc_index": str(outputs["qc_index"]),
+        },
         "time_mapping": {
             "copied_from_source_eyes_csv": True,
             "fields": [
@@ -679,6 +825,7 @@ def main() -> int:
             "Validation mode requests pupil probability and recomputes pupil geometry only for parity checking.",
             "RITnet method remains 640x400, FP32, fixed batch=16; no FP16 or lower-resolution path is used.",
             "Iris/sclera/background probabilities are not fabricated.",
+            "QC PNGs are sparse deterministic audit artifacts; numerical CSV remains the complete per-eye dataset.",
             "Ocular aperture fields are candidate geometry/QC signals, not validated blink or PERCLOS labels.",
         ],
     }
@@ -691,6 +838,8 @@ def main() -> int:
         "output_csv_sha256": sha256(outputs["csv"]),
         "summary_sha256": sha256(outputs["summary"]),
         "manifest_sha256": sha256(outputs["manifest"]),
+        "qc_index_sha256": sha256(outputs["qc_index"]),
+        "qc_image_count": qc_image_count,
         "pupil_parity_mismatch_count": parity_mismatch_count if args.validate_pupil else None,
         "normalization_valid_count": normalization_valid_count,
         "finished_at_utc": datetime.now(timezone.utc).isoformat(),

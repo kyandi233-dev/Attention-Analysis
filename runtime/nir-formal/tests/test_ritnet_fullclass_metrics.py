@@ -11,8 +11,12 @@ PACKAGE_ROOT = HERE.parent
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
-from ritnet_fullclass_contract import subject_output_paths
+from ritnet_fullclass_contract import (
+    QC_STRIDE_FRAMES,
+    subject_output_paths,
+)
 from ritnet_fullclass_metrics import summarize_fullclass, summarize_fullclass_from_source
+from ritnet_fullclass_qc import build_qc_anchor_frames, qc_image_paths, render_qc_images
 
 
 def synthetic_labels() -> np.ndarray:
@@ -118,6 +122,50 @@ def test_fast_path_missing_source_pupil_is_not_normalizable():
 
 def test_subject_number_is_present_in_every_subject_artifact_filename(tmp_path):
     paths = subject_output_paths(tmp_path, "sub-31")
-    assert set(paths) == {"csv", "summary", "manifest", "completion"}
-    for path in paths.values():
-        assert path.name.startswith("sub-031_")
+    expected_files = {"csv", "summary", "manifest", "completion", "qc_index"}
+    assert expected_files.issubset(paths)
+    for key in expected_files:
+        assert paths[key].name.startswith("sub-031_")
+        assert "v1-2-fast-qc" in paths[key].name
+    assert paths["qc_dir"].name.startswith("sub-031_")
+    assert "v1-2-fast-qc" in paths["qc_dir"].name
+
+
+def test_qc_anchor_sampling_keeps_phase_boundaries_and_sparse_stride():
+    rows = []
+    for frame in range(100, 10101, 100):
+        rows.append(
+            {
+                "phase": "block1",
+                "phase_segment": "1",
+                "frame_idx": str(frame),
+            }
+        )
+    anchors = build_qc_anchor_frames(rows, stride_frames=QC_STRIDE_FRAMES)
+    assert 100 in anchors
+    assert 5100 in anchors or 5000 in anchors
+    assert 10100 in anchors
+    assert len(anchors) < 10
+
+
+def test_qc_render_and_subject_numbered_names(tmp_path):
+    labels = synthetic_labels()
+    roi = np.full((80, 160), 120, dtype=np.uint8)
+    labels_color, overlay = render_qc_images(roi, labels)
+    assert labels_color.shape == (160, 320, 3)
+    assert overlay.shape == (160, 320, 3)
+    assert np.any(labels_color[labels == 1] != 0)
+    assert np.any(labels_color[labels == 2] != 0)
+    assert np.any(labels_color[labels == 3] != 0)
+
+    row = {
+        "phase": "block1",
+        "phase_segment": "1",
+        "frame_idx": "1234",
+        "eye": "frame_left",
+    }
+    labels_path, overlay_path = qc_image_paths(tmp_path, "sub-31", row)
+    assert labels_path.name.startswith("sub-031_")
+    assert overlay_path.name.startswith("sub-031_")
+    assert labels_path.name.endswith("_labels.png")
+    assert overlay_path.name.endswith("_overlay.png")

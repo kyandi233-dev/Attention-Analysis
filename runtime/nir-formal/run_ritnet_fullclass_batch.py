@@ -14,7 +14,12 @@ PACKAGE_ROOT = Path(__file__).resolve().parent
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
-from ritnet_fullclass_contract import EXTENSION_VERSION, normalize_subject
+from ritnet_fullclass_contract import (
+    EXTENSION_VERSION,
+    QC_ANOMALY_LIMIT_PER_REASON_PER_PHASE,
+    QC_STRIDE_FRAMES,
+    normalize_subject,
+)
 
 EXTENSION = PACKAGE_ROOT / "run_ritnet_fullclass_extension.py"
 
@@ -162,6 +167,13 @@ def main() -> int:
                 "pupil_validation_mode": bool(args.validate_pupil),
                 "postprocess_workers": int(args.postprocess_workers),
                 "ritnet_method": "640x400 FP32 fixed-b16",
+                "primary_pupil_metric": "fullclass_pupil_to_iris_diameter_ratio",
+                "qc_sampling": {
+                    "stride_frames": QC_STRIDE_FRAMES,
+                    "phase_first_middle_last": True,
+                    "anomaly_limit_per_reason_per_phase": QC_ANOMALY_LIMIT_PER_REASON_PER_PHASE,
+                    "formats": ["labels.png", "overlay.png"],
+                },
                 "selections": selections,
                 "dry_run": bool(args.dry_run),
             },
@@ -209,6 +221,7 @@ def main() -> int:
                 "run_dir": str(run_dir),
                 "pupil_validation_mode": bool(args.validate_pupil),
                 "postprocess_workers": int(args.postprocess_workers),
+                "qc_stride_frames": QC_STRIDE_FRAMES,
             }
         )
         if completed.returncode != 0 and not continue_on_error:
