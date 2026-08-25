@@ -27,21 +27,14 @@ data:
   rgb_timestamp_suffix: "_rgb_timestamps.csv"
   behavior_dir: "beh"
   master_timeline: "master_timeline.csv"
-  # Keep excluded subjects visible in audit/provenance, but do not pass them to
-  # later formal RGB analysis stages. sub-033 is intentionally NOT excluded:
-  # its AVI and timestamp rows remain one-to-one, but acquisition contains gaps
-  # that must be marked missing during downstream analysis.
   exclude:
     sub-9504: "not part of the formal analysis cohort"
 
 analysis_window:
-  # Process one continuous RGB timeline instead of physically splitting videos.
   start: "baseline_stop_minus_duration"
   end: "last_formal_block_stop"
   preserve_transition_phases: true
 
-# Hard development rule: preserve expensive model outputs before filtering.
-# See docs/040-rgb/044-RGB输出Schema与信息保留原则.md before adding any model stage.
 retention:
   schema_version: "rgb-dev-0.1"
   preserve_supported_raw_model_outputs: true
@@ -77,8 +70,6 @@ pose:
   model_variant: lite
   model_path: "_test/pose_landmarker_lite.task"
   model_url: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
-  # Seated SART video mainly contains upper body. Motion already preserves 30-fps
-  # movement magnitude, so Pose is sampled for structural posture at 5 Hz.
   inference_fps: 5.0
   num_poses: 2
   min_pose_detection_confidence: 0.5
@@ -87,8 +78,6 @@ pose:
   output_segmentation_masks: false
   decode_sampled_frames_only: true
   normalize_motion_by_body_scale: true
-  # Raw output still preserves all 33 landmarks; formal derived features should
-  # rely on visible upper-body landmarks rather than inferred off-screen legs.
   formal_landmark_scope: upper_body
   target_outputs:
     - wrist_motion
@@ -104,8 +93,6 @@ motion:
   status: pilot_validated_global
   schema_version: "rgb-motion-raw-v0.1"
   process_full_fps: true
-  # Development parameters, not frozen scientific exclusion thresholds.
-  # Raw dt/capture-gap fields are retained so these can be changed later.
   gap_reset_ms: 100
   irregular_dt_multiple: 1.5
   pixel_diff_threshold: 15
@@ -117,17 +104,12 @@ motion:
 qc:
   min_face_valid_rate: null
   min_pose_valid_rate: null
-  # Development warning only; not yet a formal exclusion threshold. Every gap
-  # above this value is written to rgb_timestamp_gaps.csv with full provenance.
   timestamp_gap_warning_ms: 100
 
 output:
-  # RGB analysis results live outside the repository, alongside Beijing-NIR.
   root: "D:/_AttentionData/Beijing-RGB"
   test_dir: "_test"
   raw_format: parquet
   analysis_format: parquet
   summary_format: csv
-  # Subject output files are always prefixed with subject id, e.g.
-  # sub-031_motion_raw.parquet, even inside sub-031/.
   subject_file_prefix: true
