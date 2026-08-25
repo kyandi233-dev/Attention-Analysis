@@ -72,3 +72,49 @@ Python InferenceSession wrapper fallback = disabled
 5. 如果后续工程复杂度或真实速度明显不利，可以基于实证选择 LibreFace，不需要为了保留 Py-Feat 而强行增加正式 pipeline 复杂度。
 
 本记录不冻结 Face backend。
+
+## 6. 修复后 Gate 1 干净复测：PASS
+
+随后使用 `rgb-face-directml-probe-v0.2`，将 RetinaFace 与 multitask 分成两个独立 Python 进程，只测试 batch 1/8/16，不再测试已异常的 RetinaFace batch 32。
+
+### RetinaFace R34
+
+| batch | images/s | ms/image | DML kernels | CPU kernels | status |
+|---:|---:|---:|---:|---:|---|
+| 1 | 78.09 | 12.8054 | 13 | 0 | ok |
+| 8 | 83.07 | 12.0386 | 13 | 0 | ok |
+| 16 | 82.70 | 12.0917 | 13 | 0 | ok |
+
+三个 batch 全部输出 finite，profile 中仅观察到 `DmlExecutionProvider` kernel，`cpu_fallback_observed=false`。当前吞吐仍以 batch 8 最优，batch 8 与 16 非常接近，因此后续真实 pipeline 优先以 batch 8 作为 RetinaFace 候选。
+
+### Multitask scientific core
+
+| batch | images/s | ms/image | DML kernels | CPU kernels | status |
+|---:|---:|---:|---:|---:|---|
+| 1 | 141.46 | 7.0694 | 13 | 0 | ok |
+| 8 | 236.33 | 4.2313 | 13 | 0 | ok |
+| 16 | 256.88 | 3.8929 | 13 | 0 | ok |
+
+三个 batch 均输出 AU、emotion、V/A、gaze、pose、478 mesh、52 blendshapes，所有输出 `finite_fraction=1.0`；profile 中只观察到 DML kernel，CPU kernel=0。batch 16 在本次 model-core probe 中吞吐最高。
+
+因此截至本轮：
+
+- Py-Feat Gate 0：**PASS**；
+- RetinaFace Gate 1：**PASS（batch 1/8/16）**；
+- multitask scientific core Gate 1：**PASS（batch 1/8/16）**；
+- Py-Feat 整体 DirectML Gate 1：**正式 PASS**；
+- 旧 probe 中 multitask CPU-only 结果保留为历史诊断记录，但不再作为当前 compatibility 结论。
+
+这些数字仍然只属于 synthetic model-core benchmark，不能和既有 300 帧 CPU end-to-end 速度直接比较，也不能据此冻结 Face backend。
+
+## 7. 下一阶段：真实 300 帧 parity + end-to-end
+
+LibreFace 与 Py-Feat 现在都已经通过 Gate 0/1。下一步停止 DirectML compatibility 调试，进入同一批既有连续 300 帧的真实输入验证：
+
+1. LibreFace：复刻既有 alignment / MediaPipe landmark 特征与 ONNX heads，逐字段对照现有 CPU reference；
+2. Py-Feat：RetinaFace DML → exact prior/decode/NMS → 1.2 isotropic square/reflection crop → 224 ImageNet preprocess → multitask DML → canonical pose/gaze/mesh postprocess；
+3. parity 与速度分开判断，至少报告 face coverage、bbox、AU、emotion、V/A、gaze、pose、mesh、blendshape、missing/multi-face、finite fraction；
+4. 单独测 raw-frame end-to-end wall time，不能用 model-core synthetic images/s 代替；
+5. 最后结合信息完整性、工程复杂度、visual sanity check 与 AMD 实际吞吐冻结正式 Face backend / fps / primary-face 规则。
+
+本轮没有重跑 CPU benchmark，没有删除或覆盖既有历史输出。
