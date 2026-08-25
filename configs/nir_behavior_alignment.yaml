@@ -1,0 +1,98 @@
+pipeline:
+  name: attention-analysis-nir-behavior-alignment
+  version: 0.1.0
+  schema_version: 1
+  focuswave_release: "v3.1.3"
+  timezone: Asia/Shanghai
+
+paths:
+  behavior_config: "configs/behavior_formal.yaml"
+  nir_source_roots:
+    - "D:/_AttentionData/Beijing-NIR/amd-directml/formal"
+    - "runtime/nir-formal/outputs/amd-directml/formal"
+    - "outputs/amd-directml/formal"
+  output_root: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v1"
+
+subjects:
+  # Prototype safety gate. Replace with [] only after sub-031 schema/QC is accepted.
+  include:
+    - "sub-031"
+
+behavior_qc:
+  # Candidate sequence label only; not a final exclusion threshold.
+  carryover_candidate_ms: 200
+
+windows:
+  trial:
+    # Event-adjacent windows: useful for timing/PLR separation, not identical to tonic attention.
+    - name: "pre_200ms"
+      family: "event"
+      start_offset_ms: -200
+      end_offset_ms: 0
+    - name: "post_200ms"
+      family: "event"
+      start_offset_ms: 0
+      end_offset_ms: 200
+    - name: "post_200_1150ms"
+      family: "event"
+      start_offset_ms: 200
+      end_offset_ms: 1150
+
+    # State/prediction candidates. All are retained now; primary inferential windows are frozen later.
+    - name: "pre_1s"
+      family: "state"
+      start_offset_ms: -1000
+      end_offset_ms: 0
+    - name: "pre_3s"
+      family: "state"
+      start_offset_ms: -3000
+      end_offset_ms: 0
+    - name: "pre_5s"
+      family: "state"
+      start_offset_ms: -5000
+      end_offset_ms: 0
+    - name: "pre_10s"
+      family: "state"
+      start_offset_ms: -10000
+      end_offset_ms: 0
+    - name: "pre_20s"
+      family: "state"
+      start_offset_ms: -20000
+      end_offset_ms: 0
+    - name: "pre_30s"
+      family: "state"
+      start_offset_ms: -30000
+      end_offset_ms: 0
+    - name: "pre_60s"
+      family: "state"
+      start_offset_ms: -60000
+      end_offset_ms: 0
+
+  probe:
+    - name: "pre_10s"
+      family: "probe_state"
+      start_offset_ms: -10000
+      end_offset_ms: 0
+    - name: "pre_20s"
+      family: "probe_state"
+      start_offset_ms: -20000
+      end_offset_ms: 0
+    - name: "pre_30s"
+      family: "probe_state"
+      start_offset_ms: -30000
+      end_offset_ms: 0
+    - name: "pre_60s"
+      family: "probe_state"
+      start_offset_ms: -60000
+      end_offset_ms: 0
+
+visual_covariates:
+  # Phase 1 keeps exact stimulus_name/size and previous-stimulus identity in trial_level.
+  # Rendered luminance/contrast will be joined later from a versioned 27-condition table.
+  properties_csv: null
+
+analysis_policy:
+  fuse_eyes: false
+  roi_clipped_is_exclusion_gate: false
+  define_nir_blink_or_perclos: false
+  raw_pupil_pixels_as_primary: false
