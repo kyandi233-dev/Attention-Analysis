@@ -12,7 +12,7 @@ RGB 当前目标不是直接生成“注意力分数”，而是从正式实验 
 |---|---|---|---|
 | Face | **Py-Feat vs LibreFace 2.0** | AU、表情；Py-Feat 额外覆盖 head pose、gaze、valence/arousal、FaceMesh 等 | **待 benchmark 后二选一** |
 | Pose | **MediaPipe Pose** | 33 个身体关键点及其派生的上半身运动、手臂运动、躯干姿态/稳定性 | **当前默认路线** |
-| Motion | **OpenCV Motion Energy** | 全局运动量 + 亮度/帧差 QC | **单被试 pilot 已实现** |
+| Motion | **OpenCV Motion Energy** | 全局运动量 + 亮度/帧差 QC | **sub-031 full-FPS pilot 已通过 gap 关键验收** |
 
 暂不把 YuNet、YOLO Pose、Action Recognition、rPPG、HR/HRV 纳入第一阶段正式 RGB 主链。它们只有在当前三条路线出现明确缺口时再作为候选。
 
@@ -78,7 +78,17 @@ D:\_AttentionData\Beijing-RGB\_test\
 
 逐帧 raw parquet 保留：subject、AVI physical frame position、FocusWave capture frame index、Unix ms、dt、phase/block、可可靠映射的 trial/probe 上下文、gray mean/std/min/max、brightness delta、原始帧差 mean/std/sum/max、changed-pixel ratio、normalized Motion Energy、按 dt 标准化的 Motion Energy rate、capture/timestamp gap、irregular-dt flag 和 motion-valid flag。跨 gap 的帧本身仍保留，但依赖上一帧的运动字段为空。
 
-Manifest 同时记录 Git commit、config SHA256、FocusWave provenance、原始 source paths/size/mtime、视频元数据、分析时间窗、Motion 参数、运行环境、行数、phase coverage、处理速度与输出大小。pilot 通过后才允许创建正式 `sub-XXX_motion_raw.parquet`。
+### 2026-08-25 `sub-031` 实跑结果
+
+- 分析窗口输出 46,479 帧；46,474 帧具有有效相邻帧 Motion；
+- 运行约 593.4 s，实测处理速度约 78.3 fps；
+- zstd Parquet 约 3.0 MB；
+- 4 行触发 gap reset，3,564 行仅标记为 irregular-dt QC；
+- 已人工核对：Block2 的 13.853 s 与 0.758 s gap、Block1 的 102 ms gap 均为 `motion_valid=False` 且 `global_motion_energy=NaN`；
+- 98 ms 的较大但未超过 reset 阈值的间隔仍保留 Motion 值，符合当前开发参数；
+- 因此“跨 gap 不计算伪运动、但保留当前帧身份和其他低成本测量”的关键逻辑通过首个正式视频压力测试。
+
+Manifest 同时记录 Git commit、config SHA256、FocusWave provenance、原始 source paths/size/mtime、视频元数据、分析时间窗、Motion 参数、运行环境、行数、phase coverage、处理速度与输出大小。当前还需把 4 个 gap-reset 行逐条复核，并检查亮度/帧差分布与代表性视频片段后，才冻结正式 Motion 参数。
 
 ## 输出目录约定
 
@@ -117,4 +127,4 @@ D:\_AttentionData\
 
 ## 当前工程边界
 
-`rgb-dev` 只表示开发/验证分支，不代表 RGB 已正式冻结或全量完成。当前已建立配置、数据发现、详细时间轴解析、数据审计、timestamp gap QC、行为 trial/probe 映射、Motion Energy 单被试 pilot 和统一输出路径；Face/Pose、正式 Motion 参数、正式 QC 阈值和全量运行仍必须经过 pilot/benchmark 后再冻结。
+`rgb-dev` 只表示开发/验证分支，不代表 RGB 已正式冻结或全量完成。当前已建立配置、数据发现、详细时间轴解析、数据审计、timestamp gap QC、行为 trial/probe 映射、Motion Energy 单被试 pilot 和统一输出路径；Motion 的 gap 关键逻辑已通过 `sub-031` 压力测试，但正式阈值与完整 QC 仍未冻结。Face/Pose 仍需各自 pilot/benchmark。
