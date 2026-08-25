@@ -6,14 +6,9 @@ pipeline:
   random_seed: 20260824
 
 data:
-  # 正式原始数据主要位于逻辑目录 `正式实验` 与 `Data`。
-  # E:/、F:/ 为两块外接盘的动态盘符；NVIDIA 工作站当前也可能挂载为 J:/Data。
-  # reader 会忽略不存在的候选根，因此行为与 NIR 使用同一候选根集合。
+  # NVIDIA RTX 5060 工作站当前正式数据根固定为 J:/Data。
+  # Behavior 与 NIR 在该工作站使用同一根目录，避免跨机盘符配置互相污染。
   roots:
-    - "E:/正式实验"
-    - "F:/正式实验"
-    - "E:/Data"
-    - "F:/Data"
     - "J:/Data"
   min_subject_number: 31
   include: []
