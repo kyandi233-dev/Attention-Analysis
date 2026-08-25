@@ -6,17 +6,18 @@
 
 当前正式实验以 FocusWave **v3.1.3** 为准，正式 SART 结构为两个 B block：`B1 → B2`。当前实现已经建立，不再处于“待重写”状态：配置为 `configs/behavior_formal.yaml`，入口为 `scripts/sart_formal_analysis.py`，可复用实现位于 `src/attention_pipeline/behavior_formal/`。
 
-当前说明按顺序阅读：`031-正式BB行为分析流程.md`、`032-行为指标定义.md`、`033-统计分析方法.md`、`034-行为QC与输出.md`。旧 v3.0 BBB 的三 block 统计、B1↔B3、sub-011~030 队列和旧结果均不属于当前正式分析。
+当前说明按顺序阅读：`031-正式BB行为分析流程.md`、`032-行为指标定义.md`、`033-统计分析方法.md`、`034-行为QC与输出.md`。行为与 NIR 的跨模态时间对齐和 pupil/SART 分析见 `035-NIR与正式SART行为数据对齐分析方法.md`。旧 v3.0 BBB 的三 block 统计、B1↔B3、sub-011~030 队列和旧结果均不属于当前正式分析。
 
 ## 当前数据位置
 
-正式原始数据在逻辑上位于两个目录：`正式实验` 与 `Data`。它们位于两块外接存储设备上，而 Windows 可能根据连接顺序把两块盘分配为 `E:` 或 `F:`，因此 current Behavior 配置不把逻辑目录与固定盘符绑定，而是声明四个候选根：
+正式原始数据在逻辑上位于 `正式实验` 与 `Data`。E:/、F:/ 是两块外接存储设备常见的动态盘符；NVIDIA 工作站当前也可能把正式 `Data` 挂载为 `J:/Data`。因此 Behavior 与 NIR current config 使用同一候选根集合：
 
 ```text
 E:/正式实验
 F:/正式实验
 E:/Data
 F:/Data
+J:/Data
 ```
 
 reader 会忽略不存在的候选根，并在所有有效根中发现正式被试。若同一被试的 `beh/` 目录同时存在于多个有效根，程序会直接报告重复数据，而不是按 roots 顺序静默选择一份。
