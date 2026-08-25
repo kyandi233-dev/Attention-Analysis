@@ -100,3 +100,29 @@ python scripts/face_directml_diagnose.py `
 - 或确认当前 Py-Feat 2.1.1 multitask architecture 不适合 DirectML。
 
 任何修复都必须保持 Py-Feat 2.1.1 CPU reference 的科学输出定义，并在修复后重新做 Gate 1 + 300 帧逐字段 parity；不能为了 GPU 可跑而静默删字段或更换测量语义。
+
+## 6. Strict diagnostic v0.1 实机结果与修复
+
+首次 `rgb-face-directml-diagnostic-v0.1` 实机运行记录到：
+
+- `fallback_allowed`：`status=ok`，session providers 为 DML + CPU；
+- `strict_dml`：请求 providers 只有 `DmlExecutionProvider`，但最终 `session_providers` 仍出现 `DmlExecutionProvider` + `CPUExecutionProvider`，并且 `status=ok`。
+
+这不能解释为 multitask 已经全 DML。原因是 ORT Python 存在两层不同 fallback：
+
+1. ORT core 的 graph-node CPU EP fallback；
+2. Python `InferenceSession` constructor 的 provider fallback。
+
+v0.1 只通过 `session.disable_cpu_ep_fallback=1` 禁掉了第 1 层；当 strict session creation 因 DML 无法完整覆盖图而失败时，Python wrapper 默认 `enable_fallback=1` 会捕获异常并重新用 fallback provider 创建 session，因此原始 strict 错误被掩盖，最后看到的是成功的 CPU fallback session。
+
+修复后的 `rgb-face-directml-diagnostic-v0.2` 在 strict 模式同时：
+
+```text
+session.disable_cpu_ep_fallback = 1
+enable_fallback = 0
+providers = [DmlExecutionProvider]
+```
+
+即同时关闭 graph-node fallback 与 Python constructor fallback。对应代码 commit：`1c811ab`（`fix(rgb): disable Python EP fallback in strict DML diagnostic`）。
+
+因此 v0.1 diagnostic 只作为“诊断工具自身发现双层 fallback”的工作记录，不用于判断 Py-Feat multitask DML compatibility。下一次运行 v0.2 后得到的 strict error 才是正式阻断诊断证据。
