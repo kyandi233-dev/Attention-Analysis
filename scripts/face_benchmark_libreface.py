@@ -10,6 +10,14 @@ from pathlib import Path
 import pandas as pd
 
 
+def _find_frame_manifest(root: Path) -> Path:
+    candidates = sorted(root.glob("*_face-benchmark_frames.csv")) + sorted(root.glob("*_face-continuous_frames.csv"))
+    unique = list(dict.fromkeys(candidates))
+    if len(unique) != 1:
+        raise RuntimeError(f"Expected exactly one supported frame manifest in {root}, found {len(unique)}")
+    return unique[0]
+
+
 def _with_benchmark_index(df: pd.DataFrame, indices: list[int]) -> pd.DataFrame:
     out = pd.DataFrame(df).reset_index(drop=True).copy()
     if len(out) != len(indices):
@@ -43,17 +51,14 @@ def _load_cached_alignment(path: Path, expected_indices: set[int]) -> tuple[pd.D
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run LibreFace 2.0 on shared RGB Face benchmark images")
-    parser.add_argument("--benchmark-dir", required=True, help=".../_test/face-benchmark/sub-XXX")
+    parser.add_argument("--benchmark-dir", required=True, help="Face benchmark/continuous directory containing one frame manifest")
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--device", default="cpu")
     args = parser.parse_args()
 
     root = Path(args.benchmark_dir)
-    manifests = sorted(root.glob("*_face-benchmark_frames.csv"))
-    if len(manifests) != 1:
-        raise RuntimeError(f"Expected exactly one frame manifest in {root}, found {len(manifests)}")
-    manifest_path = manifests[0]
+    manifest_path = _find_frame_manifest(root)
     sample = pd.read_csv(manifest_path)
     if sample.empty or "image_path" not in sample or "benchmark_index" not in sample:
         raise ValueError(f"Invalid benchmark frame manifest: {manifest_path}")
@@ -178,6 +183,7 @@ def main() -> None:
     except Exception:
         torch_version = None
 
+    total_sec = alignment_sec + au_sec + expression_sec + gaze_sec
     summary = {
         "schema_version": "rgb-face-benchmark-libreface-v0.1",
         "candidate": "libreface2",
@@ -194,9 +200,9 @@ def main() -> None:
             "au_joint_detection_intensity": au_sec,
             "expression": expression_sec,
             "gaze": gaze_sec,
-            "total_measured": alignment_sec + au_sec + expression_sec + gaze_sec,
+            "total_measured": total_sec,
         },
-        "input_images_per_sec_total": len(sample) / (alignment_sec + au_sec + expression_sec + gaze_sec),
+        "input_images_per_sec_total": len(sample) / total_sec if total_sec > 0 else None,
         "runtime": {
             "python": platform.python_version(),
             "platform": platform.platform(),
