@@ -73,6 +73,13 @@ face:
       block1: 90
       interblock_transition: 45
       block2: 90
+  continuous_benchmark:
+    # Second-round Face validation: one shared contiguous mid-Block1 window.
+    # 30 s x 10 fps ~= 300 frames; sampling is driven by real RGB timestamps.
+    phase: block1
+    duration_sec: 30
+    inference_fps: 10
+    jpeg_quality: 95
 
 pose:
   enabled: true
