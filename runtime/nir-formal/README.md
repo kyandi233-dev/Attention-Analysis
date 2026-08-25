@@ -66,6 +66,116 @@ python run_formal_batch.py --dry-run
 
 DirectML 不可用时立即失败，不允许整个 session 静默退回纯 CPU。
 
+## 每次打开新终端：AMD 工作入口
+
+当前 AMD 工作副本固定为：
+
+```text
+D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-amd-DirectML
+```
+
+每次重新打开 PowerShell / VS Code Terminal 后，先执行下面这一组命令。它负责进入仓库、激活已经配置好的 DirectML Conda 环境、确认当前分支并拉取 GitHub 最新提交，然后进入正式 NIR runtime：
+
+```powershell
+cd "D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-amd-DirectML"
+conda activate D:\CondaEnvs\nir-amd
+
+git switch amd-DirectML
+git pull --ff-only
+
+cd runtime\nir-formal
+```
+
+如果 `git pull --ff-only` 提示本地存在未提交修改，不要强制覆盖；先用 `git status --short --branch` 检查本地状态，再决定是否提交或保留修改。
+
+开始长时间 GPU 任务前，建议做最小环境确认：
+
+```powershell
+python run_pipeline.py check-env
+```
+
+确认输出中 DirectML provider 可用后，再进入实际运行步骤。
+
+## RITnet 四分类遗漏信息补充：全量运行
+
+此前 AMD 正式主链已经实际执行了完整四分类 RITnet，但旧的 `eyes.csv` 只保留了瞳孔相关几何，没有把 sclera / iris / pupil / visible ocular 等可以直接获得的结构信息全部落盘。补充分析使用 `run_ritnet_fullclass_batch.py`，根据旧正式结果中保存的 `frame_idx` 和 ROI 坐标重新裁剪相同眼 ROI，只重跑冻结的 **RITnet 640×400 / FP32 / fixed batch=16 / DirectML**；不会重新跑 YOLO，也不会改写旧正式产物。
+
+完整变量、归一化指标、QC 图片采样和科学边界见 [`RITNET_FULLCLASS_EXTENSION.md`](RITNET_FULLCLASS_EXTENSION.md)。
+
+当前 AMD 正式结果根为：
+
+```text
+D:\_AttentionData\Beijing-NIR\amd-directml
+```
+
+### 1. 先预览将要处理的全部被试
+
+```powershell
+python run_ritnet_fullclass_batch.py `
+  --output "D:\_AttentionData\Beijing-NIR\amd-directml" `
+  --device 0 `
+  --postprocess-workers 4 `
+  --dry-run
+```
+
+`--dry-run` 只检查并打印每个被试将使用的完整正式 source run，不做 RITnet 推理。当前 batch runner 会优先选择同一被试的 YOLO b8 正式完成目录；没有 b8 时才选择最新的其他完整正式 run。
+
+### 2. 首次运行时先实跑一个被试
+
+```powershell
+python run_ritnet_fullclass_batch.py `
+  --output "D:\_AttentionData\Beijing-NIR\amd-directml" `
+  --subjects "sub-031" `
+  --device 0 `
+  --postprocess-workers 4
+```
+
+检查该被试的 completion marker 为 `status=complete`，CSV 行数完整，并确认 QC index、`*_labels.png`、`*_overlay.png` 和 timing 字段正常后，再启动全量。
+
+### 3. 跑全部已完成正式被试
+
+```powershell
+python run_ritnet_fullclass_batch.py `
+  --output "D:\_AttentionData\Beijing-NIR\amd-directml" `
+  --device 0 `
+  --postprocess-workers 4
+```
+
+这就是当前 AMD 的 RITnet 补充全量分析命令。程序会按已有正式完成目录发现全部可处理被试，并根据 extension completion identity 跳过已经完整补充完成且身份一致的被试；不会因为仅存在部分文件就静默当成完成。
+
+### 4. 指定或强制重跑
+
+只跑指定被试：
+
+```powershell
+python run_ritnet_fullclass_batch.py `
+  --output "D:\_AttentionData\Beijing-NIR\amd-directml" `
+  --subjects "sub-031,sub-033" `
+  --device 0 `
+  --postprocess-workers 4
+```
+
+明确需要覆盖该 extension 版本已有结果时才使用 `--force`：
+
+```powershell
+python run_ritnet_fullclass_batch.py `
+  --output "D:\_AttentionData\Beijing-NIR\amd-directml" `
+  --subjects "sub-031" `
+  --device 0 `
+  --postprocess-workers 4 `
+  --force
+```
+
+`--validate-pupil` 会重新请求 pupil probability 并重新计算瞳孔几何，只用于少量验证样本的 parity 检查，不应用于正式全量补充运行。
+
+补充分析结束后，批处理总表写到：
+
+```text
+D:\_AttentionData\Beijing-NIR\amd-directml\ritnet_fullclass_batch_summary.json
+```
+
+每个被试的 full-class CSV、summary、manifest、completion、QC index 和 QC 图片保存在其被选择的原正式 run 目录内，并使用独立 extension 文件名，不覆盖原来的 `eyes.csv`。
+
 ## 数据发现与批处理
 
 先检查当前实际挂载的数据：
