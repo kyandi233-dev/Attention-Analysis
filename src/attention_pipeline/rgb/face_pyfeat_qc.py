@@ -11,9 +11,11 @@ from attention_pipeline.config import Config
 from attention_pipeline.rgb.paths import RGBOutputLayout
 
 
-PYFEAT_QC_SCHEMA_VERSION = "rgb-face-benchmark-pyfeat-qc-v0.1"
+PYFEAT_QC_SCHEMA_VERSION = "rgb-face-benchmark-pyfeat-qc-v0.2"
 FACEBOX_COLUMNS = ["FaceRectX", "FaceRectY", "FaceRectWidth", "FaceRectHeight", "FaceScore"]
-EMOTION_COLUMNS = ["anger", "disgust", "fear", "happiness", "sadness", "surprise", "neutral"]
+# Detectorv2/v2.4 native emotion schema is title-cased and differs from the
+# legacy Detectorv1 lowercase names.
+EMOTION_COLUMNS_V2 = ["Neutral", "Happy", "Sad", "Surprise", "Fear", "Disgust", "Anger"]
 VA_COLUMNS = ["valence", "arousal"]
 GAZE_COLUMNS = ["gaze_pitch", "gaze_yaw", "gaze_angle"]
 HEADPOSE_COLUMNS = ["Pitch", "Roll", "Yaw", "X", "Y", "Z"]
@@ -62,6 +64,7 @@ def summarize_pyfeat_benchmark(sample: pd.DataFrame, raw: pd.DataFrame) -> tuple
     if raw.empty:
         raise ValueError("Py-Feat raw output is empty")
 
+    original_output_columns = int(len(raw.columns))
     input_col = _detect_input_column(raw)
     sample = sample.copy()
     raw = raw.copy()
@@ -90,16 +93,35 @@ def summarize_pyfeat_benchmark(sample: pd.DataFrame, raw: pd.DataFrame) -> tuple
             }
 
     au_columns = [c for c in raw.columns if re.fullmatch(r"AU\d+", str(c))]
-    landmark_columns = [c for c in raw.columns if re.fullmatch(r"[xyz]_\d+", str(c))]
+    # Detectorv2 exposes both a dlib-68 compatibility landmark block and the
+    # full native 478x3 mesh. Keep these groups distinct in QC.
+    landmark68_columns = [c for c in raw.columns if re.fullmatch(r"[xy]_\d+", str(c))]
+    mesh_columns = [c for c in raw.columns if re.fullmatch(r"mesh_[xyz]_\d+", str(c))]
+    identity_columns = [
+        c for c in raw.columns
+        if str(c) == "Identity" or re.fullmatch(r"Identity_\d+", str(c))
+    ]
+    excluded_for_blendshape = set(
+        au_columns
+        + landmark68_columns
+        + mesh_columns
+        + identity_columns
+        + EMOTION_COLUMNS_V2
+        + VA_COLUMNS
+        + GAZE_COLUMNS
+        + HEADPOSE_COLUMNS
+        + FACEBOX_COLUMNS
+    )
     blendshape_candidates = [
         c for c in raw.columns
         if any(token in str(c).lower() for token in ("brow", "cheek", "eye", "jaw", "mouth", "nose", "tongue"))
-        and c not in landmark_columns
-        and c not in EMOTION_COLUMNS
+        and c not in excluded_for_blendshape
     ]
 
     constant_numeric_columns = []
     for col in raw.select_dtypes(include=[np.number]).columns:
+        if col == "_image_name":
+            continue
         values = pd.to_numeric(raw[col], errors="coerce").replace([np.inf, -np.inf], np.nan).dropna()
         if not values.empty and values.nunique(dropna=True) <= 1:
             constant_numeric_columns.append(str(col))
@@ -132,16 +154,20 @@ def summarize_pyfeat_benchmark(sample: pd.DataFrame, raw: pd.DataFrame) -> tuple
         "field_groups": {
             "facebox": _group_summary(raw, FACEBOX_COLUMNS),
             "action_units": _group_summary(raw, au_columns),
-            "emotion": _group_summary(raw, EMOTION_COLUMNS),
+            "emotion_v2": _group_summary(raw, EMOTION_COLUMNS_V2),
             "valence_arousal": _group_summary(raw, VA_COLUMNS),
             "gaze": _group_summary(raw, GAZE_COLUMNS),
             "head_pose": _group_summary(raw, HEADPOSE_COLUMNS),
-            "face_mesh_xyz": _group_summary(raw, landmark_columns),
-            "blendshape_like": _group_summary(raw, blendshape_candidates),
+            "landmark68_xy": _group_summary(raw, landmark68_columns),
+            "mesh478_xyz": _group_summary(raw, mesh_columns),
+            "blendshapes": _group_summary(raw, blendshape_candidates),
+            "identity": _group_summary(raw, identity_columns),
         },
-        "output_columns": int(len(raw.columns)),
+        "output_columns": original_output_columns,
         "au_columns": au_columns,
-        "landmark_xyz_column_count": len(landmark_columns),
+        "landmark68_xy_column_count": len(landmark68_columns),
+        "mesh478_xyz_column_count": len(mesh_columns),
+        "identity_column_count": len(identity_columns),
         "constant_numeric_column_count": len(constant_numeric_columns),
         "constant_numeric_columns_first_50": constant_numeric_columns[:50],
         "multi_face_inputs": multi_records,
