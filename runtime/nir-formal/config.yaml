@@ -4,14 +4,9 @@ package:
   purpose: GPU formal NIR analysis runtime; diagnostic runner retained
 
 data:
-  # 正式原始数据主要位于逻辑目录 `正式实验` 与 `Data`。
-  # E:/、F:/ 为两块外接盘的动态盘符；NVIDIA 工作站当前也可能挂载为 J:/Data。
-  # batch discovery 会忽略不存在的候选根，因此统一列出而不依赖某台机器的单一盘符。
+  # NVIDIA RTX 5060 工作站当前正式数据根固定为 J:/Data。
+  # 不在本分支混入 AMD/E:/F: 机器的数据盘候选，避免跨机配置互相污染。
   roots:
-    - "E:/正式实验"
-    - "F:/正式实验"
-    - "E:/Data"
-    - "F:/Data"
     - "J:/Data"
   subject_pattern: "sub-*_/nir/*_nir.avi"
   default_duration_sec: 60
