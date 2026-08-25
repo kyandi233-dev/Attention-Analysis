@@ -12,7 +12,7 @@ RGB 分析遵循一条硬规则：
 
 这里的目标不是无差别保存所有中间数组，而是最大化可复用性：
 
-- 原始 RGB 视频本来长期保留、可低成本重新读取的普通图像中间量，不必全部复制；
+- 原始 RGB 视频长期保留、可低成本重新读取的普通图像中间量，不必全部复制；
 - 需要重新运行 Py-Feat / LibreFace / MediaPipe / 其他昂贵模型才能恢复的输出，优先完整落盘；
 - QC 先标记，不在 raw 层静默删除；
 - derived feature 和 summary 可以从 raw 输出重新计算，因此可以后移。
@@ -25,62 +25,35 @@ RGB 分析遵循一条硬规则：
 
 #### Face
 
-`sub-XXX_face_raw.parquet` 原则上保存所选 backend 能够获得的完整可用输出，例如：
-
-- `video_frame_position`、`capture_frame_idx`、`unix_ms`、`dt_ms`；
-- face bbox / detection confidence / face id；
-- primary-face 标记，但不在 raw 层静默删除其他检测到的人脸；
-- 全部可用 Action Units；
-- 全部 expression scores；
-- gaze；
-- head pose；
-- valence / arousal（backend 支持时）；
-- FaceMesh / landmarks（backend 支持时）；
-- blendshapes（backend 支持时）；
-- valid / missing / multi-face / model-specific QC flags。
-
-在 Py-Feat vs LibreFace benchmark 完成前，不提前把 schema 缩减到某几个 AU。
+`sub-XXX_face_raw.parquet` 原则上保存所选 backend 能够获得的完整可用输出，例如：frame identity、face bbox/confidence/id、primary-face 标记、全部可用 AU、expression scores、gaze、head pose、valence/arousal（支持时）、FaceMesh/landmarks（支持时）、blendshapes（支持时），以及 valid/missing/multi-face/model-specific QC。Benchmark 完成前不提前缩减到少数 AU。
 
 #### Pose
 
-`sub-XXX_pose_landmarks.parquet` 保存 MediaPipe Pose 能够稳定返回的完整 landmark 层，包括：
-
-- 33 个 body landmarks 的 `x/y/z`；
-- visibility / presence（可用时）；
-- world coordinates（可用时）；
-- detection / tracking validity；
-- timestamp、frame identity 和 QC 字段。
-
-`wrist_motion`、`upper_body_motion`、`trunk_lean` 等属于 derived feature，不替代完整 landmarks。
+`sub-XXX_pose_landmarks.parquet` 保存 MediaPipe Pose 能够稳定返回的完整 landmark 层，包括 33 个 body landmarks 的 x/y/z、visibility/presence（可用时）、world coordinates（可用时）、detection/tracking validity、timestamp/frame identity 和 QC。`wrist_motion`、`upper_body_motion`、`trunk_lean` 等属于 derived feature，不能替代完整 landmarks。
 
 #### Motion
 
-`sub-XXX_motion_raw.parquet` 不只保存一个最终 Motion Energy。第一版至少保留：
+Motion 与深度模型不同：原始 RGB 视频本身已长期保留，因此不保存逐帧灰度图、absdiff 图等大体积可重建数组；但第一次顺序读取视频时应把低成本且常用的时间/QC/帧差统计一次写齐，避免反复解码整个视频。
 
-- frame identity 与真实 Unix timestamp；
-- `dt_ms`；
-- `mean_abs_difference`；
-- `sum_abs_difference`；
-- `changed_pixel_ratio`；
-- frame gray mean / std 等低成本亮度 QC；
-- `global_motion_energy`；
-- `gap_before` / `gap_duration_ms`；
-- 后续获得人体 ROI 后的 `body_motion_energy` 与 ROI 有效性信息。
+当前 `rgb-motion-raw-v0.1` pilot 至少保留：
 
-跨 timestamp gap 的相邻帧不计算伪运动；该位置保留 raw identity 并把依赖相邻帧的指标记为 missing。
+- `subject`、`video_frame_position`、`capture_frame_idx`、`unix_ms`、`dt_ms`；
+- `phase`、`block`；
+- 可可靠映射的 trial/probe 上下文：trial/condition/cycle/stimulus/no-go/error/probe、trial onset、time-from-onset、trial/probe active、behavior state；
+- frame gray mean/std/min/max 与 gray mean delta；
+- `mean/std/sum/max_abs_difference`；
+- `changed_pixel_ratio` 及其实际阈值；
+- `global_motion_energy` 与 `global_motion_energy_per_sec`；
+- `capture_missing_frame_indices_before`、`dt_multiple_of_median`、`irregular_dt`；
+- `gap_before`、`gap_duration_ms`、`gap_reason`、`motion_valid`。
+
+跨 timestamp/capture gap 的当前帧仍落盘，但依赖上一帧的运动字段记 missing。这样保留身份与 QC，同时避免把断流伪造成动作。
+
+当前没有保存逐帧 absdiff image/histogram，因为它们可以直接从长期保留的 RGB AVI 重建，存储成本远高于收益。这是“最大化可复用性”而不是“最大化文件体积”的具体边界。
 
 ### 2.2 Derived feature layer
 
-`sub-XXX_rgb_features.parquet` 保存从 raw 输出可重复计算的研究变量，例如：
-
-- AU activity / variability；
-- head angular velocity / variability；
-- gaze variability；
-- wrist / elbow / shoulder / upper-body motion；
-- trunk lean / posture variability；
-- global / body motion energy 等。
-
-这一层允许以后重新定义算法而无需重新跑原始模型。
+`sub-XXX_rgb_features.parquet` 保存从 raw 输出可重复计算的研究变量，例如 AU activity/variability、head angular velocity、gaze variability、wrist/elbow/shoulder/upper-body motion、trunk lean/posture variability、global/body motion energy 等。这一层允许以后重新定义算法而无需重新跑原始模型。
 
 ### 2.3 Summary layer
 
@@ -97,8 +70,8 @@ RGB 分析遵循一条硬规则：
 - `dt_ms`；
 - `phase`；
 - `block`；
-- 后续可映射时的 `trial` / `condition`；
-- `gap_before` / missing / valid / QC flags。
+- 可映射时的 trial / condition / probe context；
+- gap/missing/valid/QC flags。
 
 必须区分 `video_frame_position` 与 `capture_frame_idx`。像 `sub-033` 一样发生采集掉帧时，两者不能互相替代。
 
@@ -122,11 +95,11 @@ Raw 层原则上采用：
 → continue / 丢弃
 ```
 
-典型 QC 包括 timestamp gap、face confidence、multi-face、pose visibility、ROI validity、极端头部姿态等。除非数据无法建立正确身份或模型根本没有输出，否则先保留并标记。
+典型 QC 包括 timestamp gap、capture-index gap、irregular dt、face confidence、multi-face、pose visibility、ROI validity、极端头部姿态等。除非数据无法建立正确身份或模型根本没有输出，否则先保留并标记。
 
 ## 5. Manifest 与可复现信息
 
-每个正式被试最终保存 `sub-XXX_manifest.json`。至少应记录：
+每个正式被试最终保存 `sub-XXX_manifest.json`。至少记录：
 
 - 原始 RGB video / timestamp / behavior source paths；
 - Attention-Analysis Git commit；
@@ -140,7 +113,7 @@ Raw 层原则上采用：
 - run timestamp；
 - 输出文件及关键行数/coverage。
 
-模型或 backend 改变时，不覆盖成看起来像同一次运行；manifest 必须能区分不同结果 provenance。
+Motion pilot 虽然不进入正式 subject 目录，也必须生成独立 test manifest，记录 Git commit、config SHA256、source path/size/mtime、视频元数据、分析时间窗、Motion 参数、运行环境、处理速度、输出行数/phase coverage 和输出文件大小。Pilot 通过后才允许冻结正式 schema。
 
 ## 6. 输出目录与命名
 
@@ -156,7 +129,7 @@ Raw 层原则上采用：
 2. 哪些字段以后若需要会迫使模型重跑？这些必须优先保留。
 3. 哪些字段只是从已保存 raw 输出可重新计算？放 derived 层。
 4. QC 是否只做了 flag，而没有在 raw 层过早删除？
-5. frame identity、timestamp、phase/block 和 provenance 是否足够完整？
+5. frame identity、timestamp、phase/block/trial context 和 provenance 是否足够完整？
 6. schema 是否经过 representative pilot 检查后才进入全量？
 
 只有上述问题明确后，才允许进行大规模 RGB 推理。
