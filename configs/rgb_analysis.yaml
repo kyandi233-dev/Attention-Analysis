@@ -92,6 +92,14 @@ pose:
   optional_trunk_landmarks:
     - left_hip
     - right_hip
+  # Development gates for derived motion only. Raw pose landmarks are never
+  # dropped. A landmark must pass all gates before it contributes to motion.
+  feature_min_visibility: 0.5
+  feature_min_presence: 0.5
+  feature_require_in_frame: true
+  # Pose is sampled at 10 fps (~100 ms). Reset derived velocity across gaps
+  # longer than three nominal sample intervals rather than bridging outages.
+  feature_gap_reset_ms: 300
   target_outputs:
     - wrist_motion
     - elbow_motion
