@@ -14,6 +14,7 @@ EXPECTED_ROOTS = [
     "F:/正式实验",
     "E:/Data",
     "F:/Data",
+    "J:/Data",
 ]
 
 
