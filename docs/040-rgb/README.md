@@ -11,8 +11,8 @@ RGB 当前目标不是直接生成“注意力分数”，而是从正式实验 
 | 分支 | 当前工具路线 | 主要输出 | 当前状态 |
 |---|---|---|---|
 | Face | **Py-Feat vs LibreFace 2.0** | AU、表情；Py-Feat 额外覆盖 head pose、gaze、valence/arousal、FaceMesh 等 | **待 benchmark 后二选一** |
-| Pose | **MediaPipe Pose** | 33 个身体关键点及其派生的上半身运动、手臂运动、躯干姿态/稳定性 | **当前默认路线** |
-| Motion | **OpenCV Motion Energy** | 全局运动量 + 亮度/帧差 QC | **sub-031 gap 逻辑通过；进入亮度混淆人工 spot-check** |
+| Pose | **MediaPipe Pose** | 33 个身体关键点及其派生的上半身运动、手臂运动、躯干姿态/稳定性 | **下一步进入 pilot** |
+| Motion | **OpenCV Motion Energy** | global Motion + 亮度/帧差 QC；后续加入 body Motion | **sub-031 global Motion pilot / QC / review 已通过** |
 
 暂不把 YuNet、YOLO Pose、Action Recognition、rPPG、HR/HRV 纳入第一阶段正式 RGB 主链。它们只有在当前三条路线出现明确缺口时再作为候选。
 
@@ -75,27 +75,26 @@ python scripts/rgb_analysis.py --stage motion-qc --subject sub-031
 - `dt_ms`：P50=32、P90=46、P95=53、P99=70 ms；92.3% 的相邻帧间隔 ≤48 ms，98.6% ≤66 ms；
 - `irregular_dt`（当前 >1.5× median）占 7.67%，因此目前只保留为 QC flag，不作为删除规则；
 - Motion Energy P50≈0.00148、P99≈0.00220，最大值≈0.0509；
-- Motion 与 `abs(gray_mean_delta)` 的相关约 `r=0.642`，提示高全局 Motion 可能受整体亮度/曝光变化污染；
-- 最高 Motion 与最大亮度变化集中在 baseline 开始附近的相同一组帧，因此在冻结正式 Motion 指标前必须回看原视频。
-
-`motion_vs_changed_pixel_ratio≈0.753` 不视为独立“混淆证据”，因为 changed-pixel ratio 本身也是从同一帧差图派生的运动测量。
+- Motion 与 `abs(gray_mean_delta)` 的相关约 `r=0.642`；
+- `motion_vs_changed_pixel_ratio≈0.753` 不视为独立混淆证据，因为 changed-pixel ratio 本身也是从同一帧差图派生的运动测量。
 
 ## 已实现：RGB-5 Motion 人工代表帧检查
-
-为避免凭相关系数直接判断高 Motion 的来源，新增轻量 review stage：
 
 ```powershell
 python scripts/rgb_analysis.py --stage motion-review --subject sub-031
 ```
 
-它不会重新计算 Motion，只从原视频读取少量代表 frame pair，并在 `_test` 生成：
+它只从原视频读取少量代表 frame pair，在 `_test` 生成 `sub-031_motion-review.png` 与 JSON，不重新计算 Motion，也不是正式 batch 的必需输出。
 
-```text
-sub-031_motion-review.png
-sub-031_motion-review.json
-```
+2026-08-25 `sub-031` contact sheet 人工检查结论：
 
-Contact sheet 每行左侧为上一帧、右侧为当前帧，覆盖最高 Motion、最大亮度变化和 P50/P90/P99 的典型 Motion。该步骤只用于人工确认“高 Motion 是真实身体运动还是曝光/全局亮度变化”，不修改 raw parquet，也不作为正式 batch 的额外必需输出。
+- highest Motion / largest brightness-change 代表帧集中在 baseline 起始附近；
+- 这些高值对应**主试在画面中走动/离开**，而不是摄像头曝光突然整体跳变；
+- P50/P90/P99 的正式任务代表帧画面稳定，没有看到同类全局亮度异常；
+- 因此目前没有证据表明简单 grayscale frame difference 被曝光故障系统性污染，不需要据此删帧、回归亮度或更换 Motion 算法；
+- 但这同时说明 `global_motion_energy` 会记录画面中任何人的运动，不能单独等同于“被试自身运动”。正式主候选仍应在 MediaPipe Pose 稳定后增加 `body_motion_energy` / body ROI validity，global Motion 保留作为总体变化与 QC。
+
+baseline 起始主试活动属于实验实施过程的一部分，raw 数据继续完整保留，不在当前阶段提前过滤；若后续统计只需要稳定静息段，再在 analysis/summary 层按明确时间规则处理。
 
 ## 输出目录约定
 
@@ -111,4 +110,4 @@ RGB 分析结果不写入 Git 仓库，统一放到 `D:\_AttentionData\Beijing-R
 
 ## 当前工程边界
 
-`rgb-dev` 只表示开发/验证分支，不代表 RGB 已正式冻结或全量完成。当前已建立数据审计、timestamp gap QC、行为 trial/probe 映射、Motion Energy pilot、Motion 分布 QC 和代表帧人工 review。Motion 的 gap 逻辑已经通过，但正式 global/body Motion 口径、亮度污染处理和时间抖动参数仍未冻结。Face/Pose 仍需各自 pilot/benchmark。
+`rgb-dev` 只表示开发/验证分支，不代表 RGB 已正式冻结或全量完成。当前已建立数据审计、timestamp gap QC、行为 trial/probe 映射、Motion Energy pilot、Motion 分布 QC 和代表帧人工 review。`sub-031` 已验证 global Motion 的 gap 处理与代表帧可解释性；下一步进入 MediaPipe Pose pilot，并利用人体关键点/ROI 建立更接近被试自身运动的 body Motion。Face 仍需 Py-Feat vs LibreFace benchmark。
