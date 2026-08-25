@@ -12,6 +12,8 @@ from attention_pipeline.rgb.motion import run_motion_test
 from attention_pipeline.rgb.motion_qc import run_motion_qc
 from attention_pipeline.rgb.motion_review import run_motion_review
 from attention_pipeline.rgb.pose import run_pose_test
+from attention_pipeline.rgb.pose_qc import run_pose_qc
+from attention_pipeline.rgb.pose_features import run_pose_features
 from attention_pipeline.rgb.paths import RGBOutputLayout
 
 
@@ -87,7 +89,10 @@ def main() -> None:
     parser.add_argument("--config", default="configs/rgb_analysis.yaml")
     parser.add_argument(
         "--stage",
-        choices=["audit", "gaps", "motion", "motion-qc", "motion-review", "pose"],
+        choices=[
+            "audit", "gaps", "motion", "motion-qc", "motion-review",
+            "pose", "pose-qc", "pose-features",
+        ],
         default="audit",
     )
     parser.add_argument("--subject", help="Required for single-subject model/QC stages")
@@ -107,8 +112,12 @@ def main() -> None:
             result = run_motion_qc(config, args.subject)
         elif args.stage == "motion-review":
             result = run_motion_review(config, args.subject)
-        else:
+        elif args.stage == "pose":
             result = run_pose_test(config, args.subject)
+        elif args.stage == "pose-qc":
+            result = run_pose_qc(config, args.subject)
+        else:
+            result = run_pose_features(config, args.subject)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     print(f"[rgb:{args.stage}] complete", file=sys.stderr)
 
