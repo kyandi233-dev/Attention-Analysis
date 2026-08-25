@@ -26,6 +26,34 @@ RGB 视频原则上**不物理切段**。模型从真实 3 分钟静息 baseline
 
 正式实验程序来源以 `kyandi233-dev/FocusWave` 的 **`formaltest` 分支**为准。该分支主程序当前头部记录到 **v3.1.4**；现有正式数据主要为 v3.1.3 / v3.1.4，两者均属于最终 BB（B1/B2）分析口径。后续 RGB audit 会按被试实际日志记录版本，而不是从 FocusWave 当前 default branch 推断。
 
+## 已实现：RGB-1 数据审计
+
+第一版可运行入口已经建立，不调用 Py-Feat、LibreFace 或 MediaPipe，也不修改实验原始数据：
+
+```powershell
+python scripts/rgb_analysis.py --stage audit
+```
+
+它会从 `configs/rgb_analysis.yaml` 声明的候选数据根发现 `sub-031+` RGB 数据，并检查：
+
+- RGB AVI 是否存在且 OpenCV 可打开；
+- 视频分辨率、标称 FPS、标称帧数和标称时长；
+- `*_rgb_timestamps.csv` 是否存在、frame index 是否连续、Unix 时间是否单调递增；
+- `master_timeline.csv`、Block1/Block2 行为 CSV 是否存在；
+- RGB 录制范围是否完整覆盖真实 180 s baseline 开始到第二个正式 block 结束；
+- 同一被试是否在多个有效数据根重复出现。
+
+输出默认写到仓库外运行结果目录：
+
+```text
+outputs/rgb-dev/audit/
+├── rgb_inventory.csv
+├── rgb_duplicate_subjects.csv
+└── audit_summary.json
+```
+
+这一阶段只回答“正式 RGB 数据是否完整、是否能与 FocusWave 时间轴可靠对齐”。只有 audit 通过后，才进入 Motion Energy、MediaPipe Pose 和 Face benchmark。
+
 ## 文档入口
 
 - [`041-RGB分析目标与数据流.md`](041-RGB分析目标与数据流.md)：回答“RGB 要分析什么、数据怎么流动、最后得到什么”。
@@ -35,4 +63,4 @@ RGB 视频原则上**不物理切段**。模型从真实 3 分钟静息 baseline
 
 ## 当前工程边界
 
-`rgb-dev` 只表示开发/验证分支，不代表 RGB 已正式冻结或全量完成。当前先建立 `configs/rgb_analysis.yaml` 与 `src/attention_pipeline/rgb/` 模块骨架；模型适配、DirectML 导出、QC 阈值、采样率和全量运行参数都必须经过 pilot/benchmark 后再冻结。
+`rgb-dev` 只表示开发/验证分支，不代表 RGB 已正式冻结或全量完成。当前已建立配置、数据发现、时间轴解析和数据审计入口；Face/Pose/Motion 模型适配、DirectML 导出、QC 阈值、采样率和全量运行参数仍必须经过 pilot/benchmark 后再冻结。
