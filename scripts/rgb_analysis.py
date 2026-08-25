@@ -5,7 +5,8 @@ Current implemented stage:
 
 The audit stage does not run face, pose, or motion models. It only verifies
 formal RGB files, frame timestamps, behavior files, and FocusWave timeline
-coverage.
+coverage. Subjects configured under data.exclude remain visible in the audit
+inventory for provenance, but are not counted as formally analysis-eligible.
 """
 from __future__ import annotations
 
@@ -36,10 +37,19 @@ def stage_audit(config) -> dict[str, object]:
     inventory.to_csv(inventory_path, index=False, encoding="utf-8-sig")
     duplicates.to_csv(duplicate_path, index=False, encoding="utf-8-sig")
 
-    complete = int(inventory["basic_complete"].sum()) if "basic_complete" in inventory else 0
+    basic_complete = int(inventory["basic_complete"].sum()) if "basic_complete" in inventory else 0
+    excluded = int(inventory["analysis_excluded"].sum()) if "analysis_excluded" in inventory else 0
+    eligible = int(inventory["analysis_eligible"].sum()) if "analysis_eligible" in inventory else 0
+    incomplete_nonexcluded = int(
+        ((~inventory["analysis_excluded"].astype(bool)) & (~inventory["basic_complete"].astype(bool))).sum()
+    ) if {"analysis_excluded", "basic_complete"}.issubset(inventory.columns) else 0
+
     summary = {
         "subjects_discovered_unique": int(len(inventory)),
-        "subjects_basic_complete": complete,
+        "subjects_basic_complete_raw": basic_complete,
+        "subjects_excluded_by_config": excluded,
+        "subjects_analysis_eligible": eligible,
+        "subjects_incomplete_nonexcluded": incomplete_nonexcluded,
         "duplicate_subjects": int(len(duplicates)),
         "inventory": str(inventory_path),
         "duplicates": str(duplicate_path),
