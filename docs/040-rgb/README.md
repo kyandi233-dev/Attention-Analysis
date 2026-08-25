@@ -10,7 +10,7 @@ RGB 主线为 **Face、Pose、Motion**。
 
 | 分支 | 当前工具路线 | 当前状态 |
 |---|---|---|
-| Face | Py-Feat Detectorv2 vs LibreFace 2.0 | **两轮 CPU benchmark/QC 已完成；LibreFace Gate 0/1 PASS；Py-Feat Gate 0 PASS，RetinaFace DML PASS，multitask v0.3 strict-DML batch=1 已证明无 CPU kernel；下一步修复后 probe 小范围收口** |
+| Face | Py-Feat Detectorv2 vs LibreFace 2.0 | **两轮 CPU benchmark/QC 已完成；LibreFace Gate 0/1 PASS；Py-Feat Gate 0/1 PASS；下一步同一 300 帧真实输入 parity + AMD end-to-end** |
 | Pose | MediaPipe Tasks Pose Landmarker | **sub-031 10 fps representative pilot/QC/features 已完成** |
 | Motion | OpenCV Motion Energy | **sub-031 global Motion pilot/QC/review 已完成** |
 
@@ -44,17 +44,28 @@ Gate 1 只证明 ONNX graph / provider / fallback / batch 可运行性，**尚�
 
 ### Py-Feat DirectML 当前进度
 
-Py-Feat 2.1.1 Gate 0 已成功导出 RetinaFace R34 与 multitask scientific core。RetinaFace 原 Gate 1 中 batch 1/8/16 均由 DML profile 证明执行、0 CPU kernel，吞吐约 79.83 / 85.05 / 81.98 frame/s，当前 batch 8 最优；batch 32 异常，不作为候选。
+Py-Feat 2.1.1 Gate 0 已成功导出 RetinaFace R34 与 multitask scientific core。第一版 Gate 1 曾在 RetinaFace batch 32 异常后出现 multitask CPU-only session；后续诊断证明旧 probe 允许 Python `InferenceSession` provider-level fallback，不能把该 CPU-only 结果解释成模型不支持 DirectML。历史诊断完整保留在 `08-26-05` 与 `08-26-06`。
 
-第一版 Gate 1 随后曾出现 multitask 整体落到 CPU，但后续诊断发现原 probe 允许 Python `InferenceSession` provider-level fallback，因此 session 创建失败时可能被静默重建为 CPU-only session。`rgb-face-directml-diagnostic-v0.3` 已在 batch=1 对同一个 multitask ONNX 做实际 profiling：
+修复后的 `rgb-face-directml-probe-v0.2` 已禁止 Python wrapper 整体静默退回 CPU，并把 RetinaFace 与 multitask 分成两个独立进程重新测试 batch 1/8/16：
 
-- normal DML+CPU 模式：DML fused kernel=1，CPU kernel=0；
-- strict-DML 模式：关闭 ORT graph-node CPU fallback + Python wrapper fallback，仅请求 DML；结果仍为 DML fused kernel=1，CPU kernel=0；
-- 7 类 scientific outputs 全部 finite。
+**RetinaFace R34：**
 
-因此 **multitask ONNX 本身可以完整运行在当前 AMD / DirectML runtime 上**。前一轮 CPU-only 结果不能再解释成模型架构不支持 DML。`face_directml_probe.py` 已升级为 v0.2：保留 CPU EP 用于 graph-level fallback 检测，但禁止 Python wrapper 整体静默退回 CPU。
+- batch 1：约 78.09 frame/s；
+- batch 8：约 **83.07 frame/s**；
+- batch 16：约 82.70 frame/s；
+- 三组均 DML kernel=13、CPU kernel=0、所有输出 finite；
+- 已异常的 batch 32 不再作为工程候选，当前 RetinaFace 优先 batch 8。
 
-当前只差使用修复后 probe 对 Py-Feat 做一次干净的 batch 1/8/16 小范围复测后收口 Gate 1；不重新导出模型，不重跑 CPU benchmark。
+**Multitask scientific core：**
+
+- batch 1：约 141.46 images/s；
+- batch 8：约 236.33 images/s；
+- batch 16：约 **256.88 images/s**；
+- 三组均 DML kernel=13、CPU kernel=0；
+- AU、emotion、V/A、gaze、pose、478 mesh、52 blendshape 全部输出 finite；
+- 当前 multitask model-core 优先 batch 16。
+
+因此 Py-Feat Gate 0/1 现已正式 PASS。RetinaFace 与 multitask 不要求机械共用同一 batch；最终 batch 仍要结合真实 300 帧端到端内存、排队与 throughput 决定。
 
 ## Face visual review
 
@@ -95,24 +106,17 @@ D:\_AttentionData\Beijing-RGB\_test\face-continuous\sub-031\
 - global Motion：46,479 行，约 78.3 fps；关键 timestamp gap 正确置 missing；
 - Motion 分布 QC / representative review：完成；baseline 最大 global Motion 已确认主要来自主试进入/离开画面。
 
-## 下一步：Py-Feat Gate 1 小范围收口，再进入真实 300 帧
+## 下一步：同一 300 帧真实输入 parity + end-to-end
 
-使用既有独立环境：
+使用现有完全相同的连续 300 帧，不重新运行既有 CPU reference：
 
-```text
-D:\CondaEnvs\attention-face-pyfeat
-D:\CondaEnvs\attention-face-directml
-```
-
-下一步顺序：
-
-1. 使用修复后的 `face_directml_probe.py`，分别对 RetinaFace 与 multitask 做 batch 1/8/16 干净复测；
-2. 不把 RetinaFace 已异常的 batch 32 放进这次收口；
-3. 若两者均 DML kernel >0、CPU kernel=0，则 Py-Feat Gate 1 正式 PASS；
-4. 然后用现有完全相同的连续 300 帧实现两条真实输入 DirectML runner；
-5. LibreFace：MediaPipe alignment/landmark feature extraction → ONNX heads；Py-Feat：RetinaFace → isotropic square-pad crop → multitask；
-6. 分别与现有 CPU parquet 做逐字段 parity，并单独报告 raw-frame end-to-end speed、coverage、missing/multi-face 与 raw schema；
-7. 若真实工程复杂度/速度明显倾向 LibreFace，可基于证据冻结 LibreFace；不要求为了保留 Py-Feat 而增加正式 pipeline 复杂度；
+1. **LibreFace real-DML runner**：复刻 MediaPipe alignment / landmark feature extraction、AU/expression preprocessing 与 gaze feature contract，再调用已通过 Gate 1 的 ONNX heads；
+2. **Py-Feat real-DML runner**：RetinaFace DML → exact priors/decode/NMS → expand_bbox=1.2 isotropic square + reflection pad → 256 chip → full-field resize 224 + ImageNet normalize → multitask DML → canonical pose/gaze/mesh postprocess；
+3. 两边分别对照现有 CPU parquet 做逐字段 parity，速度与 parity 分开报告；
+4. 至少检查 face count/coverage、bbox、AU、emotion/expression、V/A、gaze、pose、mesh/blendshape、finite fraction、missing 与 multi-face 行为；
+5. 单独记录 raw-frame end-to-end wall time，不能拿 synthetic model-core images/s 代替；
+6. 结合工程复杂度、信息完整性、visual sanity check 与 AMD 实际吞吐冻结 Face backend / fps / primary-face；
+7. 若真实验证明显倾向 LibreFace，可以基于证据选择 LibreFace，不要求为了保留 Py-Feat 而增加正式 pipeline 复杂度；
 8. Face backend 冻结后再实现 `body_motion_energy` 与统一正式视频读取。
 
 ## 输出目录
