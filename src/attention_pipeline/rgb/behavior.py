@@ -54,6 +54,11 @@ def _parse_int(value: object) -> int | None:
     raw = str(value or "").strip()
     if not raw:
         return None
+    lowered = raw.lower()
+    if lowered == "true":
+        return 1
+    if lowered == "false":
+        return 0
     try:
         return int(float(raw))
     except ValueError:
