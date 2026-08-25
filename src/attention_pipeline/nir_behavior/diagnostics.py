@@ -28,6 +28,41 @@ def _one_second_median(
     return result
 
 
+def _break_large_gaps(
+    x: np.ndarray,
+    y: np.ndarray,
+    *,
+    max_gap_sec: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Insert NaNs so matplotlib never draws across long periods with no data."""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    if x.size <= 1:
+        return x, y
+    if max_gap_sec <= 0:
+        raise ValueError("max_gap_sec must be positive")
+
+    out_x: list[float] = [float(x[0])]
+    out_y: list[float] = [float(y[0])]
+    for index in range(1, len(x)):
+        if np.isfinite(x[index - 1]) and np.isfinite(x[index]):
+            if float(x[index] - x[index - 1]) > float(max_gap_sec):
+                out_x.append(np.nan)
+                out_y.append(np.nan)
+        out_x.append(float(x[index]))
+        out_y.append(float(y[index]))
+    return np.asarray(out_x), np.asarray(out_y)
+
+
+def _block_starts(trials: pd.DataFrame) -> list[tuple[int, float]]:
+    result: list[tuple[int, float]] = []
+    for block_num, frame in trials.groupby("block_num", sort=True):
+        onset = pd.to_numeric(frame["absolute_onset_time"], errors="coerce").dropna()
+        if not onset.empty:
+            result.append((int(block_num), float(onset.min())))
+    return result
+
+
 def _timeline_plot(
     subject: str,
     nir: pd.DataFrame,
@@ -37,6 +72,7 @@ def _timeline_plot(
     valid_col: str | None,
     ylabel: str,
     path: Path,
+    max_line_gap_sec: float,
 ) -> str:
     binned = _one_second_median(nir, value_col, valid_col=valid_col)
     origin_candidates = [
@@ -47,11 +83,12 @@ def _timeline_plot(
 
     fig, ax = plt.subplots(figsize=(13, 5))
     for eye in EYES:
-        eye_frame = binned[binned["eye"] == eye]
+        eye_frame = binned[binned["eye"] == eye].sort_values("unix_ms")
         if eye_frame.empty:
             continue
         x = (eye_frame["unix_ms"].to_numpy(dtype=float) - origin) / 1000.0
         y = eye_frame[value_col].to_numpy(dtype=float)
+        x, y = _break_large_gaps(x, y, max_gap_sec=max_line_gap_sec)
         ax.plot(x, y, linewidth=1.0, label=eye)
 
     probe_times = pd.to_numeric(
@@ -63,6 +100,20 @@ def _timeline_plot(
     ).dropna()
     for timestamp in probe_times:
         ax.axvline((float(timestamp) - origin) / 1000.0, linewidth=0.5, alpha=0.25)
+
+    for block_num, timestamp in _block_starts(trials):
+        x_block = (timestamp - origin) / 1000.0
+        ax.axvline(x_block, linewidth=1.0, linestyle="--", alpha=0.65)
+        ax.text(
+            x_block,
+            0.985,
+            f"B{block_num} start",
+            rotation=90,
+            va="top",
+            ha="right",
+            transform=ax.get_xaxis_transform(),
+            fontsize=8,
+        )
 
     commission_times = pd.to_numeric(
         trials.loc[
@@ -146,7 +197,10 @@ def _probe_centered_pir(
                 eye_frame["bin_mid"], eye_frame["value"], marker="o", label=eye
             )
     ax.axvline(0, linewidth=0.8)
-    ax.set_title(f"{subject} alignment QC: probe-centered PIR")
+    ax.set_title(
+        f"{subject} alignment QC: probe-centered PIR "
+        f"({bin_sec}-s bins; median within probe, median across {len(probes)} probes)"
+    )
     ax.set_xlabel("Seconds before probe onset")
     ax.set_ylabel("Pupil / outer-iris diameter ratio")
     ax.legend(loc="best")
@@ -164,8 +218,10 @@ def generate_diagnostics(
     trials: pd.DataFrame,
     probe_windows: pd.DataFrame,
     paths: dict[str, Path],
+    *,
+    max_line_gap_sec: float = 2.5,
 ) -> dict[str, str]:
-    del probe_windows  # Reserved for later window-coverage diagnostics.
+    del probe_windows  # Coverage is summarized by the dedicated coverage report.
     return {
         "timeline_pir": _timeline_plot(
             subject,
@@ -175,6 +231,7 @@ def generate_diagnostics(
             valid_col=PIR_VALID_COLUMN,
             ylabel="Pupil / outer-iris diameter ratio",
             path=paths["qc_timeline_pir"],
+            max_line_gap_sec=max_line_gap_sec,
         ),
         "timeline_oar": _timeline_plot(
             subject,
@@ -184,6 +241,7 @@ def generate_diagnostics(
             valid_col=None,
             ylabel="RITnet ocular aperture ratio (median)",
             path=paths["qc_timeline_oar"],
+            max_line_gap_sec=max_line_gap_sec,
         ),
         "probe_centered_pir": _probe_centered_pir(
             subject,
