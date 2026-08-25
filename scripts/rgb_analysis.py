@@ -5,12 +5,15 @@ Implemented development stages:
     python scripts/rgb_analysis.py --stage gaps
     python scripts/rgb_analysis.py --stage motion --subject sub-031
     python scripts/rgb_analysis.py --stage motion-qc --subject sub-031
+    python scripts/rgb_analysis.py --stage motion-review --subject sub-031
 
 ``audit`` verifies formal RGB inputs and FocusWave coverage. ``gaps`` records
 timestamp interruptions with experiment context. ``motion`` is intentionally a
 single-subject pilot stage: it writes full-FPS, gap-aware Motion Energy raw output
 and a manifest into Beijing-RGB/_test. ``motion-qc`` only reads that existing
-Parquet and writes a compact distribution/QC JSON; it does not reread the video.
+Parquet and writes a compact distribution/QC JSON. ``motion-review`` reads only a
+small set of representative frame pairs from the source video and writes one
+contact sheet for manual Motion-vs-brightness spot-checking.
 """
 from __future__ import annotations
 
@@ -23,6 +26,7 @@ from attention_pipeline.rgb.audit import run_audit
 from attention_pipeline.rgb.gaps import run_gap_audit
 from attention_pipeline.rgb.motion import run_motion_test
 from attention_pipeline.rgb.motion_qc import run_motion_qc
+from attention_pipeline.rgb.motion_review import run_motion_review
 from attention_pipeline.rgb.paths import RGBOutputLayout
 
 
@@ -103,8 +107,15 @@ def stage_gaps(config) -> dict[str, object]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Attention-Analysis RGB development pipeline")
     parser.add_argument("--config", default="configs/rgb_analysis.yaml")
-    parser.add_argument("--stage", choices=["audit", "gaps", "motion", "motion-qc"], default="audit")
-    parser.add_argument("--subject", help="Required for single-subject stages such as motion and motion-qc")
+    parser.add_argument(
+        "--stage",
+        choices=["audit", "gaps", "motion", "motion-qc", "motion-review"],
+        default="audit",
+    )
+    parser.add_argument(
+        "--subject",
+        help="Required for single-subject stages such as motion, motion-qc and motion-review",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -112,14 +123,15 @@ def main() -> None:
         result = stage_audit(config)
     elif args.stage == "gaps":
         result = stage_gaps(config)
-    elif args.stage == "motion":
-        if not args.subject:
-            parser.error("--subject is required when --stage motion")
-        result = run_motion_test(config, args.subject)
     else:
         if not args.subject:
-            parser.error("--subject is required when --stage motion-qc")
-        result = run_motion_qc(config, args.subject)
+            parser.error(f"--subject is required when --stage {args.stage}")
+        if args.stage == "motion":
+            result = run_motion_test(config, args.subject)
+        elif args.stage == "motion-qc":
+            result = run_motion_qc(config, args.subject)
+        else:
+            result = run_motion_review(config, args.subject)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     print(f"[rgb:{args.stage}] complete", file=sys.stderr)
 
