@@ -9,13 +9,7 @@ import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_ROOTS = [
-    "E:/正式实验",
-    "F:/正式实验",
-    "E:/Data",
-    "F:/Data",
-    "J:/Data",
-]
+EXPECTED_ROOTS = ["J:/Data"]
 
 
 def _load_yaml(path: Path) -> dict:
