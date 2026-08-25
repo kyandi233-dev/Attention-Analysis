@@ -13,6 +13,8 @@ focuswave:
   formal_structure: "BB"
   expected_blocks: 2
   baseline_duration_sec: 180
+  # FocusWave formaltest SART trial duration: 0.25 s stimulus + 0.9 s mask.
+  trial_duration_ms: 1150
 
 data:
   roots:
@@ -84,8 +86,14 @@ pose:
 motion:
   enabled: true
   backend: opencv_frame_difference
-  status: planned_default
+  status: pilot
+  schema_version: "rgb-motion-raw-v0.1"
   process_full_fps: true
+  # Development parameters, not frozen scientific exclusion thresholds.
+  # Raw dt/capture-gap fields are retained so these can be changed later.
+  gap_reset_ms: 100
+  irregular_dt_multiple: 1.5
+  pixel_diff_threshold: 15
   target_outputs:
     - global_motion_energy
     - body_motion_energy
