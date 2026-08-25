@@ -144,13 +144,17 @@ def _create_session(model_path: Path, batch_size: int, device_id: int, enable_pr
     else:
         dml_provider = ("DmlExecutionProvider", {"device_id": str(device_id)})
 
-    # CPU remains second only so unsupported nodes can be surfaced explicitly in profiling.
-    # A successful session is not treated as "GPU-only" until the profile is inspected.
+    # CPU remains registered second so unsupported graph nodes can still be surfaced
+    # explicitly in profiling. However, disable the Python InferenceSession wrapper's
+    # provider-level fallback: if DML session creation itself fails, we want the error
+    # rather than a silently recreated CPU-only session.
     session = ort.InferenceSession(
         str(model_path),
         sess_options=so,
         providers=[dml_provider, "CPUExecutionProvider"],
+        enable_fallback=0,
     )
+    session.disable_fallback()
     return ort, session
 
 
@@ -211,6 +215,8 @@ def _benchmark_model(
         "latency_ms_per_image": elapsed * 1000.0 / processed if processed else None,
         "session_providers": session.get_providers(),
         "session_provider_options": session.get_provider_options(),
+        "python_wrapper_fallback_enabled": False,
+        "provider_list_semantics": "session.get_providers() lists registered providers; use profile kernel counts as execution evidence.",
         "inputs": input_specs,
         "outputs": output_specs,
         "profile_file": str(profile_file),
@@ -247,7 +253,7 @@ def main() -> None:
     import onnxruntime as ort
 
     summary: dict[str, Any] = {
-        "schema_version": "rgb-face-directml-probe-v0.1",
+        "schema_version": "rgb-face-directml-probe-v0.2",
         "scope": "gate1_model_core_provider_fallback_smoke_only",
         "warning": "Synthetic inputs are used here. Do not compare these speeds to the saved 300-frame CPU reference or use them to freeze the Face backend.",
         "runtime": {
@@ -266,6 +272,7 @@ def main() -> None:
             "enable_mem_pattern": False,
             "execution_mode": "ORT_SEQUENTIAL",
             "graph_optimization_level": "ORT_ENABLE_ALL",
+            "python_wrapper_fallback_enabled": False,
         },
         "models": [],
     }
