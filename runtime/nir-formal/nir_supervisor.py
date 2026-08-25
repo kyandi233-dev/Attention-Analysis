@@ -232,6 +232,7 @@ def main() -> int:
             and not active_pipelines
             and not recovery_started
             and complete_count < 72
+            and not failed
             and any(r.get("status") != "complete" for r in rows)
         ):
             pid = launch(runtime, root)
