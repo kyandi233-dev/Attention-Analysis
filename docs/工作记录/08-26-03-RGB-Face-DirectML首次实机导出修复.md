@@ -77,14 +77,39 @@ D:/.../AU_Recognition/weights/combined_repvgg.pt
 
 045 已同步写入 LibreFace export 的 protobuf/ONNX 固定版本与 Windows 路径说明。
 
-## 5. 当前续接位置
+## 5. Gate 0 实机复测：已通过
 
-下一步仍然是 Gate 0，不回退、不重复 CPU benchmark：
+完成上述修复后，LibreFace Gate 0 已在当前 AMD 开发机成功完成。实际 export manifest 为 `rgb-face-libreface2-onnx-export-v0.1`，运行环境：
 
-1. 在 `attention-face-libreface` 修复 protobuf/ONNX 版本；
-2. `git pull --ff-only` 拉取 Windows path 修复；
-3. 重新执行同一条 `face_export_libreface_onnx.py`；
-4. 成功生成 3 个 ONNX + export manifest 后，再进入 `attention-face-directml` Gate 1；
-5. LibreFace Gate 1 通过后再做 Py-Feat Gate 0/1 与同 300 帧真实输入 parity/end-to-end。
+```text
+Python 3.9.25
+Windows 10.0.19045
+Torch 2.0.0+cpu
+ONNX 1.16.2
+LibreFace 0.2.0
+opset 17
+```
 
-本次失败没有产生新的 CPU benchmark 结果，不改变 Face backend 尚未冻结的状态。
+三套 ONNX 与源 checkpoint 均成功落盘并记录 SHA256：
+
+| role | ONNX | ONNX SHA256 | source checkpoint SHA256 |
+|---|---|---|---|
+| AU joint | `libreface2_au_joint.onnx` | `49533731a55147a1e33f0aeb30de711b6a34694e933aa7390aa4499f03878568` | `d7d11d9f029afef0d36306f91f5e67fd20531390864ab014e08683dbaca3954b` |
+| expression | `libreface2_expression.onnx` | `16b60d5943da9da8843a0a17f398f62a72e6f2f404a665cdedcdecce8cb412e2` | `bcf48160b13b881ea9a7a67080b2d0177b1ce0a1ea4845ca74c24eeb728e6b2d` |
+| gaze MLP | `libreface2_gaze_mlp.onnx` | `22ef72133d1aa23486bd02a4a9f9018526d36e46e5f5dac0d9c2bb2557c24b5d` | `88cc628f085f758b918789f9b4c25765363811b9c54a3120f2f3727d1801052b` |
+
+导出合同保持当前 LibreFace Python reference：AU 为 224×224 ImageNet normalize 后的联合 intensity/detection head；expression 为 8 类 score；gaze MLP 输入为 MediaPipe 前 468 landmarks 展平后的 1404-d 特征。MediaPipe alignment/head pose/landmark 与 gaze feature extraction 仍保留在 CPU 前处理，Gate 0 只迁移 learned heads。
+
+因此当前状态正式更新为：**LibreFace Gate 0 = PASS**。没有重跑既有 300 帧 CPU benchmark，也没有冻结 Face backend。
+
+## 6. 当前续接位置
+
+下一步直接进入 LibreFace Gate 1：
+
+1. 切换/创建独立 `attention-face-directml` 环境；
+2. 确认 `DmlExecutionProvider` 可见；
+3. 对上述 3 个 ONNX 运行 batch 1/8/16/32 synthetic provider/fallback/model-core probe；
+4. 检查每个模型的 `status`、`session_providers`、DML/CPU kernel events 与吞吐；
+5. Gate 1 通过后再做 Py-Feat Gate 0/1，然后进入同 300 帧真实输入 parity/end-to-end。
+
+当前仍不运行新的 CPU benchmark，不运行 44 被试全量 Face，不改变 Pose/Motion 已有决策。
