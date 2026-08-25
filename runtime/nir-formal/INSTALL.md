@@ -2,7 +2,7 @@
 
 本文件是 `runtime/nir-formal/` 在 NVIDIA/CUDA Windows 机器上的安装入口。当前正式分支为 `nvidia-cuda`，package version 为 `1.0.1`。
 
-当前 RTX 5060 工作站的 **RITnet 四分类 post-hoc 正式补跑**请优先看仓库根目录：
+当前 RTX 5070 工作站的 **RITnet 四分类 post-hoc 正式补跑**请优先看仓库根目录：
 
 [`../../NVIDIA-RITnet全分类补跑使用说明.md`](../../NVIDIA-RITnet全分类补跑使用说明.md)
 
@@ -103,9 +103,9 @@ python run_pipeline.py check-env
 
 `check-env` 必须能够识别目标 NVIDIA GPU/CUDA、PyTorch、Ultralytics、OpenCV 以及冻结模型；RITnet full-class 还必须单独确认 `CUDAExecutionProvider`。
 
-## 4. 当前 RTX 5060 工作站数据根
+## 4. 当前 RTX 5070 工作站数据根
 
-当前 `nvidia-cuda` 分支对应的 RTX 5060 工作站正式原始数据根固定为：
+当前 `nvidia-cuda` 分支对应的 RTX 5070 工作站正式原始数据根固定为：
 
 ```text
 J:/Data
@@ -171,7 +171,7 @@ python run_formal_batch.py --subjects sub-031 --force
 
 技术说明见 [`RITNET_FULLCLASS_EXTENSION.md`](RITNET_FULLCLASS_EXTENSION.md)，完整操作顺序见仓库根目录 [`../../NVIDIA-RITnet全分类补跑使用说明.md`](../../NVIDIA-RITnet全分类补跑使用说明.md)。
 
-首名 RTX 5060 完整被试验收：
+首名 RTX 5070 完整被试验收：
 
 ```powershell
 python run_ritnet_fullclass_batch.py `
