@@ -25,6 +25,11 @@ data:
   rgb_timestamp_suffix: "_rgb_timestamps.csv"
   behavior_dir: "beh"
   master_timeline: "master_timeline.csv"
+  # Keep excluded subjects visible in audit/provenance, but do not pass them to
+  # later formal RGB analysis stages.
+  exclude:
+    sub-033: "known RGB recording failure observed during the experiment"
+    sub-9504: "not part of the formal analysis cohort"
 
 analysis_window:
   # Process one continuous RGB timeline instead of physically splitting videos.
