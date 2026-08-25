@@ -30,7 +30,7 @@ def test_cuda_provider_unavailable_refuses_cpu_fallback(monkeypatch, tmp_path):
 
 
 def test_pytorch_formal_mode_refuses_cpu_fallback(monkeypatch):
-    import torch
+    torch = pytest.importorskip("torch")
     from run_pipeline import _require_pytorch_cuda
 
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
