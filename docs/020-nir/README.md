@@ -18,6 +18,8 @@ runtime/nir-formal/
 
 **NIR × Behavior 数据契约：** [024-2026-08-26-NIR行为对齐原型与数据契约.md](024-2026-08-26-NIR行为对齐原型与数据契约.md)。`sub-031` 已完成 v1.2 最终验收；当前正式下游实现为 **`nir-behavior-v1.2 / schema 2`，prototype 已冻结**。已冻结 trial/probe 长表、PIR/OAR 字段语义、Block 边界截断与内部 NIR 缺失的区分、coverage report 与 completion/provenance 规则。`subjects.include=[sub-031]` safety gate 暂时保留，直到更多 full-class 被试完成、准备进入 cohort alignment 时再解除。
 
+**刺激视觉协变量：** [025-2026-08-26-SART刺激视觉协变量重建.md](025-2026-08-26-SART刺激视觉协变量重建.md)。当前 `stimulus-visual-v1.0` 按 FocusWave formaltest 的真实绘制规则重建 `刺激.png + 9种水果×3种size` 的 27 个正式条件，并生成数字 linear-sRGB relative luminance、RMS contrast 及相对 mask 的亮度步长；该表用于控制条件间相对视觉差异，不等同于光度计校准的 cd/m²。
+
 > 下方 08-16、08-17、08-21、08-22 内容按当时研究阶段保留。其中“候选 / 待实测 / 停止门 / 尚未全量”等措辞是历史状态，不代表当前状态。
 
 ## 当前入口
@@ -28,6 +30,7 @@ runtime/nir-formal/
 | [021-眨眼检测边界与RITnet派生开合度.md](021-眨眼检测边界与RITnet派生开合度.md) | `fullclass_ocular_aperture_ratio_*` 的真实定义、blink/PERCLOS 解释边界与人工验证要求 | **当前开合度定义** |
 | [022-2026-08-25-NIR正式分析设计与待验证项.md](022-2026-08-25-NIR正式分析设计与待验证项.md) | 116 人正式 NIR 的变量、行为对齐、时间窗、统计/ML、QC 与待冻结项 | **当前分析设计** |
 | [024-2026-08-26-NIR行为对齐原型与数据契约.md](024-2026-08-26-NIR行为对齐原型与数据契约.md) | `nir-behavior-v1.2 / schema 2` 的输入、时间对齐、trial/probe 表、coverage、provenance 与 prototype 验收 | **当前冻结对齐契约** |
+| [025-2026-08-26-SART刺激视觉协变量重建.md](025-2026-08-26-SART刺激视觉协变量重建.md) | 27 个正式 SART 画面重建、relative luminance/contrast/mask-delta 定义与运行方式 | **当前视觉协变量入口** |
 | `runtime/nir-formal/` | AMD 分支为 ONNX Runtime DirectML package `0.1.1`；NVIDIA 复现在 `nvidia-cuda` | **当前 AMD runtime** |
 | `runtime/nir-formal/INSTALL.md` | 新电脑从零配置当前正式 runtime | **当前安装入口** |
 | `src/attention_pipeline/nir/` | 项目级 NIR 可复用源码及保留的历史评价逻辑 | 保留；不等同于正式 runtime |
