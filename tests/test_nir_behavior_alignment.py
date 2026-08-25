@@ -8,7 +8,10 @@ from attention_pipeline.nir_behavior.alignment import (
     build_probe_windows,
     build_trial_windows,
 )
-from attention_pipeline.nir_behavior.alignment_v12 import augment_window_metadata
+from attention_pipeline.nir_behavior.alignment_v12 import (
+    _block_analysis_bounds,
+    augment_window_metadata,
+)
 from attention_pipeline.nir_behavior.behavior_qc import add_behavior_qc
 from attention_pipeline.nir_behavior.contract import WindowSpec
 from attention_pipeline.nir_behavior.coverage import build_window_coverage_report
@@ -22,7 +25,9 @@ def _behavior() -> pd.DataFrame:
             "block_num": [1, 1, 1, 1],
             "trial_num": [1, 2, 3, 4],
             "global_trial_index": [1, 2, 3, 4],
-            "block_onset_time": [900.0, 900.0, 900.0, 900.0],
+            # FocusWave stores elapsed milliseconds since block start here.
+            # absolute_onset_time - block_onset_time = 900 ms for every row.
+            "block_onset_time": [100.0, 1250.0, 2400.0, 3550.0],
             "absolute_onset_time": [1000.0, 2150.0, 3300.0, 4450.0],
             "stimulus_name": ["go1", "go2", "nogo", "go3"],
             "stimulus_size": [100, 100, 100, 100],
@@ -74,6 +79,13 @@ def test_behavior_qc_preserves_scoring_and_flags_prestimulus() -> None:
     assert bool(frame.loc[1, "ambiguous_omission_flag"])
     assert frame.loc[1, "prestimulus_delta_to_onset_ms"] == -5.0
     assert frame.loc[2, "n_raw_keypresses"] == 2
+
+
+def test_block_start_is_reconstructed_from_absolute_minus_elapsed() -> None:
+    bounds = _block_analysis_bounds(_behavior())
+    start_ms, end_ms = bounds[1]
+    assert np.isclose(start_ms, 900.0)
+    assert np.isclose(end_ms, 5600.0)
 
 
 def test_trial_window_keeps_eyes_separate() -> None:
