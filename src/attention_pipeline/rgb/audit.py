@@ -63,9 +63,10 @@ def _timestamp_metrics(rows: list[tuple[int, int]]) -> dict[str, object]:
             "timestamp_rows": 0,
             "timestamp_first_frame": None,
             "timestamp_last_frame": None,
+            "timestamp_frame_index_contiguous": False,
+            "timestamp_missing_frame_indices": None,
             "timestamp_start_unix_ms": None,
             "timestamp_end_unix_ms": None,
-            "timestamp_frame_index_contiguous": False,
             "timestamp_unix_monotonic": False,
             "timestamp_median_interval_ms": None,
             "timestamp_max_interval_ms": None,
@@ -73,6 +74,8 @@ def _timestamp_metrics(rows: list[tuple[int, int]]) -> dict[str, object]:
     frame_ids = [item[0] for item in rows]
     times = [item[1] for item in rows]
     frame_contiguous = all(b - a == 1 for a, b in zip(frame_ids, frame_ids[1:]))
+    expected_span_count = frame_ids[-1] - frame_ids[0] + 1
+    missing_frame_indices = max(0, expected_span_count - len(frame_ids))
     time_monotonic = all(b > a for a, b in zip(times, times[1:]))
     intervals = [b - a for a, b in zip(times, times[1:])]
     if intervals:
@@ -91,21 +94,36 @@ def _timestamp_metrics(rows: list[tuple[int, int]]) -> dict[str, object]:
         "timestamp_rows": len(rows),
         "timestamp_first_frame": frame_ids[0],
         "timestamp_last_frame": frame_ids[-1],
+        "timestamp_frame_index_contiguous": frame_contiguous,
+        "timestamp_missing_frame_indices": missing_frame_indices,
         "timestamp_start_unix_ms": times[0],
         "timestamp_end_unix_ms": times[-1],
-        "timestamp_frame_index_contiguous": frame_contiguous,
         "timestamp_unix_monotonic": time_monotonic,
         "timestamp_median_interval_ms": median,
         "timestamp_max_interval_ms": max_interval,
     }
 
 
+def _exclusion(config: Config, subject: str) -> tuple[bool, str]:
+    raw = config.section("data").get("exclude", {})
+    if isinstance(raw, dict):
+        if subject in raw:
+            return True, str(raw[subject])
+        return False, ""
+    if isinstance(raw, list):
+        return subject in {str(value) for value in raw}, "configured exclusion"
+    return False, ""
+
+
 def audit_subject(files: RGBSubjectFiles, config: Config) -> dict[str, object]:
     focuswave = config.section("focuswave")
     timestamps = read_rgb_timestamps(files.timestamps)
+    excluded, exclusion_reason = _exclusion(config, files.subject)
     row: dict[str, object] = {
         "subject": files.subject,
         "root": str(files.root),
+        "analysis_excluded": excluded,
+        "exclusion_reason": exclusion_reason,
         "video": str(files.video),
         "timestamps": str(files.timestamps),
         "master_timeline": str(files.master_timeline),
@@ -166,6 +184,7 @@ def audit_subject(files: RGBSubjectFiles, config: Config) -> dict[str, object]:
         and row["rgb_covers_formal_start"]
         and row["rgb_covers_formal_end"]
     )
+    row["analysis_eligible"] = bool(not excluded and row["basic_complete"])
     return row
 
 
