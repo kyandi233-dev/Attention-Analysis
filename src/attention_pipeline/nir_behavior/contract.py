@@ -107,6 +107,8 @@ def subject_output_paths(output_root: Path, subject: str) -> dict[str, Path]:
         "trial_level": base / f"{subject}_trial_level.csv",
         "trial_windows": base / f"{subject}_trial_nir_windows.csv",
         "probe_windows": base / f"{subject}_probe_windows.csv",
+        "trial_coverage": base / f"{subject}_trial_window_coverage.csv",
+        "probe_coverage": base / f"{subject}_probe_window_coverage.csv",
         "manifest": base / f"{subject}_alignment_manifest.json",
         "summary": base / f"{subject}_alignment_summary.json",
         "completion": base / f"{subject}_alignment_completion.json",
