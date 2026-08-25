@@ -61,6 +61,18 @@ face:
     - blendshapes
   inference_fps: null
   directml_onnx_candidate: true
+  benchmark:
+    # One deterministic shared image set is extracted once and reused by every
+    # candidate so coverage, speed and outputs are compared on identical frames.
+    jpeg_quality: 95
+    phase_samples:
+      baseline: 50
+      instructions: 25
+      practice: 35
+      transition: 15
+      block1: 90
+      interblock_transition: 45
+      block2: 90
 
 pose:
   enabled: true
