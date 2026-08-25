@@ -67,7 +67,8 @@ def _session_options(ort: Any, batch_size: int, *, strict_dml: bool, verbose: bo
         except Exception:
             pass
     if strict_dml:
-        # Official ORT diagnostic switch: fail session creation if any node would require CPU fallback.
+        # ORT core-layer diagnostic switch: fail session creation if any graph node
+        # would require CPU EP fallback.
         so.add_session_config_entry("session.disable_cpu_ep_fallback", "1")
     if verbose:
         so.log_severity_level = 0
@@ -82,12 +83,20 @@ def _try_session(model_path: Path, batch_size: int, strict_dml: bool, verbose: b
     record: dict[str, Any] = {
         "mode": "strict_dml_no_cpu_fallback" if strict_dml else "dml_with_cpu_fallback",
         "requested_providers": providers,
+        "python_wrapper_fallback_enabled": not strict_dml,
     }
     try:
+        # There are two distinct fallback layers in ORT Python:
+        #   1) graph-node fallback to CPU EP inside ORT core;
+        #   2) Python InferenceSession constructor fallback, which catches EP/session
+        #      creation failures and recreates a session with fallback providers.
+        # Strict mode must disable BOTH. Otherwise a failed strict-DML session can be
+        # silently replaced by a CPU session and appear as status=ok.
         session = ort.InferenceSession(
             str(model_path),
             sess_options=_session_options(ort, batch_size, strict_dml=strict_dml, verbose=verbose),
             providers=providers,
+            enable_fallback=0 if strict_dml else 1,
         )
         record["session_providers"] = session.get_providers()
         record["session_provider_options"] = session.get_provider_options()
@@ -135,7 +144,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Diagnose an ONNX model that falls back from DirectML. Runs a normal DML+CPU session and a strict "
-            "DML-only session with CPU fallback disabled, and records an ONNX operator inventory."
+            "DML-only session with both ORT core CPU-EP fallback and Python wrapper fallback disabled, and records "
+            "an ONNX operator inventory."
         )
     )
     parser.add_argument("--model", required=True)
@@ -159,7 +169,7 @@ def main() -> None:
         raise RuntimeError(f"DmlExecutionProvider unavailable: {available}")
 
     result = {
-        "schema_version": "rgb-face-directml-diagnostic-v0.1",
+        "schema_version": "rgb-face-directml-diagnostic-v0.2",
         "purpose": "Identify whether a model requires CPU fallback before changing export/model structure.",
         "runtime": {
             "python": platform.python_version(),
@@ -173,8 +183,9 @@ def main() -> None:
         "fallback_allowed": _try_session(model_path, args.batch_size, False, args.verbose, args.seed),
         "strict_dml": _try_session(model_path, args.batch_size, True, args.verbose, args.seed),
         "interpretation": (
-            "If fallback_allowed succeeds but strict_dml fails, at least one graph node is not fully supported by DML. "
-            "Use the strict error/native verbose log plus the operator inventory to choose the smallest targeted export change."
+            "Strict mode disables both ORT core graph-node CPU fallback and the Python InferenceSession constructor's "
+            "provider fallback. If fallback_allowed succeeds but strict_dml fails, the strict error/native verbose log "
+            "is the real DirectML blocker to diagnose."
         ),
     }
 
