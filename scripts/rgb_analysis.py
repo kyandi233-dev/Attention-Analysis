@@ -1,20 +1,4 @@
-"""RGB development pipeline entrypoint.
-
-Implemented development stages:
-    python scripts/rgb_analysis.py --stage audit
-    python scripts/rgb_analysis.py --stage gaps
-    python scripts/rgb_analysis.py --stage motion --subject sub-031
-    python scripts/rgb_analysis.py --stage motion-qc --subject sub-031
-    python scripts/rgb_analysis.py --stage motion-review --subject sub-031
-
-``audit`` verifies formal RGB inputs and FocusWave coverage. ``gaps`` records
-timestamp interruptions with experiment context. ``motion`` is intentionally a
-single-subject pilot stage: it writes full-FPS, gap-aware Motion Energy raw output
-and a manifest into Beijing-RGB/_test. ``motion-qc`` only reads that existing
-Parquet and writes a compact distribution/QC JSON. ``motion-review`` reads only a
-small set of representative frame pairs from the source video and writes one
-contact sheet for manual Motion-vs-brightness spot-checking.
-"""
+"""RGB development pipeline entrypoint."""
 from __future__ import annotations
 
 import argparse
@@ -27,17 +11,16 @@ from attention_pipeline.rgb.gaps import run_gap_audit
 from attention_pipeline.rgb.motion import run_motion_test
 from attention_pipeline.rgb.motion_qc import run_motion_qc
 from attention_pipeline.rgb.motion_review import run_motion_review
+from attention_pipeline.rgb.pose import run_pose_test
 from attention_pipeline.rgb.paths import RGBOutputLayout
 
 
 def stage_audit(config) -> dict[str, object]:
     layout = RGBOutputLayout.from_config(config)
     inventory, duplicates = run_audit(config)
-
     inventory_path = layout.dataset_file("rgb_inventory.csv")
     summary_path = layout.dataset_file("audit_summary.json")
     inventory.to_csv(inventory_path, index=False, encoding="utf-8-sig")
-
     duplicate_path = None
     if not duplicates.empty:
         duplicate_path = layout.dataset_file("rgb_duplicate_subjects.csv")
@@ -49,7 +32,6 @@ def stage_audit(config) -> dict[str, object]:
     incomplete_nonexcluded = int(
         ((~inventory["analysis_excluded"].astype(bool)) & (~inventory["basic_complete"].astype(bool))).sum()
     ) if {"analysis_excluded", "basic_complete"}.issubset(inventory.columns) else 0
-
     summary = {
         "subjects_discovered_unique": int(len(inventory)),
         "subjects_basic_complete_raw": basic_complete,
@@ -60,9 +42,7 @@ def stage_audit(config) -> dict[str, object]:
         "inventory": str(inventory_path),
         "duplicates": str(duplicate_path) if duplicate_path else None,
     }
-    summary_path.write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     return summary
 
 
@@ -71,7 +51,6 @@ def stage_gaps(config) -> dict[str, object]:
     table = run_gap_audit(config)
     path = layout.dataset_file("rgb_timestamp_gaps.csv")
     table.to_csv(path, index=False, encoding="utf-8-sig")
-
     if table.empty:
         return {
             "gap_rows": 0,
@@ -85,7 +64,6 @@ def stage_gaps(config) -> dict[str, object]:
             "max_formal_block_gap_ms": None,
             "output": str(path),
         }
-
     nonexcluded = table[~table["analysis_excluded"].astype(bool)]
     inside_span = nonexcluded[nonexcluded["inside_analysis_span"].astype(bool)]
     inside_block = nonexcluded[nonexcluded["inside_formal_block"].astype(bool)]
@@ -109,13 +87,10 @@ def main() -> None:
     parser.add_argument("--config", default="configs/rgb_analysis.yaml")
     parser.add_argument(
         "--stage",
-        choices=["audit", "gaps", "motion", "motion-qc", "motion-review"],
+        choices=["audit", "gaps", "motion", "motion-qc", "motion-review", "pose"],
         default="audit",
     )
-    parser.add_argument(
-        "--subject",
-        help="Required for single-subject stages such as motion, motion-qc and motion-review",
-    )
+    parser.add_argument("--subject", help="Required for single-subject model/QC stages")
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -130,8 +105,10 @@ def main() -> None:
             result = run_motion_test(config, args.subject)
         elif args.stage == "motion-qc":
             result = run_motion_qc(config, args.subject)
-        else:
+        elif args.stage == "motion-review":
             result = run_motion_review(config, args.subject)
+        else:
+            result = run_pose_test(config, args.subject)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     print(f"[rgb:{args.stage}] complete", file=sys.stderr)
 
