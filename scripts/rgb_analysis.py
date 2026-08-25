@@ -3,12 +3,12 @@
 Implemented development stages:
     python scripts/rgb_analysis.py --stage audit
     python scripts/rgb_analysis.py --stage gaps
+    python scripts/rgb_analysis.py --stage motion --subject sub-031
 
-Neither stage runs face, pose, or motion models. ``audit`` verifies formal RGB
-inputs and FocusWave coverage; ``gaps`` records every timestamp interval above
-the development warning threshold with frame identity and experiment phase so
-later temporal features can mark the affected sample missing rather than create
-false movement.
+``audit`` verifies formal RGB inputs and FocusWave coverage. ``gaps`` records
+timestamp interruptions with experiment context. ``motion`` is intentionally a
+single-subject pilot stage: it writes full-FPS, gap-aware Motion Energy raw output
+and a manifest into Beijing-RGB/_test; it does not create formal subject outputs.
 """
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ import sys
 from attention_pipeline.config import load_config
 from attention_pipeline.rgb.audit import run_audit
 from attention_pipeline.rgb.gaps import run_gap_audit
+from attention_pipeline.rgb.motion import run_motion_test
 from attention_pipeline.rgb.paths import RGBOutputLayout
 
 
@@ -69,16 +70,28 @@ def stage_gaps(config) -> dict[str, object]:
             "gap_rows": 0,
             "subjects_with_gaps": 0,
             "subjects_with_nonexcluded_gaps": 0,
+            "gap_rows_inside_analysis_span": 0,
+            "subjects_with_inside_analysis_span_gaps": 0,
+            "gap_rows_inside_formal_block": 0,
+            "subjects_with_inside_formal_block_gaps": 0,
             "max_gap_ms": None,
+            "max_formal_block_gap_ms": None,
             "output": str(path),
         }
 
     nonexcluded = table[~table["analysis_excluded"].astype(bool)]
+    inside_span = nonexcluded[nonexcluded["inside_analysis_span"].astype(bool)]
+    inside_block = nonexcluded[nonexcluded["inside_formal_block"].astype(bool)]
     return {
         "gap_rows": int(len(table)),
         "subjects_with_gaps": int(table["subject"].nunique()),
         "subjects_with_nonexcluded_gaps": int(nonexcluded["subject"].nunique()),
+        "gap_rows_inside_analysis_span": int(len(inside_span)),
+        "subjects_with_inside_analysis_span_gaps": int(inside_span["subject"].nunique()),
+        "gap_rows_inside_formal_block": int(len(inside_block)),
+        "subjects_with_inside_formal_block_gaps": int(inside_block["subject"].nunique()),
         "max_gap_ms": int(table["gap_duration_ms"].max()),
+        "max_formal_block_gap_ms": int(inside_block["gap_duration_ms"].max()) if not inside_block.empty else None,
         "warning_threshold_ms": int(config.section("qc").get("timestamp_gap_warning_ms", 100)),
         "output": str(path),
     }
@@ -87,14 +100,19 @@ def stage_gaps(config) -> dict[str, object]:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Attention-Analysis RGB development pipeline")
     parser.add_argument("--config", default="configs/rgb_analysis.yaml")
-    parser.add_argument("--stage", choices=["audit", "gaps"], default="audit")
+    parser.add_argument("--stage", choices=["audit", "gaps", "motion"], default="audit")
+    parser.add_argument("--subject", help="Required for single-subject stages such as motion")
     args = parser.parse_args()
 
     config = load_config(args.config)
     if args.stage == "audit":
         result = stage_audit(config)
-    else:
+    elif args.stage == "gaps":
         result = stage_gaps(config)
+    else:
+        if not args.subject:
+            parser.error("--subject is required when --stage motion")
+        result = run_motion_test(config, args.subject)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     print(f"[rgb:{args.stage}] complete", file=sys.stderr)
 
