@@ -88,8 +88,12 @@ qc:
   timestamp_gap_warning_ms: 100
 
 output:
-  # Full production outputs remain outside the Git repository.
-  root: "outputs/rgb-dev"
+  # RGB analysis results live outside the repository, alongside Beijing-NIR.
+  root: "D:/_AttentionData/Beijing-RGB"
+  test_dir: "_test"
   raw_format: parquet
   analysis_format: parquet
   summary_format: csv
+  # Subject output files are always prefixed with subject id, e.g.
+  # sub-031_motion_raw.parquet, even inside sub-031/.
+  subject_file_prefix: true
