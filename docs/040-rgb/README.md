@@ -8,49 +8,32 @@ RGB 主线为 **Face、Pose、Motion**。
 
 | 分支 | 当前工具路线 | 当前状态 |
 |---|---|---|
-| Face | Py-Feat vs LibreFace 2.0 | **下一开发步骤：benchmark** |
-| Pose | MediaPipe Tasks Pose Landmarker | **sub-031 10 fps 正式长窗口 pilot 已完成** |
+| Face | Py-Feat vs LibreFace 2.0 | **现在进入 benchmark** |
+| Pose | MediaPipe Tasks Pose Landmarker | **sub-031 10 fps representative pilot/QC/features 已完成** |
 | Motion | OpenCV Motion Energy | **sub-031 global Motion pilot/QC/review 已完成** |
 
-## 已验证：Pose 10 fps
+## Pose representative validation 已完成
 
-`sub-031` 从真实 baseline 起点到 Block2 结束：
+`sub-031` 从真实 baseline 起点到 Block2 结束：10 fps、15,494 个采样时点、`pose_valid_fraction=1.0`、0 个 multi-pose frame，约 429.1 s / 7.15 min，实际约 36.1 inference/s；Raw 输出 511,302 landmark rows / 约 22.7 MB。因此正式开发参数保留 **10 fps**。
 
-- 10 fps；
-- 15,494 个采样时点；
-- `pose_valid_fraction=1.0`；
-- 0 个 multi-pose frame；
-- 约 429.1 s / 7.15 min；
-- 实际约 36.1 inference/s；
-- 511,302 landmark rows；
-- zstd Parquet 约 22.7 MB。
+逐 landmark QC 进一步确认当前 RGB 机位的真实边界：nose 和双肩质量极高且始终在画面内；肘、腕、髋大多属于画外模型外推。Raw 层仍保存全部 33 个 landmark，但 derived 层使用 visibility + presence + in-frame 质量门控。
 
-因此正式开发参数恢复并保留 **10 fps**，不采用此前基于“可能过慢”预判的 5 fps。Raw 层继续完整保留 33 normalized + 33 world landmarks、visibility/presence 和 frame/timestamp/behavior identity。
+修正版 `rgb-pose-features-v0.2` 在 `sub-031` 上得到：
 
-## 当前本地下一步：不重跑 Pose
+- 15,494 个 Pose 时点；
+- 2 个 >300 ms gap reset；
+- shoulder motion 有效 15,491 行；
+- elbow motion 有效 0 行；
+- wrist motion 有效 6 行；
+- trunk angle 有效 0 行。
 
-现有：
+因此当前 Pose 主测量明确收敛到 **shoulder motion / shoulder center / shoulder-line posture**。腕、肘、髋保留为其他被试可能可用的 opportunistic 指标，但不作为当前机位的必需测量；`upper_body_motion` 也不宽泛解释为完整上半身运动，因为在本机位下它可能实际由 shoulder-only 组成。
 
-```text
-D:\_AttentionData\Beijing-RGB\_test\sub-031_pose-test.parquet
-```
+`body_motion_energy` 与 Pose-derived motion 不同：前者是在人体 ROI 内计算像素帧差，需要重新消费视频。为避免现在再次独立扫描大体积 AVI，它留到 Face backend 冻结后，与 Motion/Pose/Face 的正式统一视频读取一起实现。
 
-直接运行：
+## 下一步：Face benchmark
 
-```powershell
-python scripts/rgb_analysis.py --stage pose-qc --subject sub-031
-python scripts/rgb_analysis.py --stage pose-features --subject sub-031
-```
-
-`pose-qc` 逐项检查 shoulder/elbow/wrist/nose，并把 hip 单独作为 optional trunk landmark；不会再被长期出画的膝/踝/脚拉低整体判断。
-
-`pose-features` 从现有 landmark raw 派生 shoulder-width-normalized wrist/elbow/shoulder/upper-body motion 和可用时的 trunk angle。它不重新读取 RGB 视频。
-
-这里的 Pose-derived `upper_body_motion` 与 `body_motion_energy` 必须区分：后者是人体 ROI 内的像素帧差，留到正式统一视频读取时和 Face/Motion 一起计算，避免现在为了它再次独立扫描大体积 AVI。
-
-## Face benchmark 顺序
-
-Face benchmark 与上述两个 Parquet 后处理步骤工程上独立，不需要等 pose-features 完全冻结。最快路线是：本地现在跑 `pose-qc` / `pose-features`，下一开发步骤立即进入 Py-Feat vs LibreFace benchmark。最终 Face backend 确定后，再合成一次视频读取的正式 batch。
+Pose 已完成首个 representative 正式视频所需的速度、coverage、landmark QC 和派生特征 sanity check，不再作为 Face 的前置阻塞项。下一开发步骤直接进入 **Py-Feat vs LibreFace 2.0 benchmark**，重点比较 AU、head pose、gaze、expression/VA 的输出覆盖、稳定性、缺失率、正式视频鲁棒性、速度和 AMD/DirectML 可行性。
 
 ## 已完成的其他环节
 
