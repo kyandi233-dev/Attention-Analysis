@@ -36,23 +36,34 @@ _NOMINAL_TRIAL_MS = 1150.0
 
 
 def _block_analysis_bounds(trials: pd.DataFrame) -> dict[int, tuple[float, float]]:
-    """Return behavior-defined analysis bounds for each formal block.
+    """Return behavior-defined absolute analysis bounds for each formal block.
 
-    Start prefers FocusWave's block_onset_time when present. End is inferred from
-    the last formal trial onset plus the nominal 250-ms stimulus + 900-ms mask.
-    These bounds represent design availability, not NIR availability.
+    FocusWave ``block_onset_time`` is an elapsed-ms value within the block, not
+    an absolute Unix timestamp. When present, reconstruct block start from
+    ``absolute_onset_time - block_onset_time`` and use the median candidate for
+    robustness. End is inferred from the last formal trial onset plus the nominal
+    250-ms stimulus + 900-ms mask. These are design bounds, not NIR bounds.
     """
     result: dict[int, tuple[float, float]] = {}
     for block_num, frame in trials.groupby("block_num", sort=True):
-        onsets = pd.to_numeric(frame["absolute_onset_time"], errors="coerce").dropna()
-        if onsets.empty:
+        absolute = pd.to_numeric(frame["absolute_onset_time"], errors="coerce")
+        valid_absolute = absolute.dropna()
+        if valid_absolute.empty:
             continue
+
+        start_candidates = pd.Series(dtype=float)
         if "block_onset_time" in frame.columns:
-            starts = pd.to_numeric(frame["block_onset_time"], errors="coerce").dropna()
-        else:
-            starts = pd.Series(dtype=float)
-        start_ms = float(starts.min()) if not starts.empty else float(onsets.min())
-        end_ms = float(onsets.max()) + _NOMINAL_TRIAL_MS
+            elapsed = pd.to_numeric(frame["block_onset_time"], errors="coerce")
+            valid = absolute.notna() & elapsed.notna()
+            if valid.any():
+                start_candidates = (absolute[valid] - elapsed[valid]).astype(float)
+
+        start_ms = (
+            float(start_candidates.median())
+            if not start_candidates.empty
+            else float(valid_absolute.min())
+        )
+        end_ms = float(valid_absolute.max()) + _NOMINAL_TRIAL_MS
         result[int(block_num)] = (start_ms, end_ms)
     return result
 
@@ -276,6 +287,7 @@ def run_subject_alignment_v12(
             "left_right_fused": False,
             "coverage_thresholds_applied": False,
             "boundary_truncation_separated_from_internal_missingness": True,
+            "block_start_reconstructed_from_absolute_minus_elapsed": True,
         },
     }
     _atomic_json(paths["manifest"], manifest)
