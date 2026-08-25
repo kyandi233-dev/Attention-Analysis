@@ -65,9 +65,9 @@ LibreFace 当前 Python `get_aligned_image()` 允许 `max_num_faces=2`，但 mul
 
 20 个 AU 中 18 个在该 30 秒窗口内有连续变化，AU11 与 AU20 为常数。非恒定 AU 的 lag-1 correlation 中位数约 **0.723**，范围约 0.496–0.814；整体表现为中等到较高的相邻时点连续性。
 
-AU43 的 lag-1 较低且存在较大的瞬时 step，但 AU43 本身与眼闭合/眨眼相关，因此不能仅凭较大 frame-to-frame step 判定为 jitter，需要结合对应视频帧人工 spot-check。
+AU43 的 lag-1 较低且存在较大的瞬时 step，但 AU43 本身与眼闭合/眨眼相关，因此不能仅凭较大 frame-to-frame step 判定为 jitter，需要结合对应视频帧做可视化 review。
 
-Py-Feat gaze 三个输出在全部 300 帧有效，lag-1 约 0.60–0.67。其 gaze 为弧度制；换算后 100 ms 相邻样本的 p95 变化约为：pitch 3.69°、yaw 2.62°，最大约 7.78° / 6.38°。需要结合 SART 固视情境人工检查较大事件，但从连续性统计上没有 LibreFace yaw 那样明显的高频大幅变化。
+Py-Feat gaze 三个输出在全部 300 帧有效，lag-1 约 0.60–0.67。其 gaze 为弧度制；换算后 100 ms 相邻样本的 p95 变化约为：pitch 3.69°、yaw 2.62°，最大约 7.78° / 6.38°。
 
 Py-Feat head pose 三轴全部有效，lag-1：Pitch≈0.828、Roll≈0.956、Yaw≈0.722。按弧度转角度后，相邻样本 p95 step 约 Pitch 0.54°、Roll 0.31°、Yaw 0.69°，最大约 1.22° / 0.65° / 1.46°，连续性较好。
 
@@ -82,7 +82,7 @@ LibreFace gaze 全部 300 帧有效，但连续稳定性较弱：
 - gaze pitch lag-1≈0.626，median step≈1.50°，p95≈8.10°，max≈17.22°；
 - gaze yaw lag-1≈0.425，median step≈5.68°，p95≈17.30°，max≈41.81°。
 
-在本任务连续 10 fps 窗口中，尤其 gaze yaw 出现较大的高频变化。没有 gaze ground truth，不能直接判为错误，但在人工 review 前**不把 LibreFace gaze 作为正式主变量**。
+在本任务连续 10 fps 窗口中，尤其 gaze yaw 出现较大的高频变化。没有 gaze ground truth，不能直接判为错误，但在可视化 review 前**不把 LibreFace gaze 作为正式主变量**。
 
 LibreFace head pose 连续性较好：pitch/roll/yaw lag-1 分别约 0.787 / 0.749 / 0.874。与 Py-Feat 的 cross-model rank correlation 为 Pitch≈0.718、Roll≈0.693、Yaw≈-0.407；Yaw 的负号可能受到两套工具坐标/符号约定影响，不能直接按原符号解释为相反运动。
 
@@ -94,13 +94,77 @@ LibreFace categorical expression 在该 30 秒窗口 `expression_change_fraction
 
 该结果说明：**不能把“两个模型都输出 AU”视为可互换测量。** 在没有 FACS ground truth 的情况下，弱一致性既可能来自模型训练域、尺度/定义、face alignment 和预处理差异，也可能来自其中一个或两个模型的误差；因此 cross-model correlation 只作为方法不确定性证据，不作为准确率排序。
 
-Gaze 的模型间一致性也较弱：pitch Spearman≈-0.580、yaw≈0.054。Pitch 的负相关可能包含符号约定差异；yaw 近零则说明两套 gaze 在该窗口对时间变化基本没有一致趋势。由此进一步支持：Face gaze 需要人工 event review，且 LibreFace gaze 当前不进入主分析。
+Gaze 的模型间一致性也较弱：pitch Spearman≈-0.580、yaw≈0.054。Pitch 的负相关可能包含符号约定差异；yaw 近零则说明两套 gaze 在该窗口对时间变化基本没有一致趋势。
 
 Head pose 的一致性明显好于 AU/gaze，Pitch 与 Roll 为中高正相关，Yaw 需先统一符号/坐标约定后再比较。
 
-## 5. 当前结论与候选定位
+## 5. AMD DirectML：下一阶段主 benchmark
 
-第二轮完成后，两个候选的定位更加清晰：
+当前暂不以 RTX/CUDA 作为开发前提，先在 Windows AMD 上公平比较两套模型的 ONNX/DirectML 方案。**两边都必须尝试**，不能因为 LibreFace 已有官方 ONNX derivative 就提前淘汰 Py-Feat。
+
+### 5.1 LibreFace 路线
+
+LibreFace 官方 derivative 已公开 ONNX 权重，并明确推荐通过 ONNX Runtime Execution Provider 使用硬件加速。当前计划：
+
+```text
+raw frame
+→ MediaPipe alignment / primary-face handling
+→ LibreFace ONNX heads
+→ ONNX Runtime DmlExecutionProvider
+→ AMD GPU
+```
+
+需要分别记录 model-core 和 end-to-end wall time，因为 MediaPipe alignment 仍可能主要在 CPU 上执行。
+
+### 5.2 Py-Feat 路线
+
+Detectorv2 当前结构为：
+
+```text
+RetinaFace
+→ isotropic square-pad 256 crop
+→ single multitask model
+   (AU / emotion / VA / gaze / head pose / 478 mesh / blendshape)
+→ optional identity branch
+```
+
+因此 Py-Feat DirectML 不能只导出一个随意的子模型后称为“Py-Feat ONNX”。第一阶段至少要验证 RetinaFace + multitask 主模型，严格复刻 256 crop、224 模型输入 normalization 和 postprocessing。identity 不属于当前科学核心变量，可单独记录为 optional overhead，不让它影响 Py-Feat vs LibreFace 的核心速度比较。
+
+### 5.3 公平速度比较
+
+AMD benchmark 使用现有完全相同的连续 300 帧，并同时报告：
+
+1. **model-core throughput**：在固定 crop/aligned input 上比较 ONNX 头部速度；
+2. **end-to-end throughput**：从原始 RGB frame 到最终 AU/head/gaze 等结果的总 wall time；
+3. provider 必须确认实际为 `DmlExecutionProvider`，不能静默 fallback 到 CPU；
+4. 每条路线先 warm-up，再测试至少 batch 1 / 8 / 16 / 32 中可运行的配置；
+5. 输出与 CPU/PyTorch reference 做逐字段数值 parity；
+6. 速度测试和科学输出 parity 分开报告。
+
+最终选择看的是“AMD GPU 上完整 scientific-core pipeline 的速度 + 输出可信度”，不是某个单独 ONNX 文件的理论 FPS。
+
+## 6. 可视化 review：替代繁琐人工逐帧标注
+
+不要求人工逐帧进行 FACS 编码。Py-Feat 官方本身支持 478 FaceMesh、gaze arrow、AU 驱动 mesh 和动画等 visualization；本项目另外增加统一的 side-by-side review，使两套候选在同一原图上直接可见。
+
+新增 stage：
+
+```powershell
+python scripts/rgb_analysis.py --stage face-visual-review --subject sub-031
+```
+
+它读取已有连续 30 秒结果，不重新运行模型，生成：
+
+```text
+D:\_AttentionData\Beijing-RGB\_test\face-continuous\sub-031\
+└── sub-031_face-visual-review.mp4
+```
+
+视频左侧为 Py-Feat：face bbox、68 landmark、gaze direction cue、head pose 与当前 top AU；右侧为 LibreFace：MediaPipe landmarks（可解析时）、gaze direction cue、head pose 与 AU intensity。该视频用于肉眼检查模型预测是否与真实动作方向一致。
+
+**注意：overlay 是模型预测的可视化，不是人工 ground truth。** 它可以快速发现明显 jitter、方向错误、漏脸和 AU/gaze 与画面不一致，但不能据此计算严格准确率。
+
+## 7. 当前候选定位
 
 | 维度 | Py-Feat Detectorv2 | LibreFace 2.0 |
 |---|---|---|
@@ -108,24 +172,17 @@ Head pose 的一致性明显好于 AU/gaze，Pitch 与 Roll 为中高正相关�
 | CPU end-to-end | 0.528 image/s | **4.452 image/s** |
 | AU 连续性 | 18/20 有变化，lag-1 中位≈0.723 | 12 intensity 均变化，lag-1 中位≈0.648 |
 | binary AU | 不适用 | 多数常数，不作为主连续指标 |
-| gaze | 连续性相对较好，但仍需人工验证 | **yaw 高频变化较大，暂不作为主变量** |
+| gaze | 连续性相对较好 | yaw 高频变化较大，待 visual review |
 | head pose | 连续性高 | 连续性高；需统一坐标符号 |
 | expression | 7 类概率 + VA | categorical label 在本窗口恒定 |
 | 信息完整性 | **明显更高** | 较精简 |
 | multi-face | 原生保留多 face rows | 当前 Python alignment 有缺陷 |
-| AMD/ONNX | 需要自定义导出/验证 | **官方已有 ONNX derivative 路线** |
+| AMD/ONNX | **进入自定义 DirectML 验证** | **进入官方 ONNX DirectML 验证** |
 
-因此当前不把任一 CPU implementation 直接冻结为最终正式 backend：
+当前**不冻结 backend**。下一阶段必须完成两套 AMD DirectML benchmark、reference parity 和可视化 review，之后再冻结 Face backend / fps / primary-face 策略。
 
-- **Py-Feat 继续作为科学信息完整性的 reference candidate**；
-- **LibreFace 继续作为 AMD/DirectML deployment candidate**，正式候选变量优先限定为 AU intensity + head pose；binary AU / categorical expression / gaze 暂不作为主变量；
-- 下一步优先验证 LibreFace 官方 ONNX → ONNX Runtime DirectML 在 AMD 上的数值一致性与速度；
-- 同时对少量连续窗口事件做人工 frame review，重点检查 LibreFace gaze 大跳变、Py-Feat AU43/blink，以及两模型共同 AU 的明显分歧事件。
-
-只有 DirectML reference parity 和事件 review 通过后，才冻结最终 Face backend / fps / primary-face 策略。
-
-## 6. 信息保留与环境规则
+## 8. 信息保留与环境规则
 
 Face 是昂贵推理，继续遵循 `044-RGB输出Schema与信息保留原则.md`：候选推理保存原生可用字段；multi-face 不在 raw 层静默删除；QC 先 flag；正式结果记录 candidate/version/model/device/batch/source-frame manifest。
 
-主 `attention-rgb` 环境负责 sample/QC/比较；Py-Feat 使用独立 Python 3.11 环境；LibreFace 使用独立 Python 3.9 环境。完整运行指令见 `045-RGB开发环境与运行指令.md`。
+主 `attention-rgb` 环境负责 sample/QC/比较/visual review；Py-Feat 使用独立 Python 3.11 环境；LibreFace 使用独立 Python 3.9 环境。DirectML benchmark 将使用独立环境，避免污染当前稳定的候选 reference runtime。
