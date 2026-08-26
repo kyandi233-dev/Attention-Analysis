@@ -1,24 +1,80 @@
 pipeline:
   name: attention-analysis-nir-pipeline-validation
-  version: 1
-  schema_version: 1
-  purpose: "validation-only downstream smoke tests using completed 11_analysis_tables"
+  version: 2
+  schema_version: 3
+  purpose: "validation-only comprehensive downstream smoke tests using completed 11_analysis_tables plus read-only 10_analysis_ready subject baselines"
 
 paths:
+  analysis_ready_root: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v2/cohort-44-exploratory/10_analysis_ready"
   analysis_tables_root: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v2/cohort-44-exploratory/11_analysis_tables"
   output_root: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v2/cohort-44-exploratory/12_pipeline_validation"
+
+  # Optional external covariates. Missing files do not abort validation; status is written to extension_readiness.json.
+  stimulus_visual_table: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v1/stimulus_visual_properties.csv"
+  questionnaire_csv: null
 
 subjects:
   # Empty means discover only subjects with validated 11_analysis_tables completion.
   include: []
 
 analysis:
-  track: "binocular_primary"
+  main_track: "binocular_primary"
+  track: "binocular_primary"  # backwards-compatible alias used by the original smoke-test code
+  robustness_tracks:
+    - "binocular_primary"
+    - "left_primary"
+    - "right_primary"
+    - "binocular_strict"
+    - "left_strict"
+    - "right_strict"
+
   # Fixed smoke-test windows. They are not selected from current outcome patterns.
   trial_display_window: "pre_5s"
   probe_model_window: "pre_20s"
+  precursor_trial_window: "pre_5s"
+  no_go_preceding_correct_go_trials: 5
+
+  trial_state_windows:
+    - "pre_1s"
+    - "pre_3s"
+    - "pre_5s"
+    - "pre_10s"
+    - "pre_20s"
+    - "pre_30s"
+    - "pre_60s"
+  trial_event_windows:
+    - "pre_200ms"
+    - "post_200ms"
+    - "post_200_1150ms"
+  probe_windows:
+    - "pre_10s"
+    - "pre_20s"
+    - "pre_30s"
+    - "pre_60s"
+
+  dynamic_pir_features:
+    - "pir_median"
+    - "pir_mean"
+    - "pir_mad"
+    - "pir_iqr"
+    - "pir_sd"
+    - "pir_p10"
+    - "pir_p90"
+    - "pir_slope_per_sec"
+    - "pir_diff_mad"
+    - "pir_diff_rate_mad_per_sec"
+
   time_on_task_display_bin_sec: 30
   minimum_subjects_for_models: 3
+
+  # Formal-statistics architecture flags. Validation may prepare these interfaces but must not select them from current effects.
+  preserve_program_scoring: true
+  preserve_omission_qc_subtypes: true
+  preserve_probe_response_raw_codes: true
+  use_raw_pir_for_between_person_characteristics: true
+  use_centered_pir_for_within_person_effects: true
+  visual_covariates_optional: true
+  questionnaire_optional: true
 
 figures:
   formats:
@@ -31,4 +87,7 @@ scientific_boundary:
   nir_values_known_invalid: true
   allow_scientific_interpretation: false
   allow_window_selection_from_effects: false
+  allow_significance_driven_qc_thresholds: false
   write_formal_statistics: false
+  direct_read_production_nir: false
+  direct_read_oar_from_production: false
