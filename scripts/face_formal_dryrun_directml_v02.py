@@ -49,23 +49,40 @@ def _rf_tensor(rgb_list: list[np.ndarray]) -> np.ndarray:
     return np.ascontiguousarray(np.transpose(hwc, (0, 3, 1, 2)), dtype=np.float32)
 
 
+def _queue_put_interruptible(out_queue: queue.Queue, item: Any, stop_event: threading.Event) -> bool:
+    while not stop_event.is_set():
+        try:
+            out_queue.put(item, timeout=0.2)
+            return True
+        except queue.Full:
+            continue
+    return False
+
+
 def _reader_worker(
     frames: pd.DataFrame,
     source_video: Path,
     batch_size: int,
     out_queue: queue.Queue,
     timing: dict[str, float],
+    stop_event: threading.Event,
     *,
     seek_threshold_frames: int = 120,
 ) -> None:
     cap = cv2.VideoCapture(str(source_video))
     if not cap.isOpened():
-        out_queue.put(RuntimeError(f"Cannot open RGB video: {source_video}"))
+        _queue_put_interruptible(
+            out_queue,
+            RuntimeError(f"Cannot open RGB video: {source_video}"),
+            stop_event,
+        )
         return
     reader_started = time.perf_counter()
     last_target: int | None = None
     try:
         for start in range(0, len(frames), batch_size):
+            if stop_event.is_set():
+                break
             batch_df = frames.iloc[start:start + batch_size].copy()
             t0 = time.perf_counter()
             rgb_list: list[np.ndarray] = []
@@ -90,13 +107,14 @@ def _reader_worker(
                 last_target = target
             rf_in = _rf_tensor(rgb_list)
             timing["decode_preprocess_cpu_sec"] += time.perf_counter() - t0
-            out_queue.put((batch_df, rgb_list, rf_in))
+            if not _queue_put_interruptible(out_queue, (batch_df, rgb_list, rf_in), stop_event):
+                break
     except BaseException as exc:
-        out_queue.put(exc)
+        _queue_put_interruptible(out_queue, exc, stop_event)
     finally:
         cap.release()
         timing["reader_thread_wall_sec"] = time.perf_counter() - reader_started
-        out_queue.put(None)
+        _queue_put_interruptible(out_queue, None, stop_event)
 
 
 def _base_context(row: Any, *, detected: bool, face_rank: int, frame_h: int, frame_w: int) -> dict[str, Any]:
@@ -248,9 +266,10 @@ def run_optimized(args: argparse.Namespace) -> dict[str, Any]:
         del pending_meta[:n]
 
     q: queue.Queue = queue.Queue(maxsize=max(1, int(args.prefetch_batches)))
+    stop_event = threading.Event()
     reader = threading.Thread(
         target=_reader_worker,
-        args=(frames, source_video, int(args.retinaface_batch), q, stage),
+        args=(frames, source_video, int(args.retinaface_batch), q, stage, stop_event),
         kwargs={"seek_threshold_frames": int(args.seek_threshold_frames)},
         daemon=True,
     )
@@ -327,7 +346,10 @@ def run_optimized(args: argparse.Namespace) -> dict[str, Any]:
             while len(pending_chips) >= int(args.multitask_batch):
                 flush_multitask(int(args.multitask_batch))
     finally:
-        reader.join()
+        stop_event.set()
+        reader.join(timeout=5.0)
+        if reader.is_alive():
+            raise RuntimeError("Face prefetch reader did not stop cleanly")
 
     if pending_chips:
         flush_multitask(len(pending_chips))
