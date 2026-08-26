@@ -12,6 +12,7 @@
 | `nir_materialize_analysis_ready.py` | **当前 NIR 下游** | frozen production → `10_analysis_ready` |
 | `nir_build_analysis_tables.py` | **当前 NIR 下游** | `10_analysis_ready` + Behavior → `11_analysis_tables` |
 | `nir_formal_pipeline.py` | **当前 NIR 下游统一入口** | 分阶段运行 `materialize / tables / all`；不会调用 YOLO/RITnet |
+| `nir_pipeline_validation.py` | **当前 validation-only** | 读取已完成 `11_analysis_tables`，生成 Behavior / Block / time-on-task / trial / probe / smoke-model 表与代码绘图，写入 `12_pipeline_validation` |
 | `nir_behavior_alignment.py` | **历史 prototype、可执行** | 旧 production-based NIR × Behavior schema-v2 对齐；不再是当前正式主分析入口 |
 | `build_stimulus_visual_table.py` | **当前** | 重建正式 SART 画面并生成视觉协变量/报告 PNG |
 | `rgb_analysis.py` | **当前，共享 RGB** | RGB audit / timeline / Motion / Pose / Face sampling 与 QC 入口 |
@@ -41,13 +42,13 @@ D:\_AttentionData\Beijing-Behavior\formal-v1
 
 ## NIR 正式下游分析
 
-当前正式下游顺序：
+正式下游顺序定义为：
 
 ```text
 frozen production
 → 10_analysis_ready
 → 11_analysis_tables
-→ 20_formal_statistics（后续）
+→ 20_formal_statistics（未来正式值修正后）
 ```
 
 统一入口：
@@ -59,7 +60,7 @@ cd "D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-amd-Direc
 python scripts/nir_formal_pipeline.py --stage tables
 ```
 
-当前 44 人 `10_analysis_ready` 已物化，因此日常下一步默认使用 `--stage tables`。它只读 analysis-ready + Behavior，生成 trial / probe / 1 s time-on-task 分析表，不读取 production NIR，不运行 YOLO / RITnet。
+`nir_formal_pipeline.py` 只管理 downstream derived data，不运行 YOLO / RITnet。
 
 代表性验证：
 
@@ -97,6 +98,57 @@ docs/020-nir/215-2026-08-27-NIR正式下游分析管线运行手册.md
 旧 `nir_behavior_alignment.py` / `configs/nir_behavior_alignment.yaml` 继续保留历史 prototype 与 provenance，但其 production-based validity 和未融合左右眼的设计已被新的 analysis-ready 管线取代，不能再作为正式主分析入口。
 
 SART 视觉协变量仍使用 `configs/stimulus_visual.yaml` 和 `build_stimulus_visual_table.py`；需要加入正式模型时，应在 `11_analysis_tables` 之后按版本化 stimulus table 连接，不回写原始 Behavior。
+
+## 当前错误 NIR 值下的 `12_pipeline_validation`
+
+当前已经确认现阶段 NIR/PIR 数值错误，因此停止继续 44 人构表，也不进入 `20_formal_statistics`。已有 completed `11_analysis_tables` 只用于把后续分析代码和图形输出调通。
+
+运行：
+
+```powershell
+conda activate "D:\CondaEnvs\nir-amd"
+python -m pip install -e .
+
+python -m pytest `
+  tests/test_nir_pipeline_validation.py `
+  tests/test_nir_formal_analysis.py -q
+
+python scripts/nir_pipeline_validation.py
+```
+
+脚本自动发现具有有效 completion 的 `11_analysis_tables` 被试；当前不会自动继续剩余未构表 subject。
+
+输出：
+
+```text
+D:\_AttentionData\Beijing-NIR\analysis\nir-behavior-v2\cohort-44-exploratory\12_pipeline_validation
+```
+
+其中包括 Behavior-only、Block、time-on-task、trial、probe、within/between decomposition 和 model smoke-test 表，并用 `matplotlib` 代码生成：
+
+```text
+fig00_pipeline_validation_schematic
+fig01_time_on_task_trajectory
+fig02_block_paired_pir
+fig03_trial_outcome_pir_pre_5s
+fig04_probe_vigilance_windows
+fig05_coverage_heatmap_pre_5s
+fig06_model_smoke_forest
+```
+
+PNG/PDF 均带固定标记：
+
+```text
+PIPELINE VALIDATION ONLY — CURRENT NIR VALUES KNOWN INVALID
+```
+
+方法边界与图形说明见：
+
+```text
+docs/020-nir/217-2026-08-27-NIR错误值条件下下游分析管线验证方案.md
+```
+
+当前可以检查代码、join、模型是否拟合、图形是否合理、coverage/missingness；禁止解释 PIR 方向、p 值、Block 差异、PIR×行为、PIR×Probe 或据此选择窗口。
 
 ## AMD RGB 当前入口
 
