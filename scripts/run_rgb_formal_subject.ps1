@@ -47,28 +47,35 @@ function Invoke-Checked {
     }
 }
 
-Invoke-Checked "1/4 Face formal frame preparation (15 Hz, full formal span)" {
+Invoke-Checked "1/5 Face formal frame preparation (15 Hz, baseline start -> Block2 end)" {
     conda run -p $RgbEnv python scripts/face_formal_prepare.py `
         --config $Config --subject $Subject
 }
 
-Invoke-Checked "2/4 Motion + Pose full-span extraction" {
+Invoke-Checked "2/5 Motion + Pose full-span extraction" {
     conda run -p $RgbEnv python scripts/rgb_formal_motion_pose.py `
         --config $Config --subject $Subject --stage all @ForceArg
 }
 
-Invoke-Checked "3/4 Face DirectML full-span inference from original AVI" {
+Invoke-Checked "3/5 Face DirectML full-span inference from original AVI" {
     conda run -p $FaceEnv python scripts/face_formal_directml.py `
         --config $Config --subject $Subject --model-dir $FaceModelDir @ForceArg
 }
 
-Invoke-Checked "4/4 Face tracking + primary face + eyelid derivation" {
+Invoke-Checked "4/5 Face tracking + primary face + eyelid derivation" {
     conda run -p $FaceEnv python scripts/face_formal_derive.py `
         --config $Config --subject $Subject @ForceArg
 }
 
+Invoke-Checked "5/5 Final extraction completeness validation" {
+    conda run -p $RgbEnv python scripts/rgb_formal_validate.py `
+        --config $Config --subject $Subject
+}
+
 $SubjectDir = "D:\_AttentionData\Beijing-RGB\$Subject"
-Write-Host "`n=== Formal subject pipeline complete ==="
-Write-Host "Subject: $Subject"
-Write-Host "Output:  $SubjectDir"
-Write-Host "QC/gap review is downstream and does not block extraction completion."
+$SubjectManifest = Join-Path $SubjectDir "$Subject`_manifest.json"
+Write-Host "`n=== Formal subject extraction complete ==="
+Write-Host "Subject:  $Subject"
+Write-Host "Output:   $SubjectDir"
+Write-Host "Manifest: $SubjectManifest"
+Write-Host "QC is downstream and does not block extraction completion."
