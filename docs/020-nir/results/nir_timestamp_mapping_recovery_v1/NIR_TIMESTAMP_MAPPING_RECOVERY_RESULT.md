@@ -33,4 +33,4 @@ NIR timestamp CSV 第一列保留为 source capture counter，AVI 内部 frame i
 
 controls 的 `probe_alignment_validity` 保留为 `not_checked_in_mapping_only_validation`，因为本任务只对 recovery subjects 执行完整下游 alignment。sub-099 不属于本任务；其 master_timeline 缺失问题不因 timestamp mapping 修复而改变。
 
-当前 cohort 计数因此由 69/72 增至潜在 71/72。下一步应重新生成 matched NIR cohort，并单独评估是否按扩大后的 cohort 重跑 NIR v1；本任务不自动重跑既有 68-session/1360-probe NIR v1 结果。
+当前 cohort 计数已由 69/72 增至 71/72：matched cohort regeneration 已完成，结果为 71 sessions、1,420 个 unique `(subject, probe_id)` probes。聚合审计、old-versus-new diff、provenance 和本地产物 hash 见 [`NIR_MATCHED_COHORT_DIFF.md`](../nir_matched_cohort_regeneration_v1/NIR_MATCHED_COHORT_DIFF.md)。本轮未重跑既有 68-session/1,360-probe NIR v1 结果；扩大 cohort 后是否重跑 NIR v1 仍需单独决策。
