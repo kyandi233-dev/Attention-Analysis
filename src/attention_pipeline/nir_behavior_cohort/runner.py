@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 from datetime import datetime, timezone
@@ -33,6 +34,11 @@ def _git_head(repo_root: Path) -> str | None:
 
 def _json_dump(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2, default=str) + "\n", encoding="utf-8")
+
+
+def _header_signature(columns: list[str]) -> str:
+    canonical = "\x1f".join(columns)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
 def _subject_summary(qc: pd.DataFrame) -> pd.DataFrame:
@@ -121,6 +127,7 @@ def run_phase1_cohort_qc(
             behavior_files = formal_block_files(bconfig, subject)
 
             source_stat = source.csv_path.stat()
+            header_columns = pd.read_csv(source.csv_path, nrows=0, encoding="utf-8-sig").columns.tolist()
             block_counts = {
                 f"b{block}_{eye}_rows": int(
                     ((nir["block_num"] == block) & (nir["eye"] == eye)).sum()
@@ -135,6 +142,8 @@ def run_phase1_cohort_qc(
                     "fullclass_csv_size_bytes": int(source_stat.st_size),
                     "fullclass_csv_mtime_ns": int(source_stat.st_mtime_ns),
                     "fullclass_csv_sha256": sha256(source.csv_path) if hash_fullclass else None,
+                    "fullclass_column_count": int(len(header_columns)),
+                    "fullclass_header_signature": _header_signature(header_columns),
                     "completion_marker": str(source.completion_path),
                     "completion_marker_sha256": sha256(source.completion_path),
                     "completion_status": source.completion.get("status"),
@@ -172,7 +181,7 @@ def run_phase1_cohort_qc(
                         )
                     )
 
-            for block_num, grp in behavior.groupby("block_num", sort=True):
+            for _block_num, grp in behavior.groupby("block_num", sort=True):
                 behavior_rows.append(summarize_behavior_block(grp.copy()))
         except Exception as exc:
             errors.append({"subject": subject, "error": f"{type(exc).__name__}: {exc}"})
@@ -204,6 +213,12 @@ def run_phase1_cohort_qc(
         "subjects_preflight_failed": int(len(errors)),
         "eye_block_qc_rows": int(len(eye_block_qc)),
         "behavior_qc_rows": int(len(behavior_qc)),
+        "fullclass_column_count_distribution": (
+            discovery["fullclass_column_count"].dropna().astype(int).value_counts().sort_index().to_dict()
+            if "fullclass_column_count" in discovery.columns
+            else {}
+        ),
+        "fullclass_header_signature_count": int(discovery.get("fullclass_header_signature", pd.Series(dtype=str)).dropna().nunique()),
         "errors": errors,
         "interpretation": "Phase 1 descriptive QC only; no exclusion or model-selection rule is applied.",
     }
