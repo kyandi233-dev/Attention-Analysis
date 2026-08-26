@@ -76,16 +76,16 @@ def _map_interval_to_frame_windows(
     start_ms: int,
     end_ms: int,
     source: str,
-    unix_by_frame: dict[int, int],
+    unix_by_avi_frame: dict[int, int],
     *,
     split_frame_gaps: bool = False,
 ) -> list[PhaseWindow]:
     if end_ms <= start_ms:
         raise ValueError(f"Invalid {phase} interval: {start_ms}..{end_ms}")
-    if not unix_by_frame:
+    if not unix_by_avi_frame:
         raise ValueError("Formal phase analysis requires *_nir_timestamps.csv")
 
-    pairs = sorted((int(ts), int(frame_idx)) for frame_idx, ts in unix_by_frame.items())
+    pairs = sorted((int(ts), int(frame_idx)) for frame_idx, ts in unix_by_avi_frame.items())
     times = [item[0] for item in pairs]
     start_pos = bisect_left(times, int(start_ms))
     end_pos = bisect_left(times, int(end_ms)) - 1  # half-open [start, end)
@@ -95,7 +95,7 @@ def _map_interval_to_frame_windows(
     selected = pairs[start_pos : end_pos + 1]
     frame_ids = [frame_idx for _, frame_idx in selected]
     if any(b - a != 1 for a, b in zip(frame_ids, frame_ids[1:])) and not split_frame_gaps:
-        raise ValueError(f"NIR frame-index gap inside {phase} interval")
+        raise ValueError(f"NIR AVI frame-index gap inside {phase} interval")
     chunks: list[list[int]] = [[]]
     for frame_idx in frame_ids:
         if chunks[-1] and frame_idx - chunks[-1][-1] != 1:
@@ -108,12 +108,12 @@ def _map_interval_to_frame_windows(
             start_unix_ms=(
                 start_ms
                 if offset == 0
-                else unix_by_frame[chunks[offset][0]]
+                else unix_by_avi_frame[chunks[offset][0]]
             ),
             end_unix_ms=(
                 end_ms
                 if offset == len(chunks) - 1
-                else unix_by_frame[chunks[offset][-1]] + 1
+                else unix_by_avi_frame[chunks[offset][-1]] + 1
             ),
             start_frame_idx=chunk[0],
             end_frame_idx=chunk[-1],
@@ -131,7 +131,7 @@ def _map_interval_to_frames(
     start_ms: int,
     end_ms: int,
     source: str,
-    unix_by_frame: dict[int, int],
+    unix_by_avi_frame: dict[int, int],
 ) -> PhaseWindow:
     """Strict single-window mapping retained for normal formal runs and tests."""
     windows = _map_interval_to_frame_windows(
@@ -140,10 +140,10 @@ def _map_interval_to_frames(
         start_ms,
         end_ms,
         source,
-        unix_by_frame,
+        unix_by_avi_frame,
     )
     if len(windows) != 1:
-        raise ValueError(f"NIR frame-index gap inside {phase} interval")
+        raise ValueError(f"NIR AVI frame-index gap inside {phase} interval")
     return windows[0]
 
 
@@ -240,7 +240,7 @@ def _block_intervals(
 
 def resolve_phase_windows(
     video: Path,
-    unix_by_frame: dict[int, int],
+    unix_by_avi_frame: dict[int, int],
     phases: Iterable[str],
     *,
     baseline_duration_sec: float = 180.0,
@@ -283,7 +283,7 @@ def resolve_phase_windows(
                     start_ms,
                     end_ms,
                     source,
-                    unix_by_frame,
+                    unix_by_avi_frame,
                     split_frame_gaps=True,
                 )
             )
@@ -295,7 +295,7 @@ def resolve_phase_windows(
                     start_ms,
                     end_ms,
                     source,
-                    unix_by_frame,
+                    unix_by_avi_frame,
                 )
             )
 

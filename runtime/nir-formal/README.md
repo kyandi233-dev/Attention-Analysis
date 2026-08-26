@@ -43,6 +43,10 @@ F:/Data
 
 这四个候选路径表示“两种逻辑目录 × 两种可能盘符”，并不表示存在四份正式数据。
 
+## 当前 timestamp mapping 语义
+
+NIR timestamp CSV 第一列是采集设备的 `capture_frame_idx`，不是 AVI 文件内部帧号。正式 runtime 将有效 timestamp 行按文件顺序映射为 sequential AVI `frame_idx`，同时保留原始 capture counter 作为 provenance。capture counter 跳号记录为 `capture_counter_gap`，只有 AVI 打不开或 AVI frame count 与有效 timestamp 行数不一致，才构成真实 AVI frame gap blocker。验证记录见 [`docs/020-nir/results/nir_timestamp_mapping_recovery_v1/`](../../docs/020-nir/results/nir_timestamp_mapping_recovery_v1/)。
+
 ## 环境安装
 
 新 NVIDIA/CUDA 机器从 [`INSTALL.md`](INSTALL.md) 开始。安装完成后，在本目录执行：
