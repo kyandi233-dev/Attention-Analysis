@@ -6,6 +6,8 @@ import os
 import queue
 import threading
 import time
+from collections import deque
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +21,7 @@ import face_formal_dryrun_directml_v02 as optimized
 import face_real_directml_pyfeat as core
 
 
-SCHEMA_VERSION = "rgb-face-formal-pyfeat-dml-v1.0"
+SCHEMA_VERSION = "rgb-face-formal-pyfeat-dml-v1.1"
 
 
 def _load_inputs(config_path: str, subject: str) -> tuple[Any, pd.DataFrame, Path, Path, Path]:
@@ -65,6 +67,123 @@ def _existing_complete(raw_path: Path, manifest_path: Path) -> dict[str, Any] | 
     return None
 
 
+def _postprocess_retina_batch(
+    batch_df: pd.DataFrame,
+    rgb_list: list[np.ndarray],
+    loc: np.ndarray,
+    conf: np.ndarray,
+    landm: np.ndarray,
+    priors: np.ndarray,
+    *,
+    face_threshold: float,
+    nms_threshold: float,
+    max_candidates: int,
+    max_faces_per_frame: int,
+) -> dict[str, Any]:
+    """CPU RetinaFace postprocess with final threshold applied before decode/NMS.
+
+    This is mathematically equivalent to applying the same final score threshold
+    after NMS: lower-scoring candidates cannot suppress a higher-scoring candidate
+    because greedy NMS processes boxes in descending score order.
+    """
+    started = time.perf_counter()
+    loc_arr = np.asarray(loc)
+    conf_arr = np.asarray(conf)
+    landm_arr = np.asarray(landm)
+    h, w = rgb_list[0].shape[:2]
+
+    no_face_rows: list[dict[str, Any]] = []
+    chips: list[np.ndarray] = []
+    metas: list[dict[str, Any]] = []
+    candidate_count = 0
+    nms_input_count = 0
+    kept_face_count = 0
+
+    for bi, row in enumerate(batch_df.itertuples(index=False)):
+        scores = conf_arr[bi, :, 1]
+        high_idx = np.flatnonzero(scores >= face_threshold)
+        candidate_count += int(len(high_idx))
+
+        if len(high_idx) == 0:
+            no_face_rows.append(
+                optimized._base_context(
+                    row,
+                    detected=False,
+                    face_rank=0,
+                    frame_h=h,
+                    frame_w=w,
+                )
+            )
+            continue
+
+        if len(high_idx) > max_candidates:
+            order = np.argsort(scores[high_idx])[::-1][:max_candidates]
+            high_idx = high_idx[order]
+
+        sc = scores[high_idx]
+        nms_input_count += int(len(sc))
+        selected_priors = priors[high_idx]
+        boxes = core._decode_boxes(
+            loc_arr[bi, high_idx, :][None, ...],
+            selected_priors,
+        )[0]
+        lms5 = core._decode_landmarks(
+            landm_arr[bi, high_idx, :][None, ...],
+            selected_priors,
+        )[0]
+        boxes *= np.array([w, h, w, h], dtype=np.float32)[None, :]
+        lms5 *= np.tile(np.array([w, h], dtype=np.float32), 5)[None, :]
+
+        keep = core._nms(boxes, sc, nms_threshold)
+        boxes, sc, lms5 = boxes[keep], sc[keep], lms5[keep]
+        if max_faces_per_frame > 0:
+            boxes = boxes[:max_faces_per_frame]
+            sc = sc[:max_faces_per_frame]
+            lms5 = lms5[:max_faces_per_frame]
+
+        if len(sc) == 0:
+            no_face_rows.append(
+                optimized._base_context(
+                    row,
+                    detected=False,
+                    face_rank=0,
+                    frame_h=h,
+                    frame_w=w,
+                )
+            )
+            continue
+
+        kept_face_count += int(len(sc))
+        for rank, (box, score, lmk5) in enumerate(zip(boxes, sc, lms5)):
+            chip, crop = core._square_reflect_crop(rgb_list[bi], box)
+            chips.append(chip)
+            metas.append(
+                {
+                    "base": optimized._base_context(
+                        row,
+                        detected=True,
+                        face_rank=rank,
+                        frame_h=h,
+                        frame_w=w,
+                    ),
+                    "score": float(score),
+                    "crop": crop,
+                    "rf_box": box.astype(np.float32),
+                    "rf_landmarks5": lmk5.astype(np.float32),
+                }
+            )
+
+    return {
+        "no_face_rows": no_face_rows,
+        "chips": chips,
+        "metas": metas,
+        "elapsed_sec": time.perf_counter() - started,
+        "high_score_candidates": candidate_count,
+        "nms_input_candidates": nms_input_count,
+        "faces_after_nms": kept_face_count,
+    }
+
+
 def run_formal(args: argparse.Namespace) -> dict[str, Any]:
     config, frames, source_video, frames_csv, prepare_manifest = _load_inputs(
         args.config, args.subject
@@ -97,10 +216,40 @@ def run_formal(args: argparse.Namespace) -> dict[str, Any]:
             raise FileNotFoundError(model)
 
     face_cfg = config.section("face")
-    retinaface_batch = int(args.retinaface_batch or face_cfg.get("retinaface_batch", 8))
-    multitask_batch = int(args.multitask_batch or face_cfg.get("multitask_batch", 16))
-    if retinaface_batch <= 0 or multitask_batch <= 0:
-        raise ValueError("Face batch sizes must be positive")
+    retinaface_batch = int(
+        args.retinaface_batch
+        if args.retinaface_batch is not None
+        else face_cfg.get("retinaface_batch", 16)
+    )
+    multitask_batch = int(
+        args.multitask_batch
+        if args.multitask_batch is not None
+        else face_cfg.get("multitask_batch", 32)
+    )
+    prefetch_batches = int(
+        args.prefetch_batches
+        if args.prefetch_batches is not None
+        else face_cfg.get("prefetch_batches", 3)
+    )
+    postprocess_inflight = int(
+        args.postprocess_inflight
+        if args.postprocess_inflight is not None
+        else face_cfg.get("postprocess_inflight", 2)
+    )
+    seek_threshold_frames = int(
+        args.seek_threshold_frames
+        if args.seek_threshold_frames is not None
+        else face_cfg.get("seek_threshold_frames", 120)
+    )
+    face_threshold = float(face_cfg.get("detection_threshold", 0.5))
+    nms_threshold = float(face_cfg.get("nms_threshold", 0.4))
+    max_candidates = int(face_cfg.get("max_candidates_before_nms", 5000))
+    max_faces_per_frame = int(face_cfg.get("max_faces_per_frame", 750))
+
+    if min(retinaface_batch, multitask_batch, prefetch_batches, postprocess_inflight) <= 0:
+        raise ValueError("Face batch/prefetch/postprocess values must be positive")
+    if not 0.0 <= face_threshold <= 1.0:
+        raise ValueError("face.detection_threshold must be in [0, 1]")
 
     rf_sess, mt_sess = core._session(rf_model), core._session(mt_model)
     rf_input_name = rf_sess.get_inputs()[0].name
@@ -118,6 +267,9 @@ def run_formal(args: argparse.Namespace) -> dict[str, Any]:
     }
     counters = {
         "retinaface_calls": 0,
+        "retinaface_high_score_candidates": 0,
+        "retinaface_nms_input_candidates": 0,
+        "retinaface_faces_after_nms": 0,
         "multitask_full_batch_calls": 0,
         "multitask_partial_batch_calls": 0,
         "faces_sent_to_multitask": 0,
@@ -152,86 +304,69 @@ def run_formal(args: argparse.Namespace) -> dict[str, Any]:
         del pending_chips[:n]
         del pending_meta[:n]
 
-    q: queue.Queue = queue.Queue(maxsize=max(1, int(args.prefetch_batches)))
+    def consume_postprocess(future: Future) -> None:
+        result = future.result()
+        stage["decode_nms_crop_cpu_sec"] += float(result["elapsed_sec"])
+        counters["retinaface_high_score_candidates"] += int(result["high_score_candidates"])
+        counters["retinaface_nms_input_candidates"] += int(result["nms_input_candidates"])
+        counters["retinaface_faces_after_nms"] += int(result["faces_after_nms"])
+        rows.extend(result["no_face_rows"])
+        pending_chips.extend(result["chips"])
+        pending_meta.extend(result["metas"])
+        while len(pending_chips) >= multitask_batch:
+            flush_multitask(multitask_batch)
+
+    q: queue.Queue = queue.Queue(maxsize=max(1, prefetch_batches))
     stop_event = threading.Event()
     reader = threading.Thread(
         target=optimized._reader_worker,
         args=(frames, source_video, retinaface_batch, q, stage, stop_event),
-        kwargs={"seek_threshold_frames": int(args.seek_threshold_frames)},
+        kwargs={"seek_threshold_frames": seek_threshold_frames},
         daemon=True,
     )
 
     wall_started = time.perf_counter()
     reader.start()
+    post_futures: deque[Future] = deque()
     try:
-        while True:
-            payload = q.get()
-            if payload is None:
-                break
-            if isinstance(payload, BaseException):
-                raise payload
-            batch_df, rgb_list, rf_in = payload
-            h, w = rgb_list[0].shape[:2]
-            if priors is None:
-                priors = core._generate_priors(h, w)
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="retina-post") as executor:
+            while True:
+                payload = q.get()
+                if payload is None:
+                    break
+                if isinstance(payload, BaseException):
+                    raise payload
+                batch_df, rgb_list, rf_in = payload
+                h, w = rgb_list[0].shape[:2]
+                if priors is None:
+                    priors = core._generate_priors(h, w)
 
-            t0 = time.perf_counter()
-            loc, conf, landm = rf_sess.run(None, {rf_input_name: rf_in})
-            stage["retinaface_dml_sec"] += time.perf_counter() - t0
-            counters["retinaface_calls"] += 1
+                t0 = time.perf_counter()
+                loc, conf, landm = rf_sess.run(None, {rf_input_name: rf_in})
+                stage["retinaface_dml_sec"] += time.perf_counter() - t0
+                counters["retinaface_calls"] += 1
 
-            t0 = time.perf_counter()
-            boxes_all = core._decode_boxes(np.asarray(loc), priors)
-            landmarks_all = core._decode_landmarks(np.asarray(landm), priors)
-            boxes_all *= np.array([w, h, w, h], dtype=np.float32)[None, None, :]
-            landmarks_all *= np.tile(np.array([w, h], dtype=np.float32), 5)[None, None, :]
-
-            for bi, row in enumerate(batch_df.itertuples(index=False)):
-                scores = np.asarray(conf)[bi, :, 1]
-                mask = scores > 0.02
-                boxes, sc, lms5 = boxes_all[bi, mask], scores[mask], landmarks_all[bi, mask]
-                if len(sc) > 5000:
-                    order = np.argsort(sc)[::-1][:5000]
-                    boxes, sc, lms5 = boxes[order], sc[order], lms5[order]
-                keep = core._nms(boxes, sc, 0.4)
-                boxes, sc, lms5 = boxes[keep], sc[keep], lms5[keep]
-                keep2 = sc >= 0.5
-                boxes, sc, lms5 = boxes[keep2][:750], sc[keep2][:750], lms5[keep2][:750]
-
-                if len(sc) == 0:
-                    rows.append(
-                        optimized._base_context(
-                            row,
-                            detected=False,
-                            face_rank=0,
-                            frame_h=h,
-                            frame_w=w,
-                        )
+                post_futures.append(
+                    executor.submit(
+                        _postprocess_retina_batch,
+                        batch_df,
+                        rgb_list,
+                        np.asarray(loc),
+                        np.asarray(conf),
+                        np.asarray(landm),
+                        priors,
+                        face_threshold=face_threshold,
+                        nms_threshold=nms_threshold,
+                        max_candidates=max_candidates,
+                        max_faces_per_frame=max_faces_per_frame,
                     )
-                    continue
+                )
 
-                for rank, (box, score, lmk5) in enumerate(zip(boxes, sc, lms5)):
-                    chip, crop = core._square_reflect_crop(rgb_list[bi], box)
-                    pending_chips.append(chip)
-                    pending_meta.append(
-                        {
-                            "base": optimized._base_context(
-                                row,
-                                detected=True,
-                                face_rank=rank,
-                                frame_h=h,
-                                frame_w=w,
-                            ),
-                            "score": float(score),
-                            "crop": crop,
-                            "rf_box": box.astype(np.float32),
-                            "rf_landmarks5": lmk5.astype(np.float32),
-                        }
-                    )
-            stage["decode_nms_crop_cpu_sec"] += time.perf_counter() - t0
+                if len(post_futures) >= postprocess_inflight:
+                    consume_postprocess(post_futures.popleft())
 
-            while len(pending_chips) >= multitask_batch:
-                flush_multitask(multitask_batch)
+            while post_futures:
+                consume_postprocess(post_futures.popleft())
     finally:
         stop_event.set()
         reader.join(timeout=10.0)
@@ -268,8 +403,11 @@ def run_formal(args: argparse.Namespace) -> dict[str, Any]:
         "detected_rows": int(detected.sum()),
         "retinaface_batch": retinaface_batch,
         "multitask_batch": multitask_batch,
-        "prefetch_batches": int(args.prefetch_batches),
-        "seek_threshold_frames": int(args.seek_threshold_frames),
+        "prefetch_batches": prefetch_batches,
+        "postprocess_inflight": postprocess_inflight,
+        "seek_threshold_frames": seek_threshold_frames,
+        "detection_threshold": face_threshold,
+        "nms_threshold": nms_threshold,
         "requested_inference_fps": float(face_cfg.get("inference_fps", 15.0)),
         "execution_provider": str(face_cfg.get("execution_provider", "DmlExecutionProvider")),
         "config_path": str(config.path),
@@ -293,8 +431,20 @@ def run_formal(args: argparse.Namespace) -> dict[str, Any]:
         "raw_output": str(out_path),
         "notes": [
             "Directly decodes timestamp-selected frames from the original AVI; no JPEG round-trip.",
-            "Uses the already validated first-tier optimization: reader prefetch, RetinaFace B8 and pooled multitask B16.",
-            "All supported scientific-core outputs and all detected faces are retained before primary-face selection.",
+            (
+                f"Optimized batches: RetinaFace B{retinaface_batch}, "
+                f"pooled multitask B{multitask_batch}."
+            ),
+            (
+                "The frozen final RetinaFace score threshold is applied before bbox/landmark "
+                "decode and NMS; this removes low-score CPU work without changing which "
+                "higher-score boxes survive greedy NMS."
+            ),
+            (
+                "RetinaFace DirectML inference overlaps with one CPU decode/NMS/crop "
+                "postprocess worker; timings are overlapping stage totals, not additive wall time."
+            ),
+            "All supported scientific-core outputs and all detected faces are retained before downstream primary-face selection.",
             "Temporal gaps remain represented in the frame manifest/QC columns and are not used as a subject exclusion rule here.",
         ],
     }
@@ -314,14 +464,13 @@ def main() -> None:
     )
     parser.add_argument("--retinaface-batch", type=int)
     parser.add_argument("--multitask-batch", type=int)
-    parser.add_argument("--prefetch-batches", type=int, default=2)
-    parser.add_argument("--seek-threshold-frames", type=int, default=120)
+    parser.add_argument("--prefetch-batches", type=int)
+    parser.add_argument("--postprocess-inflight", type=int)
+    parser.add_argument("--seek-threshold-frames", type=int)
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
     if not args.model_dir:
         parser.error("--model-dir is required unless ATTENTION_FACE_MODEL_DIR is set")
-    if args.prefetch_batches <= 0:
-        parser.error("--prefetch-batches must be positive")
     run_formal(args)
 
 
