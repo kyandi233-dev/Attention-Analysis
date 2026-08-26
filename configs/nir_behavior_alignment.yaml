@@ -8,10 +8,10 @@ pipeline:
 paths:
   behavior_config: "configs/behavior_formal.yaml"
   nir_source_roots:
-    - "D:/_AttentionData/Beijing-NIR/amd-directml"
-    - "runtime/nir-formal/outputs/amd-directml/formal"
-    - "outputs/amd-directml/formal"
-  output_root: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v1"
+    - "D:/Project/厚粲杯/11_数据/01_Attention-Analysis_nvidia-cuda_formal_NIR"
+    - "runtime/nir-formal/outputs/nvidia-cuda/formal"
+    - "outputs/nvidia-cuda/formal"
+  output_root: "D:/Project/厚粲杯/11_数据/03_Attention-Analysis_nvidia-cuda_NIR-Behavior"
 
 subjects:
   # Prototype safety gate. Replace with [] only after sub-031 schema/QC is accepted.
@@ -24,7 +24,6 @@ behavior_qc:
 
 windows:
   trial:
-    # Event-adjacent windows: useful for timing/PLR separation, not identical to tonic attention.
     - name: "pre_200ms"
       family: "event"
       start_offset_ms: -200
@@ -37,8 +36,6 @@ windows:
       family: "event"
       start_offset_ms: 200
       end_offset_ms: 1150
-
-    # State/prediction candidates. All are retained now; primary inferential windows are frozen later.
     - name: "pre_1s"
       family: "state"
       start_offset_ms: -1000
@@ -87,13 +84,9 @@ windows:
       end_offset_ms: 0
 
 diagnostics:
-  # Plotting only. If consecutive one-second summaries are separated by more
-  # than this interval, break the line rather than visually interpolating.
   max_line_gap_sec: 2.5
 
 visual_covariates:
-  # Phase 1 keeps exact stimulus_name/size and previous-stimulus identity in trial_level.
-  # Rendered luminance/contrast will be joined later from a versioned 27-condition table.
   properties_csv: null
 
 analysis_policy:
