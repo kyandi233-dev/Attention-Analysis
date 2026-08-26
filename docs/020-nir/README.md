@@ -2,45 +2,50 @@
 
 ## 2026-08-27 当前 NIR 状态
 
-正式 NIR production 推理与 full-class extension 已完成；当前工作不再是重新运行 YOLO / RITnet，而是基于 frozen production 构建可复现的正式下游分析管线。
+NIR 的**工程管线结构**已经推进到下游分析层，但用户已确认：**当前得到的 NIR/PIR 数值本身是错误的，不能用于科学解释。** 因此现在停止继续 44 人 `11_analysis_tables` 批量构表，也禁止进入 `20_formal_statistics`。
 
-当前主线固定为：
+当前实际状态：
 
 ```text
-runtime/nir-formal/ frozen production
+runtime/nir-formal / current extracted NIR
         ↓
-10_analysis_ready
+10_analysis_ready                 # 工程结构已物化，但当前 PIR 数值不可作科学解释
         ↓
-11_analysis_tables
+11_analysis_tables                # 仅已有部分 completed subject，用于验证构表接口
         ↓
-20_formal_statistics（下一阶段）
+12_pipeline_validation            # 当前允许：假定 PIR 正确，调通分析/模型/绘图代码
+        ↓
+20_formal_statistics              # 当前禁止；待 NIR 数值修正后重跑上游再进入
 ```
 
-当前 AMD 本地 44 人仍是 exploratory/development cohort；未来约 116 人北京正式 cohort 应复用同一冻结代码与方法，但写入独立 snapshot，不能把 44 人效应直接作为最终正式样本结果。
+当前 AMD 44 人仍是 exploratory/development cohort；当前错误 PIR 的任何方向、差异、相关、p 值都不得作为 exploratory scientific result。
 
 ## 当前最重要的方法入口
 
 | 文档 | 作用 | 当前地位 |
 |---|---|---|
 | [022-2026-08-25-NIR正式分析设计与待验证项.md](022-2026-08-25-NIR正式分析设计与待验证项.md) | 总体科学问题、Behavior/Probe/time-on-task/统计路线 | 总体科学设计 |
-| [212-2026-08-27-NIR数据清洗逻辑与正式分析纳入规则.md](212-2026-08-27-NIR数据清洗逻辑与正式分析纳入规则.md) | primary/strict validity、左右眼、baseline、coverage 的现行规则 | **逐帧清洗上位规则** |
-| [213-2026-08-27-NIR-analysis-ready数据契约与物化规范.md](213-2026-08-27-NIR-analysis-ready数据契约与物化规范.md) | frozen production → `10_analysis_ready` | **正式基础数据层契约** |
-| [214-2026-08-27-NIR正式下游分析表数据契约.md](214-2026-08-27-NIR正式下游分析表数据契约.md) | `10_analysis_ready` → trial / probe / time-on-task 分析表 | **正式下游构表契约** |
-| [215-2026-08-27-NIR正式下游分析管线运行手册.md](215-2026-08-27-NIR正式下游分析管线运行手册.md) | 新终端、测试、representative、44 人运行与验收命令 | **当前运行手册** |
-| [027-44人全量分析数据边界与资料清单.md](027-44人全量分析数据边界与资料清单.md) | 当前 44 人数据边界 | 当前 exploratory 数据边界 |
-| [028-2026-08-26-NIR-cohort44分析实施计划与进度.md](028-2026-08-26-NIR-cohort44分析实施计划与进度.md) | cohort 分析阶段与进度 | 当前进度记录 |
+| [212-2026-08-27-NIR数据清洗逻辑与正式分析纳入规则.md](212-2026-08-27-NIR数据清洗逻辑与正式分析纳入规则.md) | primary/strict validity、左右眼、baseline、coverage 的现行规则 | 清洗设计基线；待正确 PIR 后复用/复核 |
+| [213-2026-08-27-NIR-analysis-ready数据契约与物化规范.md](213-2026-08-27-NIR-analysis-ready数据契约与物化规范.md) | production → `10_analysis_ready` | 数据层工程契约 |
+| [214-2026-08-27-NIR正式下游分析表数据契约.md](214-2026-08-27-NIR正式下游分析表数据契约.md) | `10_analysis_ready` → trial / probe / time-on-task | 下游构表工程契约 |
+| [215-2026-08-27-NIR正式下游分析管线运行手册.md](215-2026-08-27-NIR正式下游分析管线运行手册.md) | 新终端、测试、构表与续跑规则 | 下游运行手册 |
+| [217-2026-08-27-NIR错误值条件下下游分析管线验证方案.md](217-2026-08-27-NIR错误值条件下下游分析管线验证方案.md) | 利用当前少量 completed subject 假定 PIR 正确，验证分析/模型/专业代码绘图 | **当前实际工作入口** |
+| [027-44人全量分析数据边界与资料清单.md](027-44人全量分析数据边界与资料清单.md) | 当前 44 人数据边界 | exploratory 数据边界 |
+| [028-2026-08-26-NIR-cohort44分析实施计划与进度.md](028-2026-08-26-NIR-cohort44分析实施计划与进度.md) | cohort 分析阶段与进度 | 进度记录 |
 
-## 当前正式代码入口
-
-### 1. Production 推理
+## 1. Production / NIR 提取层
 
 ```text
 runtime/nir-formal/
 ```
 
-已经存在的 production 不因下游分析需要而重跑。
+当前问题不是下游统计脚本，而是 NIR/PIR 数值本身已被确认错误。后续必须先纠正真正的 NIR 数值来源/计算，再重新生成可信的 downstream snapshot。
 
-### 2. Analysis-ready 物化
+在错误来源定位清楚前，不因为下游需要而继续批量跑更多 subject。
+
+## 2. `10_analysis_ready`
+
+入口：
 
 ```text
 scripts/nir_materialize_analysis_ready.py
@@ -48,73 +53,117 @@ configs/nir_analysis_ready.yaml
 src/attention_pipeline/nir_analysis_ready/
 ```
 
-当前 44 人已完成 `10_analysis_ready` 物化和验收。production/strict 有效率约 74.2%，primary 有效率约 87.2%，且 `strict_not_primary_n = 0`。
+Issue #18 已完成的是**数据层工程验收**：逐帧 validity、subject×eye baseline、左右眼保留、binocular source mode、provenance、时间键等逻辑能够运行并生成完整 analysis-ready 结构。
 
-### 3. 正式下游分析表
+但由于当前 PIR 数值本身错误，该 snapshot 不能作为正式科学分析输入。之前得到的 production/primary/strict 有效率等数字仅保留为这一次错误值 snapshot 的工程记录，不作为科学质量结论。
 
-统一入口：
+## 3. `11_analysis_tables`
+
+正式构表入口：
 
 ```text
 scripts/nir_formal_pipeline.py
-```
-
-底层构表入口：
-
-```text
 scripts/nir_build_analysis_tables.py
 configs/nir_formal_analysis.yaml
 src/attention_pipeline/nir_formal_analysis/
 ```
 
-当前输出目标：
+该层负责：
 
 ```text
-D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v2/cohort-44-exploratory/
-├── 10_analysis_ready/
-├── 11_analysis_tables/
-└── 20_formal_statistics/   # 后续
+subject-level continuous PIR
+→ trial_level
+→ trial_pir_windows
+→ probe_pir_windows
+→ time_on_task_1s
+→ trial/probe coverage
 ```
 
-`11_analysis_tables` 只读 `10_analysis_ready` + formal Behavior，生成：
+当前 `sub-031` representative 和部分 subject 已证明构表逻辑可运行；批量在用户要求下主动停止，不是程序失败。已生成部分结果只用于管线验证，不解释为科学结果。
+
+再次运行时 completion identity 一致的 subject 会自动 skip；中断/续跑机制会记录 cohort manifest。但在 PIR 修正前，**不要继续剩余 subject**。
+
+## 4. 当前允许：`12_pipeline_validation`
+
+入口：
 
 ```text
-trial_level
-trial_pir_windows
-probe_pir_windows
-time_on_task_1s
-trial_window_coverage
-probe_window_coverage
-manifest / summary / completion
+scripts/nir_pipeline_validation.py
+configs/nir_pipeline_validation.yaml
+src/attention_pipeline/nir_pipeline_validation/
 ```
 
-不会直接读取 production NIR，不会重新运行 YOLO / RITnet，也不会在这一层运行显著性模型。
+它只发现已有有效 `11_analysis_tables` completion 的 subject，并假定 PIR 数值正确来验证未来正式分析代码。
 
-## 当前运行最短路径
+当前可以做：
+
+- Behavior-only subject×Block 描述；
+- Block1→Block2 配对数据结构；
+- time-on-task 1 s → 30 s 轨迹；
+- trial outcome × pre-trial PIR；
+- Go RT / commission / omission 模型接口；
+- Probe 10/20/30/60 s 数据结构；
+- within-person / between-person PIR decomposition；
+- LMM / GEE smoke test；
+- coverage / missingness QC；
+- 专业 PNG/PDF 代码绘图。
+
+输出：
+
+```text
+D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v2/cohort-44-exploratory/12_pipeline_validation/
+├── tables/
+├── figures/
+└── validation_summary.json
+```
+
+图形由 `matplotlib` 代码直接生成，不使用图片生成模型，包括：
+
+```text
+fig00_pipeline_validation_schematic
+fig01_time_on_task_trajectory
+fig02_block_paired_pir
+fig03_trial_outcome_pir_pre_5s
+fig04_probe_vigilance_windows
+fig05_coverage_heatmap_pre_5s
+fig06_model_smoke_forest
+```
+
+所有图自动标记：
+
+```text
+PIPELINE VALIDATION ONLY — CURRENT NIR VALUES KNOWN INVALID
+```
+
+## 5. 当前运行最短路径
+
+只运行 pipeline validation：
 
 ```powershell
-cd "D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-amd-DirectML"
-
 git status --short --branch
-git fetch origin --prune
-git switch analysis/multimodal-integration
 git pull --ff-only
 
-conda activate "D:\CondaEnvs\attention-behavior"
+conda activate "D:\CondaEnvs\nir-amd"
 python -m pip install -e .
 
 python -m pytest `
-  tests/test_nir_analysis_ready.py `
-  tests/test_nir_formal_analysis.py `
-  tests/test_nir_behavior_alignment.py -q
+  tests/test_nir_pipeline_validation.py `
+  tests/test_nir_formal_analysis.py -q
 
+python scripts/nir_pipeline_validation.py
+```
+
+不要执行：
+
+```text
 python scripts/nir_formal_pipeline.py --stage tables
 ```
 
-第一次验证新版本必须先按 [215](215-2026-08-27-NIR正式下游分析管线运行手册.md) 用 `sub-031` representative 验收，再扩到 44 人。
+除非之后明确要求继续构表。
 
-## PIR 当前正式定义与处理边界
+## 6. PIR 方法设计仍如何保留
 
-PIR（pupil-to-iris diameter ratio，瞳孔/虹膜直径比）继续使用直径比而非像素面积比：
+PIR 的计划定义仍为直径比：
 
 ```text
 D_pupil = sqrt(pupil_axis_a × pupil_axis_b)
@@ -122,29 +171,43 @@ D_iris  = sqrt(iris_axis_a × iris_axis_b)
 PIR     = D_pupil / D_iris
 ```
 
-primary frame validity 以 212 为准：pupil/iris outer 椭圆拟合有效、pupil center 位于 iris outer、`D_iris > D_pupil`、PIR finite。旧 whole-mask edge gate 不再是主分析 hard exclusion。
+primary validity、subject×eye centering、binocular fallback 等方法决策继续保留，后续正确数值出来时应重新审计并复用相同数据契约，而不是从错误 snapshot 直接继续统计。
 
-左右眼先分别做 subject×eye 跨 Block1+Block2 中位数中心化，再构造 binocular PIR；单眼有效时允许 single-eye fallback，并永久保留 source mode。
+## 7. Behavior / Probe / coverage
 
-## Behavior / Probe / coverage
+FocusWave v3.1.3 Behavior 的 trial/probe 时间轴和已验证对齐逻辑可以继续保留。即使当前 PIR 数值错误，以下工程检查仍有价值：
 
-正式 Behavior 仍为 FocusWave v3.1.3 BB。trial/probe 的绝对时间轴、Block 起点重建、边界截断与内部缺失分离等逻辑继续复用已经验证的 schema-v2 原型。
+- trial/probe key 是否正确；
+- Block 边界截断是否正确；
+- internal coverage 是否正确；
+- max temporal gap 是否合理；
+- join 是否重复或遗漏；
+- Behavior-only 变量是否正常。
 
-但 [024-2026-08-26-NIR行为对齐原型与数据契约.md](024-2026-08-26-NIR行为对齐原型与数据契约.md) 与 `scripts/nir_behavior_alignment.py` 现在属于**历史 prototype / provenance**：它们直接读取 production、使用旧 validity 且不融合左右眼，因此不再作为当前正式主分析入口。
+旧 [024-2026-08-26-NIR行为对齐原型与数据契约.md](024-2026-08-26-NIR行为对齐原型与数据契约.md) / `scripts/nir_behavior_alignment.py` 继续只作历史 prototype / provenance，不恢复成正式入口。
 
-coverage 只表示具体 trial/probe/time window 是否具有足够时间代表性，不重新成为 frame-level 清洗规则。当前构表阶段不根据结果冻结 coverage threshold，也不允许根据显著性选择窗口。
+## 8. 当前严格禁止的解释
 
-## OAR / blink 边界
+当前不要解释：
 
-[021-眨眼检测边界与RITnet派生开合度.md](021-眨眼检测边界与RITnet派生开合度.md) 继续记录 OAR（ocular aperture ratio，眼球可见开合度比率）、blink/PERCLOS 的解释边界。
+- PIR 随 time-on-task 上升或下降；
+- Block1 与 Block2 PIR 谁更高；
+- PIR 是否预测 RT / commission / omission；
+- PIR 是否预测 probe vigilance；
+- 哪个 pre-trial / pre-probe window “效果最好”；
+- mixed model / GEE 的 PIR p 值或置信区间。
 
-当前 `10_analysis_ready` 正式主契约只冻结 PIR，因此 `11_analysis_tables` v1 暂只构造 PIR。后续若正式纳入 OAR，应先把 OAR 作为只读 passthrough 字段加入 analysis-ready schema，再由同一构表层读取；正式统计脚本不得绕过 `10_analysis_ready` 临时直读 production。
+这些输出现在只回答一个问题：**未来正确 NIR 数据进入后，这套分析管线能否无缝运行并生成可用于论文/报告的结构化结果和专业图形。**
 
-## 其他仍有效资料
+## 9. OAR / blink 与其他资料
 
-- [025-2026-08-26-SART刺激视觉协变量重建.md](025-2026-08-26-SART刺激视觉协变量重建.md)：27 个正式 SART 画面与视觉协变量。
-- [029-2026-08-26-PIR有效性与usable筛选定义.md](029-2026-08-26-PIR有效性与usable筛选定义.md)：production `fullclass_normalization_valid` 的历史真实定义；不再等于 primary 纳入规则。
-- [210-2026-08-26-PIR六条gate失败原因QC结果.md](210-2026-08-26-PIR六条gate失败原因QC结果.md)：旧 strict gate QC。
-- [211-2026-08-26-左右眼PIR处理与标准化冻结决策.md](211-2026-08-26-左右眼PIR处理与标准化冻结决策.md)：左右眼结构与标准化验证；若与 212 的基础层定义冲突，以 212 为准。
+[021-眨眼检测边界与RITnet派生开合度.md](021-眨眼检测边界与RITnet派生开合度.md) 继续记录 OAR、blink/PERCLOS 的解释边界。
 
-更早的 08-13、08-16、08-17、08-21、08-22 文档和 `docs/工作记录/` 保留完整历史 provenance，不追溯改写为当前状态。
+其他仍有效资料：
+
+- [025-2026-08-26-SART刺激视觉协变量重建.md](025-2026-08-26-SART刺激视觉协变量重建.md)：正式 SART 视觉协变量；
+- [029-2026-08-26-PIR有效性与usable筛选定义.md](029-2026-08-26-PIR有效性与usable筛选定义.md)：历史 production gate 定义；
+- [210-2026-08-26-PIR六条gate失败原因QC结果.md](210-2026-08-26-PIR六条gate失败原因QC结果.md)：历史 strict gate QC；
+- [211-2026-08-26-左右眼PIR处理与标准化冻结决策.md](211-2026-08-26-左右眼PIR处理与标准化冻结决策.md)：左右眼与标准化设计依据。
+
+更早日期文档和 `docs/工作记录/` 继续保留历史 provenance，不追溯改写。
