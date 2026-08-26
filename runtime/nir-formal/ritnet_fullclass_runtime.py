@@ -1,8 +1,11 @@
-"""Fast RITnet full-class DirectML adapter for post-hoc ocular extension.
+"""Fast RITnet full-class DirectML adapter for post-hoc ocular extensions.
 
-Production mode requests only the hard four-class label output. Validation mode
-can additionally request the pupil-probability output to reproduce the frozen
-source pupil result. RITnet remains FP32, 640x400, fixed batch=16.
+The runtime keeps the frozen project ONNX interface: native 640x400 uint8 hard
+labels plus optional class-3 pupil probability. v1.2 may request labels only;
+v2-native640 requests both so probability summaries can be checkpointed with
+native evidence. Neither interface should be described as an upstream RITnet
+CSV variable: the network/weights are upstream, while these ONNX outputs are
+project-added deterministic post-network nodes.
 """
 from __future__ import annotations
 
@@ -12,6 +15,29 @@ from pathlib import Path
 import numpy as np
 
 from ritnet_runtime import RitnetRuntime
+
+
+PREPROCESSING_VERSION = "ritnet-upstream-preprocess-plus-project-roi-resize-v1"
+PREPROCESSING_SPEC = {
+    "grayscale": {
+        "operation": "eye ROI converted to grayscale",
+        "provenance": "project ROI adapter; upstream RITnet test data are grayscale",
+    },
+    "resize": {
+        "interpolation": "cv2.INTER_LINEAR",
+        "provenance": "project ROI adapter",
+    },
+    "gamma": {"factor": 0.8, "provenance": "upstream RITnet required preprocessing"},
+    "clahe": {
+        "clip_limit": 1.5,
+        "tile_grid_size": [8, 8],
+        "provenance": "upstream RITnet required preprocessing",
+    },
+    "normalization": {
+        "formula": "(x/255 - 0.5) / 0.5",
+        "provenance": "equivalent to upstream Normalize([0.5],[0.5])",
+    },
+}
 
 
 class RitnetFullClassRuntime:
@@ -43,6 +69,14 @@ class RitnetFullClassRuntime:
         self.weights = Path(weights)
         self.label_output_name = self.base.output_names[0]
         self.pupil_probability_output_name = self.base.output_names[1]
+        self.preprocessing_version = PREPROCESSING_VERSION
+        self.preprocessing_spec = {
+            **PREPROCESSING_SPEC,
+            "resize": {
+                **PREPROCESSING_SPEC["resize"],
+                "size": list(self.input_size),
+            },
+        }
 
     def prepare_batch(
         self,
@@ -83,7 +117,7 @@ class RitnetFullClassRuntime:
         *,
         include_pupil_probability: bool = False,
     ) -> tuple[np.ndarray, np.ndarray | None, dict[str, float | int | str]]:
-        """Run one prepared fixed-b16 tensor; production requests labels only."""
+        """Run one prepared fixed-b16 tensor; optionally return class-3 probability."""
         output_names = (
             [self.label_output_name, self.pupil_probability_output_name]
             if include_pupil_probability
@@ -120,7 +154,7 @@ class RitnetFullClassRuntime:
         *,
         include_pupil_probability: bool = False,
     ) -> tuple[np.ndarray, np.ndarray | None, dict[str, float | int | str]]:
-        """Compatibility wrapper for benchmarks/tests."""
+        """Compatibility wrapper for benchmarks/tests and native evidence production."""
         total_started = time.perf_counter()
         tensor, valid, prep = self.prepare_batch(roi_grays)
         labels, probs, gpu = self.infer_prepared(
