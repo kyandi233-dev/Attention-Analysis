@@ -66,6 +66,8 @@ rgb_formal_validate.py
 sub-XXX_manifest.json
 ```
 
+当前默认**不采用 shared single-decode**。AMD 侧已经实测过把 Motion/Pose/Face 绑定到单一视频生产者可能降低整体墙钟吞吐，因此 NVIDIA 在没有 RTX 5070 反向证据前继续保留三条独立 reader 的并行度。
+
 正式入口：
 
 ```text
@@ -115,15 +117,20 @@ fex = detector.detect(
 )
 ```
 
-CUDA native Detectorv2 只使用一个端到端 batch：
+这里不能照抄 AMD 的执行器设计。AMD DirectML 当前会分别调 RetinaFace batch 和 multitask batch；NVIDIA native Detectorv2 只有**一个端到端 CUDA batch**。
+
+当前 NVIDIA 配置：
 
 ```yaml
 face:
   native_cuda_batch: 16
   native_cuda_prefetch_batches: 2
+  native_cuda_num_workers: 0
+  native_cuda_pin_memory: false
+  native_cuda_batch_candidates: [16, 32, 64]
 ```
 
-不要把 AMD DirectML 的 RetinaFace batch / multitask batch 两套参数照搬成 NVIDIA 正式参数。RTX 5070 最优 batch 需要实机 benchmark。
+AMD 当前 B32/B64 只是两个 ONNX 模型各自的 batch，不代表 NVIDIA 也应该直接设成 32/64。RTX 5070 要通过 `-FaceBatch 16/32/64` 实测吞吐和峰值显存后再冻结正式值。
 
 ## Face raw 保留
 
@@ -203,19 +210,19 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_rgb_formal_subject.ps1 `
   -CudaDevice cuda
 ```
 
-指定 Face native CUDA batch：
+指定 native CUDA batch：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\run_rgb_formal_subject.ps1 `
   -Subject sub-130 `
   -CudaDevice cuda `
-  -FaceBatch 16
+  -FaceBatch 32
 ```
 
 完整 NVIDIA 运行路线见 [`046-NVIDIA-CUDA-RGB运行路线.md`](046-NVIDIA-CUDA-RGB运行路线.md)。
 
 ## 当前执行边界
 
-`run_rgb_formal_cohort.ps1` 已经实现 resume/skip/status，但 **在 sub-130 full-span raw、CPU↔CUDA representative parity、schema test 和 CUDA throughput/memory Gate 完成之前，不启动正式全 cohort**。
+`run_rgb_formal_cohort.ps1` 已实现 resume/skip/status，但 **在 sub-130 full-span raw、CPU↔CUDA representative parity、schema test 和 CUDA throughput/memory Gate 完成之前，不启动正式全 cohort**。
 
 临时分支资产的吸收结果见 `RGB_TEMP_BRANCH_ABSORPTION_RESULT_20260826.md`。
