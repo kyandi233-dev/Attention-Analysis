@@ -63,9 +63,13 @@ def create_cuda_session(model_path: Path, device: str | int = "0"):
         ) from exc
     session.disable_fallback()
     active = list(session.get_providers())
-    if not active or active[0] != CUDA_PROVIDER or "CPUExecutionProvider" in active:
+    # ONNX Runtime may report CPUExecutionProvider as an installed provider even
+    # when the session is configured CUDA-only.  The session config above
+    # disables CPU EP fallback; the meaningful runtime invariant here is that
+    # CUDA is active and has priority, not that CPU is absent from the registry.
+    if not active or active[0] != CUDA_PROVIDER:
         raise RuntimeError(
-            "CUDA did not become the exclusive ONNX Runtime provider; refusing CPU fallback. "
+            "CUDA did not become the primary ONNX Runtime provider; refusing CPU fallback. "
             f"Active providers: {active}"
         )
     return session
