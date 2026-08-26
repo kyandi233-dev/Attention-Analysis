@@ -4,6 +4,8 @@ param(
 
     [string]$FaceModelDir = $env:ATTENTION_FACE_MODEL_DIR,
 
+    [switch]$SharedDecode,
+
     [switch]$Force
 )
 
@@ -126,108 +128,124 @@ function Start-RawStage {
     }
 }
 
-# Step 1 is quick and sequential because Face raw needs the timestamp-driven
-# 15 Hz frame manifest. Motion and Pose do not depend on it, but keeping this
-# preparation first makes the subject time span explicit before raw extraction.
 Invoke-Checked "1/3 Prepare formal Face frame manifest (15 Hz, baseline start -> Block2 end)" `
     $RgbPython `
     @("scripts/face_formal_prepare.py", "--config", $Config, "--subject", $Subject)
 
-Write-Host "`n=== 2/3 Parallel raw extraction: Motion + Pose + Py-Feat Face ==="
-Write-Host "Motion: full-fps OpenCV raw"
-Write-Host "Pose:   10 Hz MediaPipe landmark raw"
-Write-Host "Face:   15 Hz Py-Feat DirectML raw (RetinaFace B8, multitask B16)"
-Write-Host "Derived tracking / eyelid / Pose features are intentionally deferred."
-Write-Host "Logs: $LogDir"
+if ($SharedDecode) {
+    Write-Host "`n=== 2/3 Shared single-decode raw extraction ==="
+    Write-Host "AVI decode: one sequential OpenCV reader"
+    Write-Host "Motion: full-fps in shared reader"
+    Write-Host "Pose:   10 Hz MediaPipe worker thread"
+    Write-Host "Face:   15 Hz lossless raw-BGR pipe -> DirectML worker"
+    Write-Host "Face defaults: RetinaFace B16, multitask B32, early 0.5 filter, overlapped CPU postprocess"
+    Write-Host "This mode is experimental until representative parity/speed validation is complete."
 
-$motionArgs = @(
-    "scripts/rgb_formal_motion_pose.py", "--config", $Config,
-    "--subject", $Subject, "--stage", "motion"
-) + $ForceArg
-$poseArgs = @(
-    "scripts/rgb_formal_motion_pose.py", "--config", $Config,
-    "--subject", $Subject, "--stage", "pose"
-) + $ForceArg
-$faceArgs = @(
-    "scripts/face_formal_directml.py", "--config", $Config,
-    "--subject", $Subject, "--model-dir", $FaceModelDir
-) + $ForceArg
+    $sharedArgs = @(
+        "scripts/rgb_formal_shared_decode.py", "--config", $Config,
+        "--subject", $Subject,
+        "--face-python", $FacePython,
+        "--model-dir", $FaceModelDir
+    ) + $ForceArg
 
-$stages = @()
-if (-not $Force -and (Test-RawStageComplete "motion")) {
-    Write-Host "[resume] motion=skip_complete"
+    Invoke-Checked "2/3 Shared single-decode Motion + Pose + Py-Feat Face" `
+        $RgbPython `
+        $sharedArgs
 }
 else {
-    $stages += Start-RawStage "motion" $RgbPython $motionArgs
-}
+    Write-Host "`n=== 2/3 Parallel raw extraction: Motion + Pose + Py-Feat Face ==="
+    Write-Host "Motion: full-fps OpenCV raw"
+    Write-Host "Pose:   10 Hz MediaPipe landmark raw"
+    Write-Host "Face:   15 Hz Py-Feat DirectML raw (RetinaFace B16, multitask B32)"
+    Write-Host "Face optimizations: early 0.5 RetinaFace filter + overlapped CPU postprocess"
+    Write-Host "Derived tracking / eyelid / Pose features are intentionally deferred."
+    Write-Host "Logs: $LogDir"
 
-if (-not $Force -and (Test-RawStageComplete "pose")) {
-    Write-Host "[resume] pose=skip_complete"
-}
-else {
-    $stages += Start-RawStage "pose" $RgbPython $poseArgs
-}
+    $motionArgs = @(
+        "scripts/rgb_formal_motion_pose.py", "--config", $Config,
+        "--subject", $Subject, "--stage", "motion"
+    ) + $ForceArg
+    $poseArgs = @(
+        "scripts/rgb_formal_motion_pose.py", "--config", $Config,
+        "--subject", $Subject, "--stage", "pose"
+    ) + $ForceArg
+    $faceArgs = @(
+        "scripts/face_formal_directml.py", "--config", $Config,
+        "--subject", $Subject, "--model-dir", $FaceModelDir
+    ) + $ForceArg
 
-if (-not $Force -and (Test-RawStageComplete "face")) {
-    Write-Host "[resume] face=skip_complete"
-}
-else {
-    $stages += Start-RawStage "face" $FacePython $faceArgs
-}
+    $stages = @()
+    if (-not $Force -and (Test-RawStageComplete "motion")) {
+        Write-Host "[resume] motion=skip_complete"
+    }
+    else {
+        $stages += Start-RawStage "motion" $RgbPython $motionArgs
+    }
 
-if ($stages.Count -gt 0) {
-    $parallelStarted = Get-Date
-    while ($true) {
-        $running = @()
-        $elapsed = (Get-Date) - $parallelStarted
-        $states = @()
+    if (-not $Force -and (Test-RawStageComplete "pose")) {
+        Write-Host "[resume] pose=skip_complete"
+    }
+    else {
+        $stages += Start-RawStage "pose" $RgbPython $poseArgs
+    }
+
+    if (-not $Force -and (Test-RawStageComplete "face")) {
+        Write-Host "[resume] face=skip_complete"
+    }
+    else {
+        $stages += Start-RawStage "face" $FacePython $faceArgs
+    }
+
+    if ($stages.Count -gt 0) {
+        $parallelStarted = Get-Date
+        while ($true) {
+            $running = @()
+            $elapsed = (Get-Date) - $parallelStarted
+            $states = @()
+            foreach ($stage in $stages) {
+                $stage.Process.Refresh()
+                if ($stage.Process.HasExited) {
+                    $states += "$($stage.Name)=finished"
+                }
+                else {
+                    $running += $stage
+                    $states += "$($stage.Name)=running"
+                }
+            }
+            Write-Host ("[parallel {0:hh\:mm\:ss}] {1}" -f $elapsed, ($states -join " | "))
+            if ($running.Count -eq 0) { break }
+            Start-Sleep -Seconds 15
+        }
+
+        $failed = @()
         foreach ($stage in $stages) {
+            $stage.Process.WaitForExit()
             $stage.Process.Refresh()
-            if ($stage.Process.HasExited) {
-                $states += "$($stage.Name)=finished"
+
+            if (Test-RawStageComplete $stage.Name) {
+                Write-Host "[parallel] $($stage.Name)=complete"
+                continue
             }
-            else {
-                $running += $stage
-                $states += "$($stage.Name)=running"
+
+            $exitCode = $stage.Process.ExitCode
+            $failed += $stage.Name
+            Write-Warning "$($stage.Name) incomplete (process exit code: $exitCode)"
+            if (Test-Path $stage.StdErr) {
+                Write-Host "--- $($stage.Name) stderr tail ---"
+                Get-Content $stage.StdErr -Tail 40
+            }
+            if (Test-Path $stage.StdOut) {
+                Write-Host "--- $($stage.Name) stdout tail ---"
+                Get-Content $stage.StdOut -Tail 20
             }
         }
-        Write-Host ("[parallel {0:hh\:mm\:ss}] {1}" -f $elapsed, ($states -join " | "))
-        if ($running.Count -eq 0) { break }
-        Start-Sleep -Seconds 15
-    }
-
-    $failed = @()
-    foreach ($stage in $stages) {
-        $stage.Process.WaitForExit()
-        $stage.Process.Refresh()
-
-        # The formal raw file + a manifest explicitly marked complete are the
-        # authoritative success signal. Windows PowerShell can occasionally leave
-        # Start-Process ExitCode unset even after a short child process exits, which
-        # previously caused completed/skipped stages to be reported as failures.
-        if (Test-RawStageComplete $stage.Name) {
-            Write-Host "[parallel] $($stage.Name)=complete"
-            continue
-        }
-
-        $exitCode = $stage.Process.ExitCode
-        $failed += $stage.Name
-        Write-Warning "$($stage.Name) incomplete (process exit code: $exitCode)"
-        if (Test-Path $stage.StdErr) {
-            Write-Host "--- $($stage.Name) stderr tail ---"
-            Get-Content $stage.StdErr -Tail 40
-        }
-        if (Test-Path $stage.StdOut) {
-            Write-Host "--- $($stage.Name) stdout tail ---"
-            Get-Content $stage.StdOut -Tail 20
+        if ($failed.Count -gt 0) {
+            throw "Parallel raw extraction incomplete: $($failed -join ', '). Completed branches are kept for resume."
         }
     }
-    if ($failed.Count -gt 0) {
-        throw "Parallel raw extraction incomplete: $($failed -join ', '). Completed branches are kept for resume."
+    else {
+        Write-Host "[resume] all three raw stages already complete; no extraction process started."
     }
-}
-else {
-    Write-Host "[resume] all three raw stages already complete; no extraction process started."
 }
 
 Invoke-Checked "3/3 Validate raw extraction completeness" `
