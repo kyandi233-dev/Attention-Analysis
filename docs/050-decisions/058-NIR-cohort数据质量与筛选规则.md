@@ -46,9 +46,11 @@
 
 程序原始 `commission`、`omission`、`correct`、RT 和按键记录不被覆盖。prestimulus、carry-over、multiple press、ambiguous omission 等只作为附加 QC / subtype 标记，用于主分析与敏感性分析。
 
-## 4. NIR / PIR 帧级有效性
+## 4. NIR / PIR 帧级有效性：正式数据筛选条件
 
-PIR 数值进入任何正式计算的基本条件保持：
+这一节定义的是**正式的数据筛选条件**，不是仅用于描述的 QC 指标。
+
+PIR 数值进入任何正式计算的基本条件为：
 
 ```text
 fullclass_normalization_valid == True
@@ -56,9 +58,46 @@ AND
 fullclass_pupil_to_iris_diameter_ratio 为 finite 数值
 ```
 
+其中 `fullclass_normalization_valid=True` 由以下 6 条结构 gate 共同决定，必须全部通过：
+
+1. pupil ellipse 有效；
+2. iris outer ellipse 有效；
+3. pupil mask 不触碰 320×160 analysis ROI 边缘；
+4. iris outer mask 不触碰 320×160 analysis ROI 边缘；
+5. pupil center 位于 iris outer contour 内部或边界上；
+6. iris geometric-mean diameter > pupil geometric-mean diameter。
+
+下游再要求 PIR 本身为 finite 数值。因此：
+
+```text
+PIR usable frame
+=
+六项结构 gate 全部通过
+AND
+PIR finite
+```
+
 不满足时，该帧的 PIR 视为 unavailable；不对 PIR 进行强行插补，也不把 invalid 帧改写为 0。
 
 `roi_clipped`、单纯的 OAR 高低或行为表现不参与这一帧级 PIR 有效性定义。
+
+特别注意：
+
+- `roi_clipped` 表示扩大后的眼睛裁剪 ROI 是否触及原视频画面边界；
+- `fullclass_pupil_touches_roi_edge` 与 `fullclass_iris_outer_touches_roi_edge` 表示 RITnet 分割结构是否触及 320×160 analysis ROI 边界；
+- 只有后两者直接参与 PIR 的帧级筛选 gate。
+
+完整代码条件与每个 gate 的实现依据见：
+
+```text
+docs/020-nir/029-2026-08-26-PIR有效性与usable筛选定义.md
+```
+
+面向正式报告的方法写法与筛选流程见：
+
+```text
+docs/020-nir/030-2026-08-26-PIR数据筛选与正式报告口径.md
+```
 
 ## 5. 不设置全局 eye / Block 硬删除阈值
 
@@ -115,15 +154,19 @@ fullclass_pupil_to_iris_diameter_ratio 为 finite 数值
 
 这些记录后续通过 analysis-specific coverage 自然影响可进入的 trial / probe / bin 数，而不是预先整被试删除。
 
-## 9. 报告写法边界
+另外，当前增加 `scripts/nir_pir_gate_failure_qc.py`，用于统计每个 subject×eye×Block 在上述 6 条结构 gate 上各自的失败比例。该结果只用于解释“为什么 PIR 被筛除”，不生成新的自动删除阈值；同一帧可同时违反多条 gate，因此各失败比例不可直接相加。
+
+## 9. 正式报告写法边界
 
 正式报告的数据质量与筛选部分应区分：
 
 1. **结构完整性检查**：文件、trial、eye×Block 是否存在；
-2. **帧级有效性**：PIR 是否满足 normalization-valid + finite；
+2. **帧级数据筛选**：PIR 是否通过 6 条 normalization gate，并且为 finite 数值；
 3. **分析单元覆盖率筛选**：trial / probe / time-bin 是否满足对应分析预先冻结的 coverage rule；
 4. **行为异常值**：真实极端表现与记录损坏分开；
 5. **敏感性分析**：对 clipped、单眼低可用、不同 coverage 门槛等做稳健性验证，而不是事后挑最好看的结果。
+
+正式报告不能只写“删除异常值”或“删除无效帧”，而必须说明无效帧的判定条件。推荐使用 `030-2026-08-26-PIR数据筛选与正式报告口径.md` 中已经准备好的方法段落，并在最终分析冻结 coverage rule 后补入具体阈值与最终 N。
 
 不得把 `roi_clipped` 描述成“眼睛没检测完整”，也不得把行为极端值未经记录错误证据直接称为坏数据。
 
@@ -143,6 +186,11 @@ fullclass_pupil_to_iris_diameter_ratio 为 finite 数值
 │   ├── pir_invalid_run_summary.csv
 │   ├── either_eye_invalid_run_summary.csv
 │   ├── behavior_extreme_crossblock_review.csv
+│   ├── pir_gate_failure_qc/
+│   │   ├── pir_gate_failure_by_eye_block.csv
+│   │   ├── pir_gate_failure_distribution.csv
+│   │   ├── pir_gate_failure_top_records.csv
+│   │   └── README.md
 │   └── README.md
 ├── analysis_inclusion.csv
 └── qc_decisions.md
@@ -157,5 +205,7 @@ fullclass_pupil_to_iris_diameter_ratio 为 finite 数值
 - 44/44 被试保留为正式下游分析候选；
 - Behavior 无结构性排除；
 - NIR 不进行 subject-level 或 Block-level 一刀切排除；
-- PIR 按帧级有效性 + 后续 analysis-specific coverage 进入模型；
+- PIR 采用明确的帧级数据筛选条件：6 条结构 gate + finite 数值；
+- PIR gate failure 只作为筛选原因诊断，不作为新的全局排除阈值；
+- 后续 trial / probe / time-bin 按 analysis-specific coverage 进入模型；
 - 左右眼融合方案尚未冻结，下一步进入 eye structure / standardization 分析。
