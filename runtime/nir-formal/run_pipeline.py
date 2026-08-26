@@ -37,6 +37,7 @@ from onnx_cuda_runtime import YoloCudaRuntime
 from phase_windows import PhaseWindow, resolve_phase_windows
 from ritnet_onnx_runtime import RitnetOnnxRuntime
 from ritnet_runtime import RitnetRuntime
+from timestamp_mapping import TimestampMap, read_timestamp_map
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
@@ -67,23 +68,11 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def load_timestamp_map(video: Path) -> tuple[Path | None, dict[int, int]]:
+def load_timestamp_map(video: Path) -> tuple[Path | None, TimestampMap | None]:
     timestamp_path = video.with_name(f"{video.stem}_timestamps.csv")
     if not timestamp_path.exists():
-        return None, {}
-    result: dict[int, int] = {}
-    with timestamp_path.open(newline="", encoding="utf-8-sig") as handle:
-        for line_number, row in enumerate(csv.reader(handle), start=1):
-            if not row or len(row) < 2:
-                continue
-            try:
-                frame_idx, unix_ms = int(float(row[0])), int(float(row[1]))
-            except ValueError as exc:
-                raise ValueError(f"Invalid timestamp row {line_number}: {timestamp_path}") from exc
-            if frame_idx in result:
-                raise ValueError(f"Duplicate timestamp frame {frame_idx}: {timestamp_path}")
-            result[frame_idx] = unix_ms
-    return timestamp_path, result
+        return None, None
+    return timestamp_path, read_timestamp_map(timestamp_path)
 
 
 def normalize_subject(subject: str) -> tuple[str, str]:
@@ -431,7 +420,13 @@ def run(args: argparse.Namespace, config: dict[str, Any]) -> int:
         raise RuntimeError(f"Cannot open video: {video}")
     fps = float(cap.get(cv2.CAP_PROP_FPS)) or 30.0
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    timestamp_path, unix_by_frame = load_timestamp_map(video)
+    timestamp_path, legacy_timestamp_map = load_timestamp_map(video)
+    unix_by_avi_frame = (
+        legacy_timestamp_map.unix_by_avi_frame if legacy_timestamp_map is not None else {}
+    )
+    capture_by_avi_frame = (
+        legacy_timestamp_map.capture_by_avi_frame if legacy_timestamp_map is not None else {}
+    )
     start_frame = max(0, int(round(args.start_sec * fps)))
     if args.full_video:
         end_frame = total_frames
@@ -527,7 +522,8 @@ def run(args: argparse.Namespace, config: dict[str, Any]) -> int:
                 "video": str(video),
                 "frame_idx": frame_idx,
                 "video_time_ms": float(cap.get(cv2.CAP_PROP_POS_MSEC)),
-                "unix_ms": unix_by_frame.get(frame_idx),
+                "unix_ms": unix_by_avi_frame.get(frame_idx),
+                "capture_frame_idx": capture_by_avi_frame.get(frame_idx),
                 "eye": eye,
                 "source": source,
                 "redetect_reason": redetect_reason,
@@ -566,7 +562,8 @@ def run(args: argparse.Namespace, config: dict[str, Any]) -> int:
                 "video": str(video),
                 "frame_idx": frame_idx,
                 "video_time_ms": float(cap.get(cv2.CAP_PROP_POS_MSEC)),
-                "unix_ms": unix_by_frame.get(frame_idx),
+                "unix_ms": unix_by_avi_frame.get(frame_idx),
+                "capture_frame_idx": capture_by_avi_frame.get(frame_idx),
                 "source": source,
                 "redetect_reason": redetect_reason,
                 "status": frame_status,
@@ -784,18 +781,23 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
     if ritnet and not is_ort and getattr(ritnet.device, "type", None) != "cuda":
         raise RuntimeError("RITnet did not initialize on CUDA; refusing CPU fallback")
 
-    timestamp_path, unix_by_frame = load_timestamp_map(video)
-    if timestamp_path is None or not unix_by_frame:
+    timestamp_path, timestamp_map = load_timestamp_map(video)
+    if timestamp_path is None or timestamp_map is None or not timestamp_map.unix_by_avi_frame:
         raise FileNotFoundError(
             f"Formal analysis requires the NIR timestamp CSV beside the video: {video}"
         )
+    # The timestamp CSV's first column is the capture-device counter.  It can
+    # jump when acquisition misses a frame, while the usable timestamp rows
+    # still correspond one-to-one to sequential frames stored in the AVI.
+    unix_by_avi_frame = timestamp_map.unix_by_avi_frame
+    capture_by_avi_frame = timestamp_map.capture_by_avi_frame
 
     phases = _phase_names(args, config)
     configured_phases = [str(value) for value in config["formal"].get("phases", [])]
     is_full_phase_run = phases == configured_phases
     windows = resolve_phase_windows(
         video,
-        unix_by_frame,
+        unix_by_avi_frame,
         phases,
         baseline_duration_sec=float(config["formal"].get("baseline_duration_sec", 180)),
         practice_trial_duration_ms=int(config["formal"].get("practice_trial_duration_ms", 1150)),
@@ -835,6 +837,13 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
         raise RuntimeError(f"Cannot open video: {video}")
     fps = float(cap.get(cv2.CAP_PROP_FPS)) or 30.0
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    if total_frames != timestamp_map.avi_frame_count:
+        cap.release()
+        raise ValueError(
+            "NIR timestamp/video frame count mismatch after capture-to-AVI mapping: "
+            f"timestamp_rows={timestamp_map.avi_frame_count}, video_frames={total_frames}, "
+            f"timestamp_file={timestamp_path}"
+        )
 
     # Validation-only path: precompute bounded YOLO batches, then let the
     # existing formal frame/ROI/RITnet/output path consume those detections.
@@ -907,6 +916,7 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
         "yolo_batch_size": yolo_batch_size,
         "max_frames": args.max_frames,
         "recovery_mode": recovery_mode,
+        "timestamp_mapping": timestamp_map.metadata(),
         "timeline_file": (
             str(Path(args.recovery_timeline).resolve())
             if recovery_mode
@@ -972,7 +982,8 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
                 ok, frame = cap.read()
                 decode_ms = (time.perf_counter() - decode_started) * 1000.0
                 frame_key = (window.phase, window.segment, frame_idx)
-                unix_ms = unix_by_frame.get(frame_idx)
+                unix_ms = unix_by_avi_frame.get(frame_idx)
+                capture_frame_idx = capture_by_avi_frame.get(frame_idx)
 
                 if not ok or frame is None:
                     frame_row = {
@@ -981,6 +992,7 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
                         "phase": window.phase,
                         "phase_segment": window.segment,
                         "frame_idx": frame_idx,
+                        "capture_frame_idx": capture_frame_idx,
                         "video_time_ms": float(cap.get(cv2.CAP_PROP_POS_MSEC)),
                         "unix_ms": unix_ms,
                         "phase_time_ms": (unix_ms - window.start_unix_ms) if unix_ms is not None else None,
@@ -1022,6 +1034,7 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
                     "phase": window.phase,
                     "phase_segment": window.segment,
                     "frame_idx": frame_idx,
+                    "capture_frame_idx": capture_frame_idx,
                     "video_time_ms": float(cap.get(cv2.CAP_PROP_POS_MSEC)),
                     "unix_ms": unix_ms,
                     "phase_time_ms": (unix_ms - window.start_unix_ms) if unix_ms is not None else None,
@@ -1080,6 +1093,7 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
                         "phase": window.phase,
                         "phase_segment": window.segment,
                         "frame_idx": frame_idx,
+                        "capture_frame_idx": capture_frame_idx,
                         "video_time_ms": frame_row["video_time_ms"],
                         "unix_ms": unix_ms,
                         "phase_time_ms": frame_row["phase_time_ms"],
@@ -1200,6 +1214,7 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
         "ritnet_precision": ritnet.precision if ritnet else "disabled",
         "ritnet_batch_size": batch_size if ritnet else 0,
         "timestamp_file": str(timestamp_path),
+        "timestamp_mapping": timestamp_map.metadata(),
         "frame_status_counts": _counts(row.get("status") for row in frame_rows),
         "eye_status_counts": _counts(row.get("status") for row in eye_rows),
         "phase_summary": phase_summary,
@@ -1250,6 +1265,7 @@ def formal(args: argparse.Namespace, config: dict[str, Any]) -> int:
                 ),
                 "cuda_available": _cuda_available(),
                 "timestamp_file": str(timestamp_path),
+                "timestamp_mapping": timestamp_map.metadata(),
             },
             ensure_ascii=False,
             indent=2,
