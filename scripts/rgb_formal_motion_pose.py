@@ -9,11 +9,10 @@ from attention_pipeline.config import Config, load_config
 from attention_pipeline.rgb.motion import run_motion_test
 from attention_pipeline.rgb.paths import RGBOutputLayout
 from attention_pipeline.rgb.pose import run_pose_test
-from attention_pipeline.rgb.pose_features import run_pose_features
 
 
 def _formal_engine_config(config: Config, subject: str) -> Config:
-    """Reuse validated full-span engines while routing their temporary names into the subject directory."""
+    """Reuse validated engines while routing their temporary names into the subject directory."""
     data = copy.deepcopy(config.data)
     output = data.setdefault("output", {})
     output["test_dir"] = subject
@@ -64,7 +63,9 @@ def run_motion_formal(config: Config, subject: str, *, force: bool = False) -> d
     manifest["stage"] = "motion-formal"
     manifest["output_mode"] = "formal"
     manifest["completion_status"] = "complete"
-    manifest["engine_origin"] = "validated full-span run_motion_test implementation; formal wrapper changes routing/naming only"
+    manifest["engine_origin"] = (
+        "validated full-span run_motion_test implementation; formal wrapper changes routing/naming only"
+    )
     if isinstance(manifest.get("output"), dict):
         manifest["output"]["parquet"] = str(final_raw)
         manifest["output"]["manifest"] = str(final_manifest)
@@ -75,78 +76,51 @@ def run_motion_formal(config: Config, subject: str, *, force: bool = False) -> d
 
 
 def run_pose_formal(config: Config, subject: str, *, force: bool = False) -> dict[str, object]:
+    """Extract only the expensive/reconstructable Pose landmark raw layer.
+
+    Pose features are deliberately downstream. They are deterministic derivatives of
+    pose_landmarks.parquet and must not delay formal cohort extraction.
+    """
     layout = RGBOutputLayout.from_config(config)
     final_raw = layout.subject_file(subject, "pose_landmarks.parquet")
     final_manifest = layout.subject_file(subject, "pose_manifest.json")
-    final_features = layout.subject_file(subject, "pose_features.parquet")
-    final_features_manifest = layout.subject_file(subject, "pose_features_manifest.json")
-    if (
-        not force
-        and final_raw.is_file()
-        and final_features.is_file()
-        and _complete(final_manifest)
-        and _complete(final_features_manifest)
-    ):
-        return {
-            "status": "skipped_complete",
-            "subject": subject,
-            "landmarks": str(final_raw),
-            "features": str(final_features),
-        }
+    if not force and final_raw.is_file() and _complete(final_manifest):
+        return {"status": "skipped_complete", "subject": subject, "landmarks": str(final_raw)}
 
     engine_config = _formal_engine_config(config, subject)
     subject_dir = layout.subject_dir(subject)
     temp_raw = subject_dir / f"{subject}_pose-test.parquet"
     temp_manifest = subject_dir / f"{subject}_pose-test_manifest.json"
-    temp_features = subject_dir / f"{subject}_pose-features-test.parquet"
-    _guard(
-        [
-            temp_raw, temp_manifest, temp_features,
-            final_raw, final_manifest, final_features, final_features_manifest,
-        ],
-        force=force,
-        label="Pose formal",
-    )
+    _guard([temp_raw, temp_manifest, final_raw, final_manifest], force=force, label="Pose formal")
 
     run_pose_test(engine_config, subject)
-    feature_summary = run_pose_features(engine_config, subject)
-    if not temp_raw.is_file() or not temp_manifest.is_file() or not temp_features.is_file():
+    if not temp_raw.is_file() or not temp_manifest.is_file():
         raise RuntimeError("Validated Pose engine did not produce expected outputs")
 
     manifest = json.loads(temp_manifest.read_text(encoding="utf-8"))
     temp_raw.replace(final_raw)
     temp_manifest.replace(final_manifest)
-    temp_features.replace(final_features)
 
     manifest["stage"] = "pose-formal"
     manifest["output_mode"] = "formal"
     manifest["completion_status"] = "complete"
-    manifest["engine_origin"] = "validated full-span run_pose_test implementation; formal wrapper changes routing/naming only"
+    manifest["derived_features_deferred"] = True
+    manifest["engine_origin"] = (
+        "validated full-span run_pose_test implementation; formal wrapper changes routing/naming only"
+    )
     if isinstance(manifest.get("output"), dict):
         manifest["output"]["parquet"] = str(final_raw)
         manifest["output"]["manifest"] = str(final_manifest)
     else:
         manifest["output"] = {"parquet": str(final_raw), "manifest": str(final_manifest)}
     final_manifest.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    feature_manifest = {
-        **feature_summary,
-        "stage": "pose-features-formal",
-        "output_mode": "formal",
-        "completion_status": "complete",
-        "subject": subject,
-        "source_pose_parquet": str(final_raw),
-        "output": str(final_features),
-        "engine_origin": "validated derive_pose_features implementation; formal wrapper changes routing/naming only",
-    }
-    final_features_manifest.write_text(
-        json.dumps(feature_manifest, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    return {"pose": manifest, "features": feature_manifest}
+    return manifest
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Formal full-span Motion/Pose runner for one RGB subject")
+    parser = argparse.ArgumentParser(
+        description="Formal raw Motion/Pose runner for one RGB subject. The production orchestrator launches motion and pose as separate parallel processes."
+    )
     parser.add_argument("--config", default="configs/rgb_analysis.yaml")
     parser.add_argument("--subject", required=True)
     parser.add_argument("--stage", choices=["motion", "pose", "all"], default="all")
