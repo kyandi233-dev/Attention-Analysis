@@ -120,6 +120,8 @@ Test-Path "J:\Data"
 Select-String -Path ".\config.yaml" -Pattern "J:/Data"
 ```
 
+NIR timestamp 映射的 canonical 语义是：timestamp CSV 第一列保留为 source capture counter，AVI 内部 `frame_idx` 使用有效 timestamp 行的 sequential order。capture counter gap 不得直接解释为 AVI frame gap；只有 AVI decode/count 不一致才是 AVI frame blocker。恢复验证结果见仓库内 `docs/020-nir/results/nir_timestamp_mapping_recovery_v1/`。
+
 正式完整 NIR 主链的数据发现仍可运行：
 
 ```powershell

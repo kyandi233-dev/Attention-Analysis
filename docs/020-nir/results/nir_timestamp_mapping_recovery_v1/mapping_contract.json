@@ -1,0 +1,17 @@
+{
+  "version": "nir-timestamp-mapping-v1",
+  "frame_idx_semantics": "sequential AVI frame index",
+  "capture_frame_idx_semantics": "original source capture counter retained as provenance",
+  "timestamp_source": "valid non-dropped rows in *_nir_timestamps.csv",
+  "avi_gap_definition": "AVI cannot open or nominal AVI frame count differs from valid timestamp row count",
+  "capture_gap_definition": "source capture counter increment exceeds one and is not an AVI gap by itself",
+  "timestamp_time_gap_definition": "adjacent valid unix_ms interval greater than 1.5 times session median interval",
+  "tested_subjects": [
+    "sub-056",
+    "sub-057",
+    "sub-058",
+    "sub-100",
+    "sub-178"
+  ],
+  "raw_data_uploaded": false
+}
