@@ -1,25 +1,28 @@
 # RGB
 
-> 2026-08-26｜当前 AMD RGB 正式化工作线为 `rgb-amd`。RGB 当前目标：**从 baseline 开始连续到 Block2 结束，把 Face、Pose、Motion 三类原始信息完整落盘；能从 raw 重算的 tracking、眼睑派生、Pose features、QC、blink/PERCLOS 和统计聚合全部后移。**
+> 2026-08-26｜当前 AMD RGB 正式工作线为 `rgb-amd`。RGB 当前目标：**从 baseline 开始连续到 Block2 结束，把 Face、Pose、Motion 三类原始信息完整落盘；能从 raw 重算的 tracking、眼睑派生、Pose features、QC、blink/PERCLOS 和统计聚合全部后移。**
 
 RGB 主线为 **Face + Pose + Motion**，所有结果通过 `unix_ms` 与 Behavior / NIR 对齐。rPPG / HR / HRV 不属于当前正式 RGB 主线。
+
+> **方法学总说明：** [`049-RGB正式分析方法与参数依据.md`](049-RGB正式分析方法与参数依据.md)  
+> 该文档集中记录 30/full-FPS、15 Hz、10 Hz 的参数逻辑，Face/Pose/Motion 算法，AMD/NVIDIA 双后端实现、raw-first 原则以及 EAR/blink/PERCLOS 的可回溯性，适合作为报告“方法”部分技术底稿。
 
 ## 当前状态
 
 | 模块 | 当前路线 | 状态 |
 |---|---|---|
-| Face | Py-Feat 2.1.1 scientific core + ONNX Runtime DirectML | 已冻结 |
+| Face | Py-Feat 2.1.1 scientific core + ONNX Runtime DirectML | 已用于正式 full-span raw |
 | Face cadence | timestamp-driven 15 Hz | 已冻结 |
-| Face batch | RetinaFace B8 + multitask B16 | 已冻结 |
+| Face runtime batch | RetinaFace B32 + multitask B64 | 当前默认；属于性能参数，可按硬件吞吐/显存调整 |
 | Pose | MediaPipe Pose Landmarker 10 Hz | 已验证 |
 | Motion | OpenCV frame difference full-fps | 已验证 |
-| 单被试正式总控 | **Motion + Pose + Py-Feat 三线并行 raw extraction** | 已实现，待新版本实机验收 |
-| 被试最终完整性检查 | `rgb_formal_validate.py` → `sub-XXX_manifest.json` | 已改为 raw-only 完成判定 |
-| cohort batch / resume | eligible 自动队列、已完成跳过、失败继续 | 已实现 |
+| 单被试正式总控 | **Motion + Pose + Py-Feat 三线并行 raw extraction** | 已通过 full-span validator |
+| 被试最终完整性检查 | `rgb_formal_validate.py` → `sub-XXX_manifest.json` | raw-only 完成判定已生效 |
+| cohort batch / resume | eligible 自动队列、已完成跳过、失败继续 | 已实现并用于正式全量 |
 | tracking / primary face | 从 Face raw 后续重建 | 不阻挡全量 |
 | EAR / eyelid / blink / PERCLOS | 从 478 mesh + blendshape 后续派生 | 不阻挡全量 |
 | Pose features | 从 Pose landmarks 后续派生 | 不阻挡全量 |
-| body_motion_energy | 后续派生 | 不阻挡全量 |
+| body/ROI motion derived | 后续派生 | 不阻挡全量 |
 
 ## 正式分析范围
 
@@ -52,7 +55,9 @@ baseline start
    extraction_complete = true
 ```
 
-三条 raw 相互没有科学依赖，因此不再串行。每个进程分别读取同一 RGB AVI。运行日志写入：
+三条 raw 相互没有科学依赖，因此默认使用独立 reader 并行。实验性 SharedDecode 已进行速度测试，但当前不作为正式 cohort 默认路径。
+
+运行日志写入：
 
 ```text
 D:\_AttentionData\Beijing-RGB\sub-XXX\_runlogs\
@@ -67,7 +72,7 @@ D:\_AttentionData\Beijing-RGB\sub-XXX\_runlogs\
 - **Motion raw**：正式时间段 full-fps 的时间、亮度、帧差、motion energy、capture/timestamp gap 信息；
 - QC 先保留 flag，不在 raw 层提前筛掉。
 
-详细原则见 [`044-RGB输出Schema与信息保留原则.md`](044-RGB输出Schema与信息保留原则.md)。
+详细原则见 [`044-RGB输出Schema与信息保留原则.md`](044-RGB输出Schema与信息保留原则.md)。正式参数与算法依据见 [`049-RGB正式分析方法与参数依据.md`](049-RGB正式分析方法与参数依据.md)。
 
 ## 正式核心输出
 
@@ -124,21 +129,16 @@ git pull --ff-only
 
 $env:ATTENTION_FACE_MODEL_DIR = "D:\_AttentionData\Beijing-RGB\_test\face-directml\models\pyfeat"
 
-powershell -ExecutionPolicy Bypass -File .\scripts\run_rgb_formal_subject.ps1 `
-  -Subject sub-031
-```
-
-新并行单被试验收通过后，全 cohort：
-
-```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\run_rgb_formal_cohort.ps1
 ```
+
+正式 cohort 使用 subject manifest 自动跳过已完成被试，并由各 raw stage 的 complete manifest 实现分支级 resume。不要为了普通续跑使用 `-Force`。
 
 当前优先级：
 
 ```text
-并行 raw 主链实机验收
-→ 44 人全量 raw
-→ 检查失败/缺失
-→ 再统一做 tracking、Pose features、眼睑/blink/PERCLOS、QC 和统计派生
+AMD cohort raw 全量
+→ 检查失败/缺失与 QC
+→ NVIDIA representative parity / full-span Gate
+→ 统一做 tracking、Pose features、眼睑/blink/PERCLOS、QC 和统计派生
 ```
