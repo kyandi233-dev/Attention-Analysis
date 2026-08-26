@@ -8,7 +8,7 @@
 | `evaluate_yolo_eye_test.py` | 当前 | YOLO26n frozen test 评估 |
 | `sart_formal_analysis.py` | **当前** | FocusWave v3.1.3 最终 BB 行为分析入口 |
 | `nir_behavior_alignment.py` | **当前** | frozen full-class NIR × v3.1.3 BB Behavior 的下游 Unix-ms 对齐、trial/probe 窗口特征、schema-v2 coverage 与 alignment QC |
-| `build_stimulus_visual_table.py` | **当前** | 按 FocusWave formaltest 实际绘制规则重建 9×3=27 个正式 SART 画面并计算数字 relative luminance / contrast 协变量 |
+| `build_stimulus_visual_table.py` | **当前** | 按 FocusWave formaltest 实际绘制规则重建 9×3=27 个正式 SART 画面，计算数字 relative luminance / contrast，并输出报告用完整 PNG/总览图 |
 | `sart_bbb_v3_0_analysis.py` | **历史、可执行** | 2026-08-16 FocusWave v3.0 BBB 行为分析重跑入口 |
 
 当前 BB 行为分析默认配置为 `configs/behavior_formal.yaml`：
@@ -34,15 +34,25 @@ PYTHONPATH=src python scripts/build_stimulus_visual_table.py \
   --materials-dir "D:/path/to/FocusWave/01-MainProgram/素材"
 ```
 
-输出默认写到：
+`stimulus-visual-v1.2` 默认一次生成：
 
 ```text
 D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v1/
 ├── stimulus_visual_properties.csv
-└── stimulus_visual_manifest.json
+├── stimulus_visual_manifest.json
+├── stimulus_visual_overview_full.png
+├── stimulus_visual_overview_central.png
+└── stimulus_visual_rendered/
+    ├── references/
+    │   ├── 00_background_screen.png
+    │   └── 00_mask_screen.png
+    └── conditions/
+        ├── 01_mango_size080.png
+        ├── ...
+        └── 09_no_go_size120.png
 ```
 
-该表仅提供数字 linear-sRGB relative luminance / RMS contrast，用于控制 9 种水果 × 3 种呈现大小的相对视觉差异；它不是经过光度计校准的 cd/m²。完整方法与字段见 `docs/020-nir/025-2026-08-26-SART刺激视觉协变量重建.md`。
+`conditions/` 中 27 张 PNG 均为北京正式 Surface Pro 2880×1920 的完整任务窗口重建；`overview_full` 是 9×3 完整屏幕缩略总览，`overview_central` 是固定中央 ROI 总览，后者更适合报告正文排版。数字表仍只提供 linear-sRGB relative luminance / RMS contrast，不等同于光度计校准的 cd/m²。完整方法与字段见 `docs/020-nir/025-2026-08-26-SART刺激视觉协变量重建.md`，图片输出见 `026-2026-08-26-SART刺激报告图片输出.md`。
 
 旧 BBB 为避免与当前 BB 实现互相覆盖，使用独立配置和独立 Python 包：
 
