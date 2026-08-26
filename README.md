@@ -2,31 +2,50 @@
 
 > 当前长期硬件主线：`amd-DirectML`。本分支统一维护 **NIR + Behavior + NIR-Behavior + RGB**。代码与文档在同一个 Git 仓库中，但不同模态继续使用彼此隔离的 Conda 环境；正式结果全部写到仓库外，Git 更新不会覆盖已经生成的数据。
 
-> 当前 AMD 工作方式：**网页版 ChatGPT 负责规划、审计与 GitHub 代码/文档修改；AMD 本机 Codex 默认负责读取最新仓库、执行命令、检查输出和反馈结果。** 除非明确要求 Codex 修改代码，否则 Codex 不应在仓库内产生本地改动。
+> 当前 AMD 工作方式：**网页版 ChatGPT 负责规划、审计、代码与 GitHub 文档修改；AMD 本机 Codex 默认负责读取最新仓库、执行命令、检查输出并把日志/结果反馈回来。** 除非明确要求 Codex 修改代码，否则 Codex 不应在仓库内产生本地代码改动。
+
+> 当前数据盘分工：**AMD 工作站连接的是约 44 名被试的数据盘；NVIDIA RTX 5070 工作站连接剩余约 72 名被试的数据盘。** 因此 AMD representative 继续以本机实际存在的 `sub-031` 等为准，不要把 NVIDIA 的 `sub-130` 队列配置复制到 AMD。
+
+---
 
 ## 1. 先确认自己要做哪一种分析
 
-不要打开终端后固定先激活某一个环境。正确顺序是：**先进入仓库并同步 Git → 再按模态激活对应环境 → 再进入对应运行目录。**
+不要打开终端以后固定激活某一个“大一统环境”。正确顺序是：
 
-| 任务 | Conda 环境 | 主要入口 | 正式/开发状态 |
+```text
+网页版 ChatGPT 规划 / 修改 GitHub
+→ AMD Codex 进入本地仓库
+→ git status / pull --ff-only
+→ 按模态激活对应环境
+→ 环境与路径检查
+→ dry-run / representative / tests
+→ 正式执行
+→ Codex 检查输出并反馈结果
+```
+
+| 任务 | AMD Conda 环境 | 主要入口 | 当前状态 |
 |---|---|---|---|
 | NIR 正式 YOLO + RITnet / RITnet full-class | `D:\CondaEnvs\nir-amd` | `runtime/nir-formal/` | 正式 runtime 已冻结；当前 full-class 从 `sub-032` 继续 |
-| Behavior 正式 SART BB | `D:\CondaEnvs\attention-behavior` | `scripts/sart_formal_analysis.py` | 当前正式 v3.1.3 BB 分析 |
+| Behavior 正式 SART BB | `D:\CondaEnvs\attention-behavior` | `scripts/sart_formal_analysis.py` | 当前正式 v3.1.3 BB |
 | NIR × Behavior 对齐 | `D:\CondaEnvs\attention-behavior` | `scripts/nir_behavior_alignment.py` | schema 2 已建立；当前仍保留 prototype safety gate |
-| RGB Motion / Pose / sampling / QC | `D:\CondaEnvs\attention-rgb` | `scripts/rgb_analysis.py` | 科学层已进入主线；正式 full-video runner 尚未全部冻结 |
-| RGB Face DirectML 正式化验证 | `D:\CondaEnvs\attention-face-directml` | `scripts/face_formal_dryrun_directml_v02.py` 等 | Py-Feat 2.1.1 + DirectML 已冻结；full-video formal runner 尚待收口 |
-| Py-Feat 官方 PyTorch reference / export | `D:\CondaEnvs\attention-face-pyfeat` | `scripts/face_benchmark_pyfeat.py` / export | 参考与导出用途，不是 AMD 正式推理环境 |
-| LibreFace 历史 reference / export | `D:\CondaEnvs\attention-face-libreface` | LibreFace scripts | 参考/历史用途，不是当前正式 backend |
+| RGB Motion / Pose / sampling / QC | `D:\CondaEnvs\attention-rgb` | `scripts/rgb_analysis.py` | 科学层已进入主线；full-video formal 尚未整体冻结 |
+| RGB Face DirectML | `D:\CondaEnvs\attention-face-directml` | `scripts/face_formal_dryrun_directml_v02.py` | Py-Feat 2.1.1 scientific core + DirectML 已验证；正式 full-video runner 待收口 |
+| Py-Feat CPU/PyTorch reference / ONNX export | `D:\CondaEnvs\attention-face-pyfeat` | Py-Feat benchmark/export scripts | 参考与导出环境，不是 AMD 正式推理环境 |
+| LibreFace 历史 reference | `D:\CondaEnvs\attention-face-libreface` | LibreFace scripts | 历史/参考，不是当前正式 backend |
 
-## 2. AMD 固定路径与仓库外输出
+---
 
-仓库：
+## 2. AMD 固定路径与当前 44 人数据盘
+
+### 2.1 仓库
 
 ```text
 D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-amd-DirectML
 ```
 
-当前原始数据 discovery 使用两块外接盘的候选根；盘符可能在 `E:` / `F:` 间交换：
+### 2.2 当前原始数据 discovery roots
+
+AMD 当前连接的正式数据盘可能在 `E:` / `F:` 间交换，因此配置保留：
 
 ```text
 E:/正式实验
@@ -35,7 +54,9 @@ E:/Data
 F:/Data
 ```
 
-仓库外正式/分析输出：
+当前 AMD 队列约 44 名，**实际运行以本机 discovery 结果为准**；不要按 NVIDIA 72 名队列硬编码 AMD subject list。
+
+### 2.3 仓库外正式/分析输出
 
 ```text
 NIR formal/full-class:
@@ -51,11 +72,37 @@ RGB:
 D:\_AttentionData\Beijing-RGB
 ```
 
-不要把正式结果重新改到仓库内 `outputs/`。仓库内输出目录只允许作为临时/兼容路径，正式结果以以上仓库外路径为准。
+不要把正式结果重新改到仓库内 `outputs/`。Git 更新只管理代码/文档，不管理已经生成的正式数据。
 
-## 3. 每次开始工作：先做 Git 检查，再选环境
+---
 
-新 PowerShell / VS Code Terminal 首先执行：
+## 3. 第一次没有本地仓库：clone
+
+如果当前仓库已经存在，跳过本节。
+
+```powershell
+cd "D:\aaawork\07-竞赛\厚璨杯\021-analysisplan"
+
+git clone https://github.com/kyandi233-dev/Attention-Analysis.git Attention-Analysis-amd-DirectML
+cd "D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-amd-DirectML"
+
+git switch amd-DirectML
+git pull --ff-only
+git status --short --branch
+git log -1 --oneline
+```
+
+正常分支：
+
+```text
+amd-DirectML
+```
+
+---
+
+## 4. 每次开始工作：Codex 先检查 Git，再选环境
+
+AMD 本机 Codex 每次新会话/新终端先执行：
 
 ```powershell
 cd "D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-amd-DirectML"
@@ -66,13 +113,7 @@ git fetch origin --prune
 git log -1 --oneline
 ```
 
-正常应位于：
-
-```text
-amd-DirectML
-```
-
-若工作区干净，再同步网页版 ChatGPT 已提交到 GitHub 的最新代码：
+若工作区干净，再同步网页版 ChatGPT 已提交的最新代码：
 
 ```powershell
 git switch amd-DirectML
@@ -81,62 +122,57 @@ git status --short --branch
 git log -1 --oneline
 ```
 
-### AMD 当前 ChatGPT ↔ Codex 协作规则
-
-正常工作流：
+### 4.1 ChatGPT ↔ GitHub ↔ Codex 的标准协作链
 
 ```text
 网页版 ChatGPT
-  ↓ 规划 / 审计 / 修改 GitHub
+  ↓ 规划 / 审计 / 代码与文档修改
 GitHub amd-DirectML
-  ↓ Codex 在本机 git pull --ff-only
-AMD Codex
-  ↓ 执行 / 检查 / 返回日志与结果
-网页版 ChatGPT
+  ↓
+AMD Codex: git status → git pull --ff-only
+  ↓
+Codex 执行 / 检查 / 读取结果
+  ↓
+把日志、summary、manifest、QC 结果反馈给网页版 ChatGPT
 ```
 
-因此 ChatGPT 告诉你“代码已提交”以后，Codex 应先检查：
+**默认情况下 Codex 不负责擅自改代码。** ChatGPT 说“GitHub 已更新”以后，Codex 的职责是先 pull，再执行。
 
-```powershell
-git status --short --branch
+### 4.2 Codex 发现本地修改怎么办
+
+不要直接：
+
+```text
+git reset --hard
+git push --force
 ```
 
-如果干净，再：
-
-```powershell
-git pull --ff-only
-```
-
-如果 Codex 意外产生本地修改，**不要直接 pull、不要 reset --hard、不要 force push**。先查看：
+先看：
 
 ```powershell
 git diff
 git status --short
 ```
 
-只有你明确要求 Codex 把本地代码改动提交到 GitHub 时才使用：
+只有你明确要求 Codex 把本地代码修改提交时才：
 
 ```powershell
 git add <明确需要提交的文件>
 git diff --cached
 git commit -m "<说明本次修改>"
+git pull --ff-only
 git push origin amd-DirectML
 ```
 
-不要使用：
+如果 `pull --ff-only` 因本地修改阻塞，先把修改内容反馈给网页版 ChatGPT/你本人，不要自行覆盖。
 
-```text
-git push --force
-git reset --hard
-```
+---
 
-除非已经明确知道会删除/覆盖什么并获得你的许可。
+# 5. 第一次配置 AMD Conda 环境
 
-## 4. 第一次配置 AMD 环境
+已经存在且验证过的环境**不要因为 README 有创建命令就重建**。下面只用于新机器、环境丢失或明确要求重建。
 
-已经存在且验证过的环境**不要为了照 README 再重建**。下面只用于新机器、环境丢失或明确需要重建时。
-
-### 4.1 NIR / DirectML
+## 5.1 NIR / DirectML：`nir-amd`
 
 ```powershell
 conda create -p "D:\CondaEnvs\nir-amd" python=3.11 -y
@@ -149,11 +185,16 @@ python -m pytest tests -q
 python run_pipeline.py check-env
 ```
 
-当前 NIR 正式组合固定为：YOLO26n `640×640 / FP32 / DirectML / fixed b8`，RITnet `640×400 / FP32 / DirectML / fixed b16`。
+当前正式 NIR 工程参数：
 
-### 4.2 Behavior + NIR-Behavior
+```text
+YOLO26n: 640×640 / FP32 / DirectML / fixed b8
+RITnet:  640×400 / FP32 / DirectML / fixed b16
+```
 
-Behavior 与下游 NIR-Behavior 不需要 GPU，建议共用一个轻量独立环境：
+---
+
+## 5.2 Behavior + NIR-Behavior：`attention-behavior`
 
 ```powershell
 conda create -p "D:\CondaEnvs\attention-behavior" python=3.11 -y
@@ -163,22 +204,37 @@ cd "D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-amd-Direc
 python -m pip install --upgrade pip
 python -m pip install -e .
 python -m pip install pyarrow pytest
-
-python -c "import numpy,pandas,scipy,statsmodels,pyarrow; print('behavior env ok')"
-python -m pytest tests -q
 ```
 
-正式结果仍由 `configs/behavior_formal.yaml` 和 `configs/nir_behavior_alignment.yaml` 指向仓库外路径。
+验证：
 
-### 4.3 RGB 主环境：Motion / Pose / sampling / QC
+```powershell
+python -c "import numpy,pandas,scipy,statsmodels,pyarrow; print('behavior env ok')"
+python -m pytest `
+  tests/test_behavior.py `
+  tests/test_behavior_formal_bb.py `
+  tests/test_behavior_phase2.py `
+  tests/test_behavior_phase3.py `
+  tests/test_behavior_phase4.py `
+  tests/test_behavior_reporting.py `
+  tests/test_nir_behavior_alignment.py -q
+```
 
-AMD 已有验证环境：
+Behavior 与 NIR-Behavior 不需要 GPU，因此共用这一环境即可。
+
+---
+
+## 5.3 RGB core：`attention-rgb`
+
+该环境负责 Motion、Pose、Face sampling、tracking/eyelid derived、QC。
+
+已有验证环境：
 
 ```text
 D:\CondaEnvs\attention-rgb
 ```
 
-若确实需要从零新建：
+如确实需要从零新建：
 
 ```powershell
 conda create -p "D:\CondaEnvs\attention-rgb" python=3.11 -y
@@ -188,15 +244,30 @@ cd "D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-amd-Direc
 python -m pip install --upgrade pip
 python -m pip install -e .
 python -m pip install pyarrow pytest mediapipe
-
-python -c "import cv2,numpy,pandas,pyarrow,mediapipe; print('rgb core env ok')"
 ```
 
-新建环境后先跑 RGB tests / representative pilot，不要直接全量。已有 `attention-rgb` 环境不要仅为了升级依赖而重装；Pose/MediaPipe 版本变化可能影响数值，应先做代表性 parity/QC。
+验证：
 
-### 4.4 RGB Face DirectML
+```powershell
+python -c "import cv2,numpy,pandas,pyarrow,mediapipe; print('rgb core env ok'); print('mediapipe=',mediapipe.__version__)"
+python -m pytest `
+  tests/test_rgb_discover.py `
+  tests/test_rgb_gaps.py `
+  tests/test_rgb_motion.py `
+  tests/test_rgb_motion_qc.py `
+  tests/test_rgb_motion_review.py `
+  tests/test_rgb_paths.py `
+  tests/test_rgb_pose.py `
+  tests/test_rgb_pose_features.py `
+  tests/test_rgb_pose_qc.py `
+  tests/test_rgb_timeline.py -q
+```
 
-当前 AMD Face 正式化使用独立 DirectML runtime：
+已有 `attention-rgb` 不要为了追最新版依赖而无理由重装；Pose/MediaPipe 版本变化可能改变数值，应先做 representative QC。
+
+---
+
+## 5.4 RGB Face DirectML：`attention-face-directml`
 
 ```powershell
 conda create -p "D:\CondaEnvs\attention-face-directml" python=3.11 -y
@@ -204,7 +275,7 @@ conda activate "D:\CondaEnvs\attention-face-directml"
 python -m pip install onnx onnxruntime-directml numpy pandas pyarrow opencv-python pillow
 ```
 
-检查：
+验证：
 
 ```powershell
 python -c "import onnxruntime as ort; print(ort.__version__); print(ort.get_available_providers())"
@@ -216,11 +287,19 @@ python -c "import onnxruntime as ort; print(ort.__version__); print(ort.get_avai
 DmlExecutionProvider
 ```
 
-该环境不要同时安装普通 `onnxruntime` / `onnxruntime-gpu`。
+不要同时安装普通 `onnxruntime` / `onnxruntime-gpu`。
 
-## 5. NIR：当前正式/补跑操作
+当前 AMD Face DirectML model root：
 
-### 5.1 每次进入 NIR
+```text
+D:\_AttentionData\Beijing-RGB\_test\face-directml\models\pyfeat
+```
+
+---
+
+# 6. NIR：当前正式/补跑操作
+
+## 6.1 每次进入 NIR
 
 ```powershell
 conda activate "D:\CondaEnvs\nir-amd"
@@ -230,16 +309,16 @@ python run_pipeline.py check-env
 python -m pytest tests -q
 ```
 
-### 5.2 完整正式 runtime 的 dry-run
+## 6.2 完整 formal runtime dry-run
 
 ```powershell
 python run_pipeline.py discover --formal-only
 python run_formal_batch.py --dry-run
 ```
 
-只有在明确需要重新运行完整 YOLO + RITnet 时才执行完整 formal；当前已有历史正式结果，不应无原因重跑。
+已有历史正式结果，不应无原因重新跑完整 YOLO + RITnet。
 
-### 5.3 当前 RITnet full-class extension：从 sub-032 继续
+## 6.3 当前 RITnet full-class：从 sub-032 继续
 
 ```powershell
 $subjects = Get-ChildItem "D:\_AttentionData\Beijing-NIR\amd-directml" -Directory |
@@ -256,7 +335,7 @@ $subjectArg = $subjects -join ","
 $subjectArg
 ```
 
-先检查：
+先 dry-run：
 
 ```powershell
 python run_ritnet_fullclass_batch.py `
@@ -267,7 +346,7 @@ python run_ritnet_fullclass_batch.py `
   --dry-run
 ```
 
-确认后正式继续：
+确认后：
 
 ```powershell
 python run_ritnet_fullclass_batch.py `
@@ -277,51 +356,79 @@ python run_ritnet_fullclass_batch.py `
   --postprocess-workers 4
 ```
 
-该 extension **不重新运行 YOLO**，复用原正式 `frame_idx + ROI`，不覆盖旧 `eyes.csv`。
+该 extension 复用既有 `frame_idx + ROI`，**不重跑 YOLO、不覆盖旧 `eyes.csv`**。
 
-## 6. Behavior：正式 SART BB
+---
+
+# 7. Behavior：正式 SART BB
 
 ```powershell
 conda activate "D:\CondaEnvs\attention-behavior"
 cd "D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-amd-DirectML"
-
-python scripts/sart_formal_analysis.py --stage all
 ```
 
-正式输入来自当前有效的 `E:/F:` 候选根，正式输出：
-
-```text
-D:\_AttentionData\Beijing-Behavior\formal-v1
-```
-
-运行前建议先检查配置：
+先检查配置：
 
 ```powershell
 Select-String -Path ".\configs\behavior_formal.yaml" -Pattern "roots:|output_root|min_subject_number"
 ```
 
-历史 `scripts/sart_bbb_v3_0_analysis.py` 只用于 v3.0 BBB 复现，**不是当前正式 Behavior**。
+正式执行：
 
-## 7. NIR × Behavior 对齐
+```powershell
+python scripts/sart_formal_analysis.py --stage all
+```
+
+正式输出：
+
+```text
+D:\_AttentionData\Beijing-Behavior\formal-v1
+```
+
+历史 `scripts/sart_bbb_v3_0_analysis.py` 仅用于 v3.0 BBB 复现，不是当前正式 Behavior。
+
+---
+
+# 8. NIR × Behavior 对齐
 
 ```powershell
 conda activate "D:\CondaEnvs\attention-behavior"
 cd "D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-amd-DirectML"
 
+python -m pytest tests/test_nir_behavior_alignment.py -q
 python scripts/nir_behavior_alignment.py --subjects sub-031
 ```
 
-当前 `configs/nir_behavior_alignment.yaml` 仍保留 `sub-031` prototype safety gate；在正式解除 gate 前不要擅自改成全队列。该步骤直接消费已经生成的 NIR full-class + Behavior，**不需要重新运行 RITnet**。
+当前 `configs/nir_behavior_alignment.yaml` 仍保留 `sub-031` prototype safety gate；在正式解除 gate 前不要擅自扩展到 44 人。
 
-## 8. RGB：先明确当前不是“一条命令全量”
+该步骤直接消费已经生成的 NIR full-class + Behavior，**不需要重新运行 RITnet**。
 
-当前 RGB 科学层已经在 `amd-DirectML`，但 Motion / Pose / Face full-video formal runner、blink event 和 `perclos80_proxy` 最终规则尚未全部冻结。因此：
+输出：
 
-- 可以运行 audit、gap、representative Motion/Pose、Face dry-run、tracking/eyelid、QC；
-- **现在不要启动 44 人 RGB 全量**；
-- full cohort 必须等 formal runner + completion/resume + QC 冻结后再开始。
+```text
+D:\_AttentionData\Beijing-NIR\analysis\nir-behavior-v1
+```
 
-### 8.1 RGB audit / timestamp gaps
+---
+
+# 9. RGB：当前不是“一条命令全量”
+
+当前 RGB scientific layer 已经在 `amd-DirectML`，但 Motion / Pose / Face full-video formal runner、blink event 和 `perclos80_proxy` 最终规则尚未全部冻结。
+
+现在允许：
+
+- audit / gaps；
+- representative Motion / Pose；
+- Face 15 Hz dry-run；
+- tracking / eyelid；
+- QC；
+- engineering/parity 检查。
+
+**现在不要启动 AMD 44 人 RGB full cohort。**
+
+---
+
+## 9.1 RGB audit / gaps
 
 ```powershell
 conda activate "D:\CondaEnvs\attention-rgb"
@@ -331,7 +438,9 @@ python scripts/rgb_analysis.py --stage audit
 python scripts/rgb_analysis.py --stage gaps
 ```
 
-### 8.2 Motion representative
+---
+
+## 9.2 Motion representative：sub-031
 
 ```powershell
 python scripts/rgb_analysis.py --stage motion --subject sub-031
@@ -339,7 +448,9 @@ python scripts/rgb_analysis.py --stage motion-qc --subject sub-031
 python scripts/rgb_analysis.py --stage motion-review --subject sub-031
 ```
 
-### 8.3 Pose representative
+---
+
+## 9.3 Pose representative：sub-031
 
 ```powershell
 python scripts/rgb_analysis.py --stage pose --subject sub-031
@@ -347,45 +458,166 @@ python scripts/rgb_analysis.py --stage pose-qc --subject sub-031
 python scripts/rgb_analysis.py --stage pose-features --subject sub-031
 ```
 
-### 8.4 Face 15 Hz representative dry-run
+---
 
-抽取/定位 dry-run windows 使用 RGB 主环境：
+# 10. RGB Face：AMD DirectML representative
+
+## 10.1 生成 timestamp-driven 15 Hz dry-run sample
 
 ```powershell
 conda activate "D:\CondaEnvs\attention-rgb"
+cd "D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-amd-DirectML"
+
 python scripts/face_formal_dryrun_sample.py --subject sub-031
 ```
 
-DirectML Face 推理切换到：
+默认 sample：
+
+```text
+D:\_AttentionData\Beijing-RGB\_test\face-formal-dryrun\sub-031
+```
+
+## 10.2 DirectML optimized v02
 
 ```powershell
 conda activate "D:\CondaEnvs\attention-face-directml"
+cd "D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-amd-DirectML"
+
+$SAMPLE_DIR = "D:\_AttentionData\Beijing-RGB\_test\face-formal-dryrun\sub-031"
+$MODEL_DIR = "D:\_AttentionData\Beijing-RGB\_test\face-directml\models\pyfeat"
+
+python scripts/face_formal_dryrun_directml_v02.py `
+  --sample-dir "$SAMPLE_DIR" `
+  --model-dir "$MODEL_DIR" `
+  --output-dir "$SAMPLE_DIR\directml-v02" `
+  --retinaface-batch 8 `
+  --multitask-batch 16 `
+  --prefetch-batches 2
 ```
 
-当前 AMD Face backend 已冻结为 Py-Feat 2.1.1 scientific core + ONNX Runtime DirectML；正式采样率为 timestamp-driven 15 Hz。sub-031 已完成代表性验证，后续仍需 sub-033 gap stress 与 blink/PERCLOS proxy 冻结。
+当前第一档优化保持 scientific core 不变：direct AVI decode + prefetch + RetinaFace B8 + multitask B16。
 
-详细 Face 命令、model dir、QC 与历史 Gate 见：
+## 10.3 tracking / eyelid
 
-- `docs/040-rgb/`
-- `scripts/README.md`
-- `docs/050-decisions/054-RGB-Face-Backend冻结.md`
-- `docs/050-decisions/055-RGB-Face-15Hz采样频率冻结.md`
+```powershell
+conda activate "D:\CondaEnvs\attention-rgb"
+cd "D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-amd-DirectML"
 
-## 9. 结果检查原则
+python scripts/face_derive_tracking_eyelid_v02.py `
+  --raw "$SAMPLE_DIR\directml-v02\pyfeat_dml_raw.parquet" `
+  --frame-manifest "$SAMPLE_DIR\sub-031_face-dryrun_frames.csv" `
+  --output-dir "$SAMPLE_DIR\derived"
+```
 
-每次正式/代表性运行结束都先检查：
+## 10.4 QC
 
-1. 命令退出码是否正常；
+```powershell
+python scripts/face_qc_visualize_v03.py `
+  --tracks "$SAMPLE_DIR\derived\face_tracks.parquet" `
+  --eye "$SAMPLE_DIR\derived\eye_features.parquet" `
+  --sample-manifest "$SAMPLE_DIR\sub-031_face-dryrun_manifest.json" `
+  --frame-manifest "$SAMPLE_DIR\sub-031_face-dryrun_frames.csv" `
+  --output-dir "$SAMPLE_DIR\qc" `
+  --fps 15
+```
+
+QC 读取已保存 raw/derived + 原 AVI，不重新推理。
+
+AMD 当前已完成 `sub-031` representative Face 验证；后续 gap-stress、blink/PERCLOS 和 full-video orchestration 继续收口。NVIDIA 改用 `sub-130` 是因为两机数据盘不同，不代表 AMD representative 要跟着改。
+
+---
+
+# 11. 每次运行结束：Codex 检查什么
+
+Codex 不应只汇报“命令跑完了”。至少检查：
+
+1. 命令退出码；
 2. summary / manifest / completion 是否存在；
-3. processed rows 是否等于 expected rows；
-4. GPU provider 是否确实为目标 provider；
-5. QC 图片/视频是否肉眼正常；
-6. 仓库 `git status --short --branch` 是否仍然干净；
-7. 正式结果是否写在仓库外正确根目录。
+3. processed rows / expected rows；
+4. GPU provider 是否为目标 provider；
+5. Face/Motion/Pose coverage / missing / multi-face / gaps；
+6. QC 图片/视频是否可读且肉眼正常；
+7. 输出是否在仓库外正确目录；
+8. `git status --short --branch` 是否仍然干净；
+9. 把关键 JSON/CSV summary 或日志片段反馈给网页版 ChatGPT，再决定下一步。
 
-不要因为程序完成就直接进入全队列。
+---
 
-## 10. 快速导航
+# 12. 当前 AMD 与 NVIDIA 数据分工
+
+```text
+AMD 数据盘：约 44 名
+NVIDIA 数据盘：剩余约 72 名
+```
+
+两台机器并不是用同一块正式数据盘，因此：
+
+- AMD representative 可以是 `sub-031`；
+- NVIDIA representative 改为 `sub-130`；
+- 不同被试不能称为逐帧 cross-device parity；
+- 真正需要同帧 AMD↔NVIDIA parity 时，只复制少量 representative sample，不移动完整数据盘。
+
+当前共同 scientific anchor：
+
+```text
+Py-Feat 2.1.1 Detectorv2 scientific core
+```
+
+AMD 已有 CPU-reference ↔ DirectML parity；NVIDIA 将做 `sub-130` CPU-reference ↔ CUDA parity。
+
+---
+
+# 13. 最短日常操作清单
+
+## NIR
+
+```powershell
+cd "D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-amd-DirectML"
+git status --short --branch
+git pull --ff-only
+conda activate "D:\CondaEnvs\nir-amd"
+cd runtime\nir-formal
+python run_pipeline.py check-env
+```
+
+## Behavior
+
+```powershell
+cd "D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-amd-DirectML"
+git status --short --branch
+git pull --ff-only
+conda activate "D:\CondaEnvs\attention-behavior"
+python scripts/sart_formal_analysis.py --stage all
+```
+
+## RGB core
+
+```powershell
+cd "D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-amd-DirectML"
+git status --short --branch
+git pull --ff-only
+conda activate "D:\CondaEnvs\attention-rgb"
+python scripts/rgb_analysis.py --stage audit
+```
+
+## Face DirectML representative
+
+```powershell
+cd "D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-amd-DirectML"
+git status --short --branch
+git pull --ff-only
+
+conda activate "D:\CondaEnvs\attention-rgb"
+python scripts/face_formal_dryrun_sample.py --subject sub-031
+
+conda activate "D:\CondaEnvs\attention-face-directml"
+```
+
+后续使用第 10 节 DirectML v02 命令。
+
+---
+
+# 14. 快速导航
 
 | 内容 | 入口 |
 |---|---|
@@ -396,17 +628,20 @@ conda activate "D:\CondaEnvs\attention-face-directml"
 | NIR × Behavior | `docs/030-behavior/035-NIR与正式SART行为数据对齐分析方法.md` |
 | RGB | `docs/040-rgb/` |
 | RGB 当前配置 | `configs/rgb_analysis.yaml` |
-| 所有 scripts 索引 | `scripts/README.md` |
+| scripts 索引 | `scripts/README.md` |
 | 技术决策 | `docs/050-decisions/` |
 | 历史工作记录 | `docs/工作记录/` |
 | 仓库规则 | `AGENTS.md` |
 
-## 11. 当前边界
+---
+
+# 15. 当前边界
 
 - NIR 历史正式全量已完成；当前做 post-hoc full-class extension。
 - Behavior 当前正式口径为 FocusWave v3.1.3、两个 B block。
-- NIR-Behavior schema 2 已建立，但当前仍保留 prototype safety gate。
-- RGB Face backend 和 15 Hz 已冻结；AMD representative engineering optimization 已验证，但 RGB 全模态 full-video formal runner 尚未整体冻结。
-- AMD RGB 当前队列约 44 名，以本机实际 discovery 为准。
-- `rgb-dev` / `rgb-nvidia-cuda` 仍作为开发期保险分支；长期维护目标仍是 `amd-DirectML` 与 `nvidia-cuda` 两条硬件主线。
+- NIR-Behavior schema 2 已建立，但仍有 prototype safety gate。
+- RGB Face backend / 15 Hz / AMD DirectML first-tier optimization 已验证。
+- RGB 全模态 full-video formal runner、gap stress、blink event、`perclos80_proxy` 尚未全部冻结。
+- **现在不要启动 AMD 44 人 RGB full cohort。**
+- `rgb-dev` / `rgb-nvidia-cuda` 仍作为开发期保险分支，长期维护目标仍是 `amd-DirectML` 与 `nvidia-cuda`。
 - 日期型工作记录和历史 provenance 不追溯改写。
