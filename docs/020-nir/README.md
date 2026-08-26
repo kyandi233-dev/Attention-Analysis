@@ -170,7 +170,7 @@ python -m pip install -e .
 
 python -m pytest `
   tests/test_nir_pipeline_validation.py `
-  tests/test_nir_pipeline_validation_probe.py `
+  tests/test_nir_probe_validation.py `
   tests/test_nir_pipeline_validation_extended.py `
   tests/test_nir_formal_analysis.py -q
 
