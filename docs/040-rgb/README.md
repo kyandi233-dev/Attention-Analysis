@@ -4,6 +4,9 @@
 
 RGB 当前正式主线为 **Face + Pose + Motion**。目标是从 baseline 开始连续到 Block2 结束，把以后不能轻易恢复、或重跑代价较高的 raw 信息完整落盘；tracking、眼睑、blink/PERCLOS、Pose features、QC 和统计聚合全部后移。
 
+> **跨平台方法学总说明：** [`049-RGB正式分析方法与参数依据.md`](049-RGB正式分析方法与参数依据.md)  
+> 该文档统一记录 Face/Pose/Motion 算法、30/full-FPS—15 Hz—10 Hz 的参数依据、AMD DirectML 与 NVIDIA native CUDA 的实现差异、raw-first 原则以及 EAR/blink/PERCLOS 的下游重建逻辑。
+
 ## 当前后端
 
 ```text
@@ -219,7 +222,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_rgb_formal_subject.ps1 `
   -FaceBatch 32
 ```
 
-完整 NVIDIA 运行路线见 [`046-NVIDIA-CUDA-RGB运行路线.md`](046-NVIDIA-CUDA-RGB运行路线.md)。
+完整 NVIDIA 运行路线见 [`046-NVIDIA-CUDA-RGB运行路线.md`](046-NVIDIA-CUDA-RGB运行路线.md)。正式方法学与参数依据见 [`049-RGB正式分析方法与参数依据.md`](049-RGB正式分析方法与参数依据.md)。
 
 ## 当前执行边界
 
