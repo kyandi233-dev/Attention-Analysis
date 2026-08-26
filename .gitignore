@@ -10,3 +10,9 @@ build/
 *.egg-info/
 artifacts/
 /outputs/
+
+# Local NIR runtime model binaries
+runtime/nir-formal/models/*.onnx
+runtime/nir-formal/models/*.onnx.data
+runtime/nir-formal/models/*.pt
+runtime/nir-formal/models/*.pkl
