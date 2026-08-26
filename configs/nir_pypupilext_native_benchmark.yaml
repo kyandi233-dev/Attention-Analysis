@@ -1,11 +1,15 @@
 pipeline:
   name: attention-analysis-nir-pypupilext-native-benchmark
-  version: 0.2.0
+  version: 0.2.1
   schema_version: 1
 
 paths:
   alignment_config: "configs/nir_behavior_alignment.yaml"
-  raw_data_root: "E:/正式实验"
+  raw_data_roots:
+    - "E:/正式实验"
+    - "F:/正式实验"
+    - "E:/Data"
+    - "F:/Data"
   output_root: "D:/_AttentionData/Beijing-NIR/analysis/pypupilext-native-benchmark/sub031-040"
 
 subjects:
@@ -27,15 +31,15 @@ algorithms:
     - ExCuSe
     - Swirski2D
   module_candidates:
+    - pypupilext
     - pypupil
     - PyPupilEXT
-    - pypupilext
   method_preference:
     - runWithConfidence
     - run
 
 sampling:
-  # Per subject. Sampling is decided before candidate algorithms run.
+  # Per subject. Sampling is decided before any pupil detector runs.
   block_uniform_n: 300
   temporal_n: 300
   temporal_preferred_phase: block1
@@ -51,8 +55,8 @@ input:
   min_crop_width: 20
   min_crop_height: 12
   grayscale: true
-  # IMPORTANT: keep the existing YOLO eye box in source-video pixels.
-  # Do not resize the crop before ElSe / ExCuSe / Swirski2D.
+  # Keep the existing YOLO eye box in source-video pixels. Do not resize the
+  # crop before ElSe / ExCuSe / Swirski2D.
   resize_native_crop: false
 
 # Only frame identity and the existing YOLO tight-eye box are consumed from
