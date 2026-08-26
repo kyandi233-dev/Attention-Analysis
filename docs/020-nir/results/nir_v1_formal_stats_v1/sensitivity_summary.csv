@@ -1,0 +1,4 @@
+outcome,term,n,subjects,clusters,estimate_log_odds,odds_ratio,ci_low,ci_high,p_value,model,window_seconds
+fully_focused,pir_within_subject_deviation,1174,69,47,0.13374935895374787,1.143106274383556,0.9993686520062346,1.307517453055854,0.051082195486460286,"GEE binomial exchangeable, subject-clustered",10
+fully_focused,pir_within_subject_deviation,1174,69,47,0.10818356797230204,1.1142522676434294,0.9737776026972873,1.2749914482624232,0.11560072019975949,"GEE binomial exchangeable, subject-clustered",20
+fully_focused,pir_within_subject_deviation,1174,69,47,0.10552130170797933,1.1112897766410252,0.9684111307155521,1.2752486299433106,0.13287821238450628,"GEE binomial exchangeable, subject-clustered",30

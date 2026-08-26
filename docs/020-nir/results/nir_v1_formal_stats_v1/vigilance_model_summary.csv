@@ -1,0 +1,7 @@
+outcome,term,n,subjects,clusters,estimate,ci_low,ci_high,p_value,model
+probe_vigilance_raw,const,1174,69,47,3.5671907948320896,3.4054277409881717,3.7289538486760074,0.0,"GEE Gaussian exchangeable, subject-clustered"
+probe_vigilance_raw,pir_within_subject_deviation,1174,69,47,-0.0008274758886648474,-0.025190148863143236,0.02353519708581354,0.9469230619568332,"GEE Gaussian exchangeable, subject-clustered"
+probe_vigilance_raw,pir_fused_pir_mad,1174,69,47,0.0008643732211418393,-0.03933945750901185,0.04106820395129553,0.9663874482839142,"GEE Gaussian exchangeable, subject-clustered"
+probe_vigilance_raw,pir_fused_pir_robust_slope_per_s,1174,69,47,0.023960979611482587,0.019106545084423162,0.028815414138542012,3.8752977227878694e-22,"GEE Gaussian exchangeable, subject-clustered"
+probe_vigilance_raw,block,1174,69,47,-0.1581874190685057,-0.23306845728549797,-0.08330638085151344,3.465011347934318e-05,"GEE Gaussian exchangeable, subject-clustered"
+probe_vigilance_raw,time_on_task_sec,1174,69,47,-0.11107152771697464,-0.16176241081204973,-0.060380644621899536,1.749599199498217e-05,"GEE Gaussian exchangeable, subject-clustered"

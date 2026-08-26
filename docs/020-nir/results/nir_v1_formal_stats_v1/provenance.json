@@ -1,0 +1,23 @@
+{
+  "source_git_commit": "cfa7d75e82b045ffd14ac3f4b8c0b92166611850",
+  "input": "D:\\Project\\厚粲杯\\11_数据\\derived\\nir_v1_scientific_fix_v1\\nir_v1_probe_features.csv",
+  "input_sha256": "0eaee4b9515296939c6268f507474443571b003a6491a50f56084551092b556a",
+  "input_rows": 4260,
+  "primary_rows": 1174,
+  "subjects": 69,
+  "clusters": 47,
+  "crosswalk": "D:\\Project\\厚粲杯\\11_数据\\derived\\beijing_zhuhai_canonical_harmonization_v1\\beijing_zhuhai_person_session_crosswalk.csv",
+  "command": "scripts/nir_v1_formal_stats.py --input D:\\Project\\厚粲杯\\11_数据\\derived\\nir_v1_scientific_fix_v1\\nir_v1_probe_features.csv --crosswalk D:\\Project\\厚粲杯\\11_数据\\derived\\beijing_zhuhai_canonical_harmonization_v1\\beijing_zhuhai_person_session_crosswalk.csv --output-root docs\\020-nir\\results\\nir_v1_formal_stats_v1",
+  "windows": [
+    10,
+    20,
+    30
+  ],
+  "centering": "recomputed by subject within each analytic window; training-fold-only required for future ML",
+  "figure_files": [
+    "figure_1_response_within_pir.png",
+    "figure_2_predicted_focused_probability.png",
+    "figure_3_vigilance_pir.png",
+    "figure_4_effect_forest.png"
+  ]
+}

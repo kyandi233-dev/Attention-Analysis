@@ -19,6 +19,13 @@ class ScientificFeatureMathTests(unittest.TestCase):
     def test_invalid_values_are_not_silent_measurements(self):
         self.assertTrue(np.isnan(robust_slope([1], [2])))
 
+    def test_plateau_preserves_zero_slope(self):
+        self.assertEqual(robust_slope([0, 1000, 2000, 3000], [2, 2, 2, 2]), 0.0)
+
+    def test_positive_and_negative_trends(self):
+        self.assertGreater(robust_slope([0, 1000, 2000, 3000], [1, 2, 3, 4]), 0)
+        self.assertLess(robust_slope([0, 1000, 2000, 3000], [4, 3, 2, 1]), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

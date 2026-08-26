@@ -69,7 +69,9 @@ def robust_slope(times_ms, values) -> float:
     # Theil-Sen slope is robust to isolated segmentation outliers.
     with np.errstate(divide="ignore", invalid="ignore"):
         slopes = (y[None, :] - y[:, None]) / (t[None, :] - t[:, None]) * 1000.0
-    slopes = slopes[np.isfinite(slopes) & (slopes != 0)]
+    # Zero is a valid plateau slope; only remove non-finite values and the
+    # zero-denominator diagonal.
+    slopes = slopes[np.isfinite(slopes)]
     return float(np.median(slopes)) if len(slopes) else 0.0
 
 
