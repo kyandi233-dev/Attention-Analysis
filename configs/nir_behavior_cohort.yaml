@@ -1,6 +1,6 @@
 pipeline:
   name: attention-analysis-nir-behavior-cohort
-  version: 0.1.0
+  version: 0.2.0
   phase: 1
   cohort_label: cohort-44-exploratory
   timezone: Asia/Shanghai
