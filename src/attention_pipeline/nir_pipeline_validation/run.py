@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+import pandas as pd
+
 from attention_pipeline.config import load_config
 
 from .analysis import (
@@ -31,6 +33,19 @@ from .plots import (
     plot_probe_windows,
     plot_time_on_task,
     plot_trial_outcomes,
+)
+from .probe_analysis import (
+    fit_probe_option_smoke_models,
+    probe_event_table,
+    probe_response_subject_summary,
+    probe_response_vigilance_table,
+    probe_response_window_table,
+)
+from .probe_plots import (
+    plot_probe_response_behavior,
+    plot_probe_response_distribution,
+    plot_probe_response_pir_windows,
+    plot_probe_response_vigilance,
 )
 
 
@@ -84,6 +99,14 @@ def run_validation(
         track=track,
         window_name=probe_model_window,
     )
+
+    probe_events = probe_event_table(tables["probe_windows"], track=track)
+    probe_response_summary = probe_response_subject_summary(probe_events)
+    probe_response_windows = probe_response_window_table(
+        tables["probe_windows"], track=track
+    )
+    probe_response_vigilance = probe_response_vigilance_table(probe_events)
+
     model_results, model_status = fit_smoke_models(
         trial_table,
         probe_table,
@@ -91,6 +114,15 @@ def run_validation(
         track=track,
         min_subjects=min_subjects,
     )
+    probe_model_results, probe_model_status = fit_probe_option_smoke_models(
+        tables["probe_windows"],
+        track=track,
+        window_name=probe_model_window,
+        min_subjects=min_subjects,
+    )
+    if not probe_model_results.empty:
+        model_results = pd.concat([model_results, probe_model_results], ignore_index=True)
+    model_status = [*model_status, *probe_model_status]
 
     table_outputs = {
         "behavior_subject_summary": table_dir / "behavior_subject_summary.csv",
@@ -99,6 +131,10 @@ def run_validation(
         "time_on_task_coarse": table_dir / f"time_on_task_{coarse_bin_sec}s.csv",
         "trial_analysis": table_dir / f"trial_analysis_{trial_window}.csv",
         "probe_analysis": table_dir / f"probe_analysis_{probe_model_window}.csv",
+        "probe_event_table": table_dir / "probe_event_table.csv",
+        "probe_response_subject_summary": table_dir / "probe_response_subject_summary.csv",
+        "probe_response_window_summary": table_dir / "probe_response_window_summary.csv",
+        "probe_response_vigilance_joint": table_dir / "probe_response_vigilance_joint.csv",
         "model_smoke_results": table_dir / "model_smoke_results.csv",
     }
     behavior_summary.to_csv(
@@ -118,6 +154,18 @@ def run_validation(
     )
     probe_table.to_csv(
         table_outputs["probe_analysis"], index=False, encoding="utf-8-sig"
+    )
+    probe_events.to_csv(
+        table_outputs["probe_event_table"], index=False, encoding="utf-8-sig"
+    )
+    probe_response_summary.to_csv(
+        table_outputs["probe_response_subject_summary"], index=False, encoding="utf-8-sig"
+    )
+    probe_response_windows.to_csv(
+        table_outputs["probe_response_window_summary"], index=False, encoding="utf-8-sig"
+    )
+    probe_response_vigilance.to_csv(
+        table_outputs["probe_response_vigilance_joint"], index=False, encoding="utf-8-sig"
     )
     model_results.to_csv(
         table_outputs["model_smoke_results"], index=False, encoding="utf-8-sig"
@@ -153,10 +201,35 @@ def run_validation(
         formats=formats,
         dpi=dpi,
     )
-    figure_outputs["probe_windows"] = plot_probe_windows(
+    figure_outputs["probe_vigilance_windows"] = plot_probe_windows(
         tables["probe_windows"],
         track=track,
         base=figure_dir / "fig04_probe_vigilance_windows",
+        formats=formats,
+        dpi=dpi,
+    )
+    figure_outputs["probe_response_distribution"] = plot_probe_response_distribution(
+        probe_events,
+        base=figure_dir / "fig04a_probe_response_distribution",
+        formats=formats,
+        dpi=dpi,
+    )
+    figure_outputs["probe_response_pir_windows"] = plot_probe_response_pir_windows(
+        probe_response_windows,
+        base=figure_dir / "fig04b_probe_response_pir_windows",
+        formats=formats,
+        dpi=dpi,
+    )
+    figure_outputs["probe_response_behavior"] = plot_probe_response_behavior(
+        probe_response_windows,
+        window_name=probe_model_window,
+        base=figure_dir / f"fig04c_probe_response_preprobe_behavior_{probe_model_window}",
+        formats=formats,
+        dpi=dpi,
+    )
+    figure_outputs["probe_response_vigilance_joint"] = plot_probe_response_vigilance(
+        probe_events,
+        base=figure_dir / "fig04d_probe_response_vigilance_joint",
         formats=formats,
         dpi=dpi,
     )
@@ -195,6 +268,13 @@ def run_validation(
             "ambiguous_omission_not_silently_recoded": True,
             "anticipatory_candidate_kept_as_separate_motor_timing_phenotype": True,
         },
+        "probe_policy": {
+            "probe_response_preserved_as_raw_categorical_code": True,
+            "probe_response_not_semantically_relabelled": True,
+            "probe_vigilance_preserved_as_separate_probe_dimension": True,
+            "probe_response_and_vigilance_joint_structure_tested": True,
+            "all_configured_preprobe_windows_compared_descriptively": True,
+        },
         "rows": {
             "behavior_subject_summary": len(behavior_summary),
             "omission_qc_subject_summary": len(omission_summary),
@@ -202,6 +282,10 @@ def run_validation(
             "time_on_task_coarse": len(coarse),
             "trial_analysis": len(trial_table),
             "probe_analysis": len(probe_table),
+            "probe_event_table": len(probe_events),
+            "probe_response_subject_summary": len(probe_response_summary),
+            "probe_response_window_summary": len(probe_response_windows),
+            "probe_response_vigilance_joint": len(probe_response_vigilance),
             "model_smoke_results": len(model_results),
         },
         "model_status": model_status,
@@ -213,6 +297,7 @@ def run_validation(
             "Block PIR scientific differences",
             "PIR-behavior associations",
             "PIR-probe associations",
+            "semantic interpretation of raw probe_response codes before task-source verification",
             "window selection based on apparent effects",
         ],
     }
