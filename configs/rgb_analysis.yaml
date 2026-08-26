@@ -54,6 +54,9 @@ formal:
     - perclos
     - qc
     - statistical_aggregation
+  # AMD shared-decode testing showed that binding all consumers to one producer can
+  # reduce wall-clock throughput. NVIDIA therefore keeps three independent readers
+  # as the formal default unless an RTX 5070 benchmark proves otherwise.
   shared_decode_default: false
 
 face:
@@ -64,18 +67,22 @@ face:
   selected_backend_version: "py-feat 2.1.1 Detectorv2 scientific core"
   execution_backend: pytorch_cuda
   cuda_runtime_status: native_formal_runner_implemented_no_cpu_fallback
-  # NVIDIA native Detectorv2 exposes one end-to-end batch size. Do not copy the
-  # AMD DirectML RetinaFace/multitask split-batch contract into this backend.
+
+  # IMPORTANT: native Py-Feat Detectorv2 exposes ONE end-to-end CUDA batch.
+  # Do not copy AMD DirectML's RetinaFace/multitask split-batch contract here.
+  # AMD currently benchmarks B32/B64 only because it runs two separate ONNX models;
+  # that pair has no direct meaning for native PyTorch Detectorv2.
   native_cuda_batch: 16
   native_cuda_num_workers: 0
+  native_cuda_pin_memory: false
   native_cuda_prefetch_batches: 2
+  native_cuda_progress_every_batches: 20
+  # Benchmark candidates only; do not auto-select. Freeze the formal value only
+  # after representative RTX 5070 throughput + peak-memory measurements.
+  native_cuda_batch_candidates: [16, 32, 64]
+
   seek_threshold_frames: 120
   detection_threshold: 0.5
-  # Historical AMD values are retained only as cross-branch provenance and are
-  # not read by scripts/face_formal_cuda.py.
-  amd_directml_reference_batch:
-    retinaface_batch: 8
-    multitask_batch: 16
   target_outputs: [action_units, expression, gaze, head_pose]
   optional_outputs: [valence_arousal, face_landmarks, blendshapes]
   inference_fps: 15.0
