@@ -1,0 +1,70 @@
+pipeline:
+  name: attention-analysis-stimulus-visual
+  version: "stimulus-visual-v1.2"
+
+focuswave:
+  repository: "kyandi233-dev/FocusWave"
+  branch: "formaltest"
+  sart_task_path: "01-MainProgram/core/sart_task.py"
+  materials_subdir: "01-MainProgram/素材"
+
+paths:
+  # Prefer CLI --materials-dir. If omitted, the script also tries a sibling FocusWave checkout.
+  materials_dir: null
+  output_csv: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v1/stimulus_visual_properties.csv"
+  manifest_json: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v1/stimulus_visual_manifest.json"
+  rendered_images_dir: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v1/stimulus_visual_rendered"
+  overview_full_png: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v1/stimulus_visual_overview_full.png"
+  overview_central_png: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v1/stimulus_visual_overview_central.png"
+
+render:
+  # Historical Beijing formal-display profile.
+  # FocusWave does NOT hard-code this resolution: sart_task.py calls _get_screen_size()
+  # at runtime, and all Beijing formal participants used the same Surface Pro whose
+  # runtime-detected physical pixel size was 2880x1920 under DPI-aware execution.
+  display_profile: "beijing-formal-surface-pro"
+  resolution_source: "focuswave_runtime_detected_screen_size"
+  same_display_for_all_beijing_formal_subjects: true
+  dpi_aware_runtime: true
+  screen_width_px: 2880
+  screen_height_px: 1920
+
+  # FocusWave rendering semantics:
+  # - background/mask images are scaled to current win.size[0] while preserving aspect ratio;
+  # - fruit stimuli remain pixel-sized through BASE_SIZE * stimulus_size / 100.
+  bg_fill_hex: "#C6BFAE"
+  base_size_px: 412
+  stimulus_position_px: [0, -20]
+  stimulus_sizes_pct: [80, 100, 120]
+  resize_filter: "nearest"
+  fixed_central_roi_size_px: 600
+  alpha_visible_threshold: 0.05
+
+report_outputs:
+  # Individual PNGs preserve the complete reconstructed 2880x1920 task window.
+  # Overview sheets are only downsampled aids for writing/report figures.
+  save_full_resolution_pngs: true
+  overview_tile_width_px: 480
+
+stimuli:
+  go:
+    - "01_mango.png"
+    - "02_grape.png"
+    - "03_avocado.png"
+    - "04_bitter_melon.png"
+    - "05_cucumber.png"
+    - "06_kiwi.png"
+    - "07_kale.png"
+    - "08_lime.png"
+  nogo:
+    - "09_no_go.png"
+
+references:
+  background: "刺激.png"
+  mask: "掩蔽刺激.png"
+
+metrics:
+  # Digital relative-luminance metrics only; these are not physical cd/m^2 measurements.
+  srgb_relative_luminance: true
+  rms_contrast: true
+  include_mask_delta: true
