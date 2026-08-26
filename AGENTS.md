@@ -1,21 +1,23 @@
 # AGENTS.md｜Attention-Analysis 仓库规则
 
-> 2026-08-24（Asia/Shanghai）｜仓库已改名为 Attention-Analysis；当前默认维护分支为 `nvidia-cuda`，后续 AMD/DirectML 路线使用 `amd-DirectML`。
+> 2026-08-27（Asia/Shanghai）｜仓库已改名为 Attention-Analysis；默认 NVIDIA 维护分支为 `nvidia-cuda`，AMD/DirectML 正式运行线使用 `amd-DirectML`。
 
-本文件是仓库级长期工作约束。项目当前已完成正式 NIR 全量分析；后续默认任务是结构整理、可复现维护、结果复核与必要的增量开发，不得重新把项目描述为“准备进入正式分析”。
+本文件是仓库级长期工作约束。项目当前已完成既有正式 NIR 分析并保留可迁移 runtime；后续默认任务是结构整理、可复现维护、结果复核与必要的增量开发，不得重新把项目描述为“准备进入正式分析”。
 
 ## 当前状态
 
 - GitHub default 与 NVIDIA 维护分支：`nvidia-cuda`。
-- 当前工作分支：`amd-DirectML`；从冻结 NVIDIA 基线 `e63675ad15c17db6ea2ac7a3bb1c1ac6fc106e06` 创建，package version `0.1.0`。
+- AMD 工作/交付分支：`amd-DirectML`；从冻结 NVIDIA 基线 `e63675ad15c17db6ea2ac7a3bb1c1ac6fc106e06` 创建。
+- 当前 AMD formal runtime package version：`0.2.0`。若其他历史文档仍出现 `0.1.0`，以 `runtime/nir-formal/INSTALL.md`、`README.md`、`RELEASE_AMD_v0.2.0.md`、`config.yaml` 和本文件为当前口径。
 - 正式 NIR runtime：`runtime/nir-formal/`。
-- 正式 NIR 流程已经全量运行：FocusWave v3.1.3 phase windows → 逐帧 YOLO26n 眼框 → ROI → RITnet batch inference → 指标/QC 输出。
+- AMD v0.2.0 正式组合：YOLO26n fixed batch=8 + RITnet fixed batch=16，ONNX Runtime DirectML，正式推理不依赖 CUDA。
+- 正式 NIR 流程：FocusWave phase windows → 每帧 YOLO26n 眼框 → ROI → RITnet batch inference → 指标/QC 输出。
 - CSRT/KCF 等 ROI tracking 不属于当前正式主链；tracking 时代通过 Git 历史和 tag `v0.8-tracking` 追溯。
 - YOLO26n 100 epochs 训练产物：`training/nir-eye-yolo/runs/yolo26n_eye_100epoch/weights/best.pt`。
-- AMD runtime 冻结模型：`runtime/nir-formal/models/nir-eye-yolo26n-best.onnx`、`runtime/nir-formal/models/ritnet-b16-fp32.onnx` 与必需的 `runtime/nir-formal/models/ritnet-b16-fp32.onnx.data`。NVIDIA `.pt/.pkl` runtime 权重只在 `nvidia-cuda` 分支复现。
-- 正式 runtime 冻结最终实验阶段：FocusWave v3.1.3、正式被试编号下限 31、两个正式 B block。
+- AMD runtime 正式资产包括：`runtime/nir-formal/models/nir-eye-yolo26n-best-b8.onnx`、`runtime/nir-formal/models/ritnet-b16-fp32.onnx` 与必需的 `.onnx.data`；`nir-eye-yolo26n-best.onnx` 作为 b1 reference/diagnostic 保留。NVIDIA `.pt/.pkl` runtime 权重只在 `nvidia-cuda` 分支复现。
+- 当前 `runtime/nir-formal/config.yaml` 的 protocol scope 是 FocusWave v3.1.3、正式被试编号下限 31、两个正式 B block。它不是自动适用于所有 site/protocol 的通用配置。
 - 当前正式 Behavior 已按最终 v3.1.3 BB 建立：`configs/behavior_formal.yaml`、`scripts/sart_formal_analysis.py`、`src/attention_pipeline/behavior_formal/`。
-- 旧 v3.0 BBB SART 分析为历史版本，但用户要求保留可执行复现：`configs/sart_bbb_v3_0.yaml`、`scripts/sart_bbb_v3_0_analysis.py`、`src/attention_pipeline/behavior_bbb_v3_0/`。不得把它解释为当前正式口径。
+- 旧 v3.0 BBB SART 分析为历史版本，但用户要求保留可执行复现：`configs/sart_bbb_v3_0.yaml`、`scripts/sart_bbb_v3_0_analysis.py`、`src/attention_pipeline/behavior_bbb_v3_0/`。不得把它解释为当前正式口径，也不得把历史 BBB behavior config 直接当成新的 NIR protocol adapter。
 - 正式原始数据分布在两个逻辑目录 `正式实验` 与 `Data`。由于两块外接存储设备在 Windows 下可能被分配为 `E:` 或 `F:`，current configs 使用 `E:/正式实验`、`F:/正式实验`、`E:/Data`、`F:/Data` 四个候选根，并在运行时忽略不存在的路径。
 - 正式分析输出放在仓库外独立分析目录，不把全量结果堆回 Git 仓库。
 
@@ -27,12 +29,33 @@
 2. `docs/README.md`
 3. `docs/010-overview/README.md`
 4. 对应模块目录的 `README.md`
-5. `runtime/nir-formal/README.md`（涉及正式 NIR 运行口径）
-6. `runtime/nir-formal/INSTALL.md`（涉及新电脑安装/迁移）
-7. `docs/050-decisions/`（涉及路线变化或采纳/放弃理由）
-8. 最新日期型工作记录（仅在需要追溯执行过程时）
+5. `runtime/nir-formal/INSTALL.md`（新电脑安装/迁移）
+6. `runtime/nir-formal/README.md`（正式 NIR 科研与运行口径）
+7. `runtime/nir-formal/RUNBOOK_V1.md`（第二台机器实际操作、协议 gate 和交付）
+8. `runtime/nir-formal/RELEASE_AMD_v0.2.0.md`（AMD 当前 release 边界）
+9. `docs/050-decisions/`（涉及路线变化或采纳/放弃理由）
+10. 最新日期型工作记录（仅在需要追溯执行过程时）
 
-历史文档中的“候选 / 待准入 / 准备全量 / BBB”等表述只代表当时状态；当前状态以上述入口为准。
+历史文档中的“候选 / 待准入 / 准备全量 / BBB”等表述只代表当时状态；当前 runtime 状态以上述 formal runtime 入口为准。
+
+## 跨仓库交付边界
+
+`Attention-Analysis` 负责 NIR/RGB 的本机 producer/runtime，不负责最终跨机器科学推断。最终标签、cohort、identity reconciliation、grouped folds、跨站点合并和正式统计结论由中央仓库 `greenboo26/focuswave-multimodal-attention-analysis` 管理。
+
+本仓库运行产物交给中央仓库时必须记录 exact Git commit、runtime backend、package/config/model hash、输入/输出 provenance。不得在本仓库独立冻结 global participant ID、global folds 或通过平均两台机器的 AUC/p-value 得出最终结论。
+
+## Protocol compatibility gate
+
+当前 AMD `runtime/nir-formal/config.yaml` 明确是两个正式 B block 的 v3.1.3 scope。任何实际三 block/BBB 或其他 site 数据，在正式 NIR 全量执行前必须先完成 protocol/timeline audit，并建立经过 review 的 site/protocol-specific config 或 adapter。
+
+禁止以下行为：
+
+- 仅把 `expected_formal_blocks: 2` 手工改成 3 就视为完成协议适配；
+- 环境自检通过后直接对未知协议全量运行；
+- 把历史 behavior BBB config 当作当前 AMD NIR 的正式 third-block adapter；
+- 因为程序成功输出文件就认为科学协议正确。
+
+如果协议未确认，允许执行环境检查、数据发现和 dry-run 审计，但不授权 formal cohort production。
 
 ## 文件与历史保护规则
 
@@ -59,7 +82,7 @@
 - `docs/010-overview/`：当前系统架构、模态关系、仓库资产与复现关系。
 - `docs/020-nir/`：NIR 当前方法、运行入口和该模态需要保留的历史说明。
 - `docs/030-behavior/`：当前 v3.1.3 BB 行为分析入口；旧 v3.0 BBB 的报告、图和可执行复现边界在该目录的 `history/` 中说明。
-- `docs/040-rgb/`：RGB 保留接口与状态；当前关闭。
+- `docs/040-rgb/`：RGB 保留接口与状态。
 - `docs/050-decisions/`：关键技术/研究决策。
 - `docs/工作记录/`：日期型实际执行过程与 provenance；原则上不追溯改写。
 
@@ -82,7 +105,7 @@
 
 ## 运行与复现原则
 
-- 当前正式 NIR runtime 必须尽量自包含；换电脑时以 `runtime/nir-formal/INSTALL.md` 为安装入口，以 `runtime/nir-formal/README.md` 为运行与科研口径入口。
+- 当前正式 NIR runtime 必须尽量自包含；换电脑时以 `runtime/nir-formal/INSTALL.md` 为安装入口，以 `runtime/nir-formal/README.md` 为科研口径入口，以 `runtime/nir-formal/RUNBOOK_V1.md` 为实际交付操作入口。
 - 不依赖个人电脑绝对路径作为唯一可复现机制；current configs 用四候选根解决 E/F 动态盘符，并允许命令行/配置覆盖。
 - 同一被试若在多个有效数据根中出现重复正式数据，不允许静默选取其中一份；应中止并明确报告重复位置。
 - 运行参数、模型权重和 phase 语义变化必须显式记录，不允许静默改变科研口径。
