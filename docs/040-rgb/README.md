@@ -1,111 +1,17 @@
 # RGB
 
-> 2026-08-26（Asia/Shanghai）｜当前 NVIDIA RGB 并行开发工作线为 `rgb-nvidia`。`nvidia-cuda` 是 NVIDIA 综合线，目前有人正在使用，本轮同步不直接修改它。两条分支仍属于同一个 Attention-Analysis 项目。
+> 2026-08-26｜当前 NVIDIA RGB 开发工作线为 `rgb-nvidia`。`nvidia-cuda` 是正在使用的 NVIDIA 综合线，本轮不直接修改；待 `rgb-nvidia` 在 RTX 5070 上完成代表被试验收后，再选择性同步回综合线。
 
-> 分支关系见 [`../010-overview/015-并行分支与同步约定.md`](../010-overview/015-并行分支与同步约定.md)。日期型工作记录保留历史原文，不追溯改写。
+RGB 当前正式主线为 **Face + Pose + Motion**。目标是从 baseline 开始连续到 Block2 结束，把以后不能轻易恢复、或重跑代价较高的 raw 信息完整落盘；tracking、眼睑、blink/PERCLOS、Pose features、QC 和统计聚合全部后移。
 
-RGB 当前主线为 **Face + Pose + Motion**，目标是形成可与 NIR、SART Behavior 按 `unix_ms` / trial / probe window 对齐的连续行为测量。rPPG / HR / HRV 不属于当前正式 RGB 主线。
-
-当前硬盘分工：NVIDIA 工作站连接剩余约 72 名被试的数据盘，AMD 工作站连接另一块约 44 名被试的数据盘。因此 NVIDIA representative Face Gate 使用 `sub-130`，不能默认使用 AMD 盘上的 `sub-031` / `sub-033`。
-
-## 当前状态
-
-| 模块 | 当前路线 | NVIDIA 状态 |
-|---|---|---|
-| Face scientific definition | Py-Feat 2.1.1 Detectorv2 scientific core | **与 AMD 共享科学定义** |
-| Face cadence | timestamp-driven 15 Hz | **Accepted** |
-| CUDA dry-run runner | native Py-Feat / PyTorch CUDA | **`face_formal_dryrun_cuda.py` 已实现；待 sub-130 实机 parity** |
-| Face batching | CUDA native batch | RTX 5070 最优 batch 待实测；不机械照搬 AMD DirectML B8/B16 |
-| Primary / eyelid | temporal tracking + 478 mesh + EAR / aperture-iris / eyeBlink | 共享 derived 逻辑已存在；最终事件规则待冻结 |
-| Face QC | 478 mesh + eyes/iris + bbox/track/metrics | 共享 QC 已同步 |
-| Pose | MediaPipe Pose 10 Hz | 共享 science/QC/features 已同步 |
-| Motion | OpenCV frame-difference motion | 共享 science/QC/review 已同步 |
-| full-video formal CUDA runner | original AVI + completion/resume | **尚未实现/验收** |
-| body_motion_energy | body ROI 内像素运动 | 尚未实现 |
-
-## NVIDIA 与 AMD 的科学等价关系
-
-执行后端可以不同，但 scientific contract 必须一致：
+## 当前后端
 
 ```text
 AMD:    Py-Feat scientific core → ONNX Runtime DirectML
-NVIDIA: Py-Feat 2.1.1 native     → PyTorch CUDA
+NVIDIA: Py-Feat 2.1.1 Detectorv2 → native PyTorch CUDA
 ```
 
-两边共同保持：
-
-- timestamp-driven Face 15 Hz；
-- RetinaFace / Detectorv2 检测语义；
-- bbox/crop 与 canonical pose/gaze 定义；
-- 所有 detected faces 先保留；
-- 20 AU、7 emotion、V/A、gaze、6DoF pose、478 mesh、68 compatibility landmarks、blendshapes 全保留；
-- identity 不属于正式 scientific core；
-- primary tracking / EAR / eyelid derived / subject provenance 与 QC 语义一致。
-
-CUDA 可以改变 device scheduling 和最优 batch，但不得删减字段、改变采样时间点或改变变量定义。
-
-## 为什么不做 sub-031 ↔ sub-130 逐帧 parity
-
-两台机器连接不同数据盘，因此不同被试之间不能做 row-wise parity。当前验证链为：
-
-```text
-AMD 已完成：同输入 Py-Feat CPU reference ↔ DirectML parity
-NVIDIA 待完成：同一 sub-130 sample Py-Feat CPU reference ↔ native PyTorch CUDA parity
-```
-
-如果以后需要真正的 cross-device parity，只复制同一小份 representative sample 到另一台机器即可。
-
-## 当前 NVIDIA Face Gate
-
-代表被试：
-
-```text
-sub-130
-```
-
-五个 representative windows 合计约 240 秒，15 Hz，预期约 3600 帧：baseline start/end、Block1 middle、interblock middle、Block2 middle。
-
-当前顺序：
-
-```text
-sub-130 15 Hz sample
-→ native Py-Feat CPU reference
-→ native PyTorch CUDA
-→ field-level parity
-→ tracking / eyelid / QC
-→ NVIDIA representative gap-stress
-→ original-AVI full-video CUDA runner
-→ cohort batch / resume
-```
-
-CUDA dry-run runner：
-
-```text
-scripts/face_formal_dryrun_cuda.py
-```
-
-它要求 `py-feat==2.1.1` 与可用 CUDA GPU，并关闭 identity scientific branch。
-
-## 与 AMD 当前正式化进度的同步边界
-
-AMD `rgb-amd` 已进入 full-span formal runner 实机验收阶段。该进展说明共享科学层、正式 output schema 与 orchestration 设计已经继续向前，但 **AMD DirectML runner 不能直接当 NVIDIA CUDA runner 使用**。
-
-可以同步到 NVIDIA 的是：
-
-- full-span timestamp frame selection 逻辑；
-- subject output 命名与 manifest/completion 设计；
-- Motion/Pose 正式包装思路；
-- raw-first / flag-first 信息保留原则；
-- tracking / eyelid derived 科学规则。
-
-仍需 NVIDIA 独立实现/验收的是：
-
-- native PyTorch CUDA full-video Face executor；
-- RTX 5070 batch / memory / throughput；
-- NVIDIA cohort completion/resume；
-- CUDA-specific runtime manifest。
-
-## 当前数据与输出位置
+NVIDIA Face **不使用 AMD ONNX/DirectML executor**。正式入口 `scripts/face_formal_cuda.py` 明确要求 CUDA，并禁止静默 CPU fallback。
 
 NVIDIA 原始数据根：
 
@@ -113,40 +19,203 @@ NVIDIA 原始数据根：
 J:\Data
 ```
 
-RGB 输出位于仓库外：
+正式 RGB 输出：
 
 ```text
 D:\Project\厚粲杯\11_数据\04_Attention-Analysis_nvidia-cuda_RGB
 ```
 
-当前 RGB 开发 branch：
+代表被试：
 
 ```text
-rgb-nvidia
+sub-130
 ```
 
-`nvidia-cuda` 当前有人在使用，本轮不直接修改。
+## 当前状态
 
-## 开发前优先阅读
+| 模块 | NVIDIA 路线 | 状态 |
+|---|---|---|
+| Face scientific core | Py-Feat 2.1.1 Detectorv2 | 冻结 |
+| Face backend | native PyTorch CUDA | formal runner 已实现，待 RTX 5070 full-span 验收 |
+| Face cadence | timestamp-driven 15 Hz | Accepted |
+| Motion | OpenCV frame difference full FPS | raw formal wrapper 已实现 |
+| Pose | MediaPipe Pose 10 Hz | raw formal wrapper 已实现 |
+| 单被试总控 | Motion / Pose / Face 三线并行 | 已实现，待 sub-130 实机验收 |
+| raw validator | Face + Pose + Motion 完整性 + CUDA backend evidence | 已实现 |
+| cohort resume | eligible discovery / skip / resume / failure continue | 已实现代码，尚未批准全量 |
+| tracking / eyelid | 从 Face raw 后算 | 不阻挡抽取 |
+| Pose features | 从 landmarks 后算 | 不阻挡抽取 |
+| blink / PERCLOS | downstream | 不阻挡抽取 |
 
-1. [`../010-overview/015-并行分支与同步约定.md`](../010-overview/015-并行分支与同步约定.md)；
-2. [`044-RGB输出Schema与信息保留原则.md`](044-RGB输出Schema与信息保留原则.md)；
-3. [`042-面部分析工具与Benchmark.md`](042-面部分析工具与Benchmark.md)；
-4. [`043-姿态与运动量分析方法.md`](043-姿态与运动量分析方法.md)；
-5. [`046-NVIDIA-CUDA-RGB运行路线.md`](046-NVIDIA-CUDA-RGB运行路线.md)；
-6. [`../050-decisions/053-RGB分析路线与开发边界.md`](../050-decisions/053-RGB分析路线与开发边界.md)；
-7. [`../050-decisions/055-RGB-Face-15Hz采样频率冻结.md`](../050-decisions/055-RGB-Face-15Hz采样频率冻结.md)；
-8. [`../050-decisions/056-RGB-Face-Primary与眼睑派生规则.md`](../050-decisions/056-RGB-Face-Primary与眼睑派生规则.md)。
-
-AMD-specific DirectML backend/optimization decisions继续作为 scientific provenance 参考，但不替代 NVIDIA CUDA 的实机验收。
-
-## 当前续接
+## 正式单被试流程
 
 ```text
-sub-130 3600-frame CPU↔CUDA parity
-→ tracking / eyelid / QC
-→ NVIDIA gap-stress representative
-→ original-AVI full-video CUDA runner
-→ completion / resume
-→ NVIDIA RGB cohort queue
+face_formal_prepare.py
+        ↓
+生成 15 Hz timestamp frame grid
+        ↓
+┌────────────────┬─────────────────┬────────────────────────┐
+│ Motion         │ Pose            │ Face                   │
+│ full FPS       │ 10 Hz           │ 15 Hz                  │
+│ OpenCV CPU     │ MediaPipe CPU   │ Py-Feat / PyTorch CUDA │
+└────────────────┴─────────────────┴────────────────────────┘
+        三条并行
+             ↓
+rgb_formal_validate.py
+             ↓
+sub-XXX_manifest.json
 ```
+
+正式入口：
+
+```text
+scripts/run_rgb_formal_subject.ps1
+```
+
+只要以下三类 raw 完整即可进入下一被试：
+
+```text
+sub-XXX_motion_raw.parquet
+sub-XXX_pose_landmarks.parquet
+sub-XXX_face_raw.parquet
+```
+
+对应 manifest 也必须完整，最终：
+
+```text
+completion_status = complete
+extraction_complete = true
+qc_pass = null
+```
+
+NVIDIA validator 还额外要求 Face manifest 证明：
+
+```text
+execution_backend = pytorch_cuda
+device = cuda / cuda:<index>
+```
+
+## NVIDIA Face 调用方式
+
+核心调用保持 Py-Feat 2.1.1 native API：
+
+```python
+from feat import Detectorv2
+
+detector = Detectorv2(device="cuda", identity_model=None)
+
+fex = detector.detect(
+    batch,
+    data_type="tensor",
+    batch_size=len(batch),
+    num_workers=0,
+    pin_memory=False,
+    face_detection_threshold=0.5,
+    progress_bar=False,
+)
+```
+
+CUDA native Detectorv2 只使用一个端到端 batch：
+
+```yaml
+face:
+  native_cuda_batch: 16
+  native_cuda_prefetch_batches: 2
+```
+
+不要把 AMD DirectML 的 RetinaFace batch / multitask batch 两套参数照搬成 NVIDIA 正式参数。RTX 5070 最优 batch 需要实机 benchmark。
+
+## Face raw 保留
+
+Face raw 保留 Py-Feat native non-identity scientific outputs，包括：
+
+- 所有 detected faces；
+- no-face planned sample placeholder；
+- FaceRect / FaceScore / canonical bbox；
+- 20 AU；
+- 7 emotion；
+- valence / arousal；
+- gaze；
+- 6DoF head pose；
+- 478 mesh；
+- 68 compatibility landmarks；
+- blendshapes（含 `eyeBlinkLeft/Right`）；
+- subject / AVI frame / capture frame / unix_ms / phase / behavior context。
+
+Identity 不属于 accepted scientific core，固定 `identity_model=None`。
+
+## Derived 后移
+
+以下项目不再进入正式 raw 抽取关键路径：
+
+```text
+Face tracking
+primary-face selection
+EAR
+眼睑开度 / aperture-iris
+blink
+PERCLOS
+Pose features
+QC
+统计聚合
+```
+
+只要 Face/Pose/Motion raw 已保存，这些都可以之后重算，不需要重新跑 CUDA Face 或 MediaPipe Pose。
+
+## Stable Parquet schema
+
+临时分支 `codex/rgb-nvidia-formal-pipeline-v1` 记录过 streaming Parquet 首 chunk 全空导致 `double → null` cast 失败的真实故障。当前 CUDA Face formal writer 已吸收稳定 nullable dtype 规则，并新增：
+
+```text
+tests/test_rgb_formal_schema.py
+```
+
+provenance：
+
+```text
+51d17c9a6b7db7a1114380910bb111db38293512
+```
+
+## 当前运行方式
+
+同步分支：
+
+```powershell
+cd "D:\Project\厚粲杯\08_算法\01_Attention-Analysis_nvidia-cuda"
+
+git fetch origin --prune
+git switch rgb-nvidia
+git pull --ff-only
+git status --short --branch
+```
+
+检查 Face CUDA 环境：
+
+```powershell
+D:\conda_envs\attention-face-cuda\python.exe -c "import torch,importlib.metadata as m; print(torch.__version__,torch.version.cuda,torch.cuda.is_available(),torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,m.version('py-feat'))"
+```
+
+单被试 full-span pilot：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_rgb_formal_subject.ps1 `
+  -Subject sub-130 `
+  -CudaDevice cuda
+```
+
+指定 Face native CUDA batch：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_rgb_formal_subject.ps1 `
+  -Subject sub-130 `
+  -CudaDevice cuda `
+  -FaceBatch 16
+```
+
+完整 NVIDIA 运行路线见 [`046-NVIDIA-CUDA-RGB运行路线.md`](046-NVIDIA-CUDA-RGB运行路线.md)。
+
+## 当前执行边界
+
+`run_rgb_formal_cohort.ps1` 已经实现 resume/skip/status，但 **在 sub-130 full-span raw、CPU↔CUDA representative parity、schema test 和 CUDA throughput/memory Gate 完成之前，不启动正式全 cohort**。
+
+临时分支资产的吸收结果见 `RGB_TEMP_BRANCH_ABSORPTION_RESULT_20260826.md`。
