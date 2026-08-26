@@ -1,6 +1,8 @@
 # Scripts
 
-`scripts/` 保留当前仍有明确用途的任务入口，以及少量用户明确要求继续保留、可直接重跑的历史分析入口。正式 NIR 全量分析入口不在这里，而在 `runtime/nir-formal/`。
+`scripts/` 保留当前仍有明确用途的任务入口，以及少量需要继续保留、可直接重跑的历史验证入口。正式 NIR runtime 仍位于 `runtime/nir-formal/`。
+
+`amd-DirectML` 是 AMD 综合线；当前 AMD RGB 的 active development branch 为 `rgb-amd`。两条分支属于同一个 Attention-Analysis 项目。分支关系见 `docs/010-overview/015-并行分支与同步约定.md`。
 
 ## 当前入口索引
 
@@ -8,29 +10,35 @@
 |---|---|---|
 | `extract_eye_dataset.py` | 当前 | NIR 眼框数据集抽帧与 provenance |
 | `evaluate_yolo_eye_test.py` | 当前 | YOLO26n frozen test 评估 |
-| `sart_formal_analysis.py` | **当前** | FocusWave v3.1.3 最终 BB 行为分析入口 |
-| `nir_behavior_alignment.py` | **当前** | frozen full-class NIR × v3.1.3 BB Behavior 的 Unix-ms 对齐、trial/probe 窗口、coverage/QC/diagnostics |
-| `build_stimulus_visual_table.py` | **当前** | 重建正式 SART 画面并生成视觉协变量/报告 PNG |
-| `rgb_analysis.py` | **当前，共享 RGB** | RGB audit / timeline / Motion / Pose / Face sampling 与 QC 入口 |
-| `face_formal_dryrun_sample.py` | **当前，共享 RGB** | timestamp-driven 15 Hz representative Face dry-run sampling |
-| `face_formal_dryrun_directml_v02.py` | **当前，AMD** | 已接受的 direct-AVI + prefetch + RetinaFace B8 → pending multitask B16 DirectML dry-run runner |
-| `face_derive_tracking_eyelid_v02.py` | **当前，共享 RGB** | window-aware primary tracking + EAR / aperture-iris / eyeBlink derived |
-| `face_qc_visualize_v03.py` | **当前，共享 RGB** | 全脸 478 mesh + eyes/iris + primary/secondary + metrics QC；单层黑字 |
-| `face_compare_pyfeat_runs.py` | 当前辅助 | 两次 Py-Feat raw 输出 parity 比较 |
-| `face_real_directml_pyfeat.py` / `face_real_parity_v03.py` | AMD 验证资产 | real300 DirectML 与 CPU-reference parity 的历史可复现入口 |
-| `face_directml_probe.py` / `face_directml_diagnose.py` | AMD 验证资产 | ONNX Runtime DirectML provider / fallback / batch diagnostics |
-| `sart_bbb_v3_0_analysis.py` | **历史、可执行** | 2026-08-16 FocusWave v3.0 BBB 行为分析重跑入口 |
+| `sart_formal_analysis.py` | 当前 | FocusWave v3.1.3 最终 BB Behavior |
+| `nir_behavior_alignment.py` | 当前 | NIR × Behavior Unix-ms / trial / probe 对齐 |
+| `build_stimulus_visual_table.py` | 当前 | SART 视觉协变量与报告图 |
+| `rgb_analysis.py` | 当前，共享 RGB | RGB audit / gaps / Motion / Pose / sampling / QC 开发入口 |
+| `face_formal_prepare.py` | **当前，AMD formal** | 完整正式时间段 timestamp-driven 15 Hz Face frame manifest |
+| `rgb_formal_motion_pose.py` | **当前，AMD formal** | 复用已验证 Motion / Pose engine，写正式 subject 输出 |
+| `face_formal_directml.py` | **当前，AMD formal** | original AVI → Py-Feat DirectML full-span Face raw |
+| `face_formal_derive.py` | **当前，AMD formal** | continuous tracking → primary face → eyelid / openness derived |
+| `run_rgb_formal_subject.ps1` | **当前，AMD formal 总控** | 跨两个 Conda 环境一条命令跑完整单被试 |
+| `face_formal_dryrun_sample.py` | 验证/provenance | representative 15 Hz dry-run sampling |
+| `face_formal_dryrun_directml_v02.py` | 已接受工程基线 | direct AVI + prefetch + RetinaFace B8 + pooled multitask B16 |
+| `face_derive_tracking_eyelid_v02.py` | 验证/provenance | dry-run window-aware tracking / eyelid derived |
+| `face_qc_visualize_v03.py` | QC | 478 mesh + eyes/iris + primary/secondary + metrics 可视化 |
+| `face_real_directml_pyfeat.py` / `face_real_parity_v03.py` | 历史验证资产 | real-300 DirectML / CPU parity |
+| `face_directml_probe.py` / `face_directml_diagnose.py` | 历史诊断资产 | ORT DirectML provider / fallback / batch diagnostics |
+| `face_export_pyfeat_onnx.py` | backend provenance | Py-Feat RetinaFace + multitask scientific core ONNX export |
+| `face_export_libreface_onnx.py` | 历史验证 | LibreFace ONNX export |
+| `sart_bbb_v3_0_analysis.py` | 历史、可执行 | FocusWave v3.0 BBB 行为分析重跑 |
 
 ## Behavior
 
-当前 BB 行为分析默认配置为 `configs/behavior_formal.yaml`：
+当前正式 BB：
 
 ```powershell
 $env:PYTHONPATH = "src"
 python scripts/sart_formal_analysis.py --stage all
 ```
 
-正式 Behavior 默认输出已迁至仓库外：
+正式 Behavior 输出位于：
 
 ```text
 D:\_AttentionData\Beijing-Behavior\formal-v1
@@ -38,56 +46,76 @@ D:\_AttentionData\Beijing-Behavior\formal-v1
 
 ## NIR × Behavior
 
-NIR × Behavior 对齐默认配置为 `configs/nir_behavior_alignment.yaml`，当前正式下游版本为 `nir-behavior-v1.2` / schema 2。sub-031 prototype 已完成验收；在其余 full-class 尚未完成前，配置仍保留 prototype safety gate。
+当前入口：
 
 ```powershell
 $env:PYTHONPATH = "src"
 python scripts/nir_behavior_alignment.py --subjects sub-031
 ```
 
-schema 2 区分 Block 边界造成的窗口截断与 Block 内部真实 NIR 缺失，并使用 `oar_available_fraction` 表示 OAR 数值存在率；它不是 blink/闭眼质量真值。SART 视觉协变量使用 `configs/stimulus_visual.yaml` 和 `build_stimulus_visual_table.py`。
+NIR、Behavior、RGB 都属于同一个项目；当前拆 branch 只是为了并行工作。
 
-## AMD RGB 当前入口
+## AMD RGB 当前正式流程
 
-RGB 当前正式化工作已经进入 `amd-DirectML`，不需要为了 Face/Pose/Motion 切回 `rgb-dev`。
-
-主 RGB 环境：
-
-```powershell
-conda activate "D:\CondaEnvs\attention-rgb"
-cd "D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-amd-DirectML"
-```
-
-Face DirectML 环境：
-
-```powershell
-conda activate "D:\CondaEnvs\attention-face-directml"
-```
-
-当前 AMD Face 已冻结为 Py-Feat 2.1.1 scientific core + ONNX Runtime DirectML；15 Hz 已冻结。sub-031 第一档优化版本使用 direct AVI + reader/preprocess prefetch + RetinaFace B8 + pending multitask B16，实测约 29.15 fps。
-
-代表性 dry-run 的科学流程为：
+Face 科学定义：
 
 ```text
-face_formal_dryrun_sample.py
-→ face_formal_dryrun_directml_v02.py
-→ face_derive_tracking_eyelid_v02.py
-→ face_qc_visualize_v03.py
+Py-Feat 2.1.1 Detectorv2 scientific core
++ ONNX Runtime DirectML
++ timestamp-driven 15 Hz
++ RetinaFace B8
++ pooled multitask B16
++ original AVI direct decode
 ```
 
-这里仍是 formal dry-run，不是 44 被试 full-video 正式入口。sub-033 gap stress、blink/`perclos80_proxy` 和 full-video runner 尚待冻结。
+第一档工程优化已在 `sub-031` representative dry-run 上 Accepted。现在已经进入正式完整时间段 runner 阶段。
 
-AMD RGB 输出统一位于仓库外：
+单被试正式链：
 
 ```text
-D:\_AttentionData\Beijing-RGB
+face_formal_prepare.py
+→ rgb_formal_motion_pose.py
+→ face_formal_directml.py
+→ face_formal_derive.py
 ```
 
-环境/命令细节见 `docs/040-rgb/README.md` 与 `docs/040-rgb/045-RGB开发环境与运行指令.md`。
+当前 active development branch 推荐在：
+
+```text
+D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-rgb-amd
+branch: rgb-amd
+```
+
+推荐总控：
+
+```powershell
+cd "D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-rgb-amd"
+$env:ATTENTION_FACE_MODEL_DIR = "D:\_AttentionData\Beijing-RGB\_test\face-directml\models\pyfeat"
+
+powershell -ExecutionPolicy Bypass -File .\scripts\run_rgb_formal_subject.ps1 `
+  -Subject sub-031
+```
+
+正式输出：
+
+```text
+D:\_AttentionData\Beijing-RGB\sub-XXX
+```
+
+当前验收顺序：
+
+```text
+sub-031 单被试从头到尾实机验收
+→ 44 人 batch + resume
+→ body_motion_energy
+→ blink / perclos80_proxy 最终科学规则
+```
+
+时间戳 gap 保留为 QC 信息，不再作为单独阻挡首个全程运行的前置 Gate。
 
 ## 历史 BBB
 
-旧 BBB 为避免与当前 BB 实现互相覆盖，使用独立配置和独立 Python 包：
+旧 BBB 使用独立配置和包：
 
 ```text
 configs/sart_bbb_v3_0.yaml
@@ -95,4 +123,4 @@ src/attention_pipeline/behavior_bbb_v3_0/
 scripts/sart_bbb_v3_0_analysis.py
 ```
 
-旧 BBB 的计划、报告和图仍保存在 `docs/030-behavior/history/BBB-v3.0/`；Git 历史继续保留完整旧仓库快照。当前正式结果解释只认 v3.1.3 的 BB 管线，历史 BBB 入口不得被误作当前分析。
+历史结果与工作记录只用于 provenance，不作为当前 v3.1.3 BB 正式口径。
