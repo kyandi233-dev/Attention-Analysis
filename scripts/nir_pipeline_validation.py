@@ -13,6 +13,9 @@ from attention_pipeline.nir_pipeline_validation.publication_run import (
     run_publication_validation,
 )
 from attention_pipeline.nir_pipeline_validation.run import run_validation
+from attention_pipeline.nir_pipeline_validation.supplementary_run import (
+    run_supplementary_validation,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -28,12 +31,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--core-only",
         action="store_true",
-        help="Run legacy/core diagnostic validation only; skip publication Figure 1-10 suite.",
+        help="Run legacy/core diagnostic validation only; skip publication Figure suites.",
     )
     parser.add_argument(
         "--publication-only",
         action="store_true",
-        help="Run publication analysis/Figure 1-10 only; assumes core validation tables/models already exist.",
+        help="Run publication Figure 1-10 plus supplementary figures only; assumes core model table already exists if Figure 10D is required.",
     )
     return parser.parse_args()
 
@@ -53,6 +56,9 @@ def main() -> int:
         result["core_validation"] = run_validation(args.config, subjects=subjects)
     if not args.core_only:
         result["publication_validation"] = run_publication_validation(
+            args.config, subjects=subjects
+        )
+        result["supplementary_validation"] = run_supplementary_validation(
             args.config, subjects=subjects
         )
 
