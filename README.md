@@ -1,167 +1,197 @@
-# Attention-Analysis｜AMD RGB 工作线
+# Attention-Analysis｜AMD RGB 正式工作线
 
-> 当前 branch：`rgb-amd`。这是 Attention-Analysis 的 AMD RGB 并行开发工作线，不是独立项目。分支关系见 [`docs/010-overview/015-并行分支与同步约定.md`](docs/010-overview/015-并行分支与同步约定.md)。
+当前 branch：`rgb-amd`。本分支用于 Windows AMD 工作站上的正式 RGB `Face + Pose + Motion` raw 全量提取。
 
-## 当前工作目录
+> 当前状态：**正式三线并行 raw 主链已通过 full-span validator，AMD cohort 已进入正式全量执行。** `sub-036` 已验证 `completion_status=complete`、`extraction_complete=true`、`issues=[]`、`warnings=[]`。
+
+## 1. 当前正式定义
+
+正式分析范围：
 
 ```text
-D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-rgb-amd
+baseline start
+→ instructions / practice / transition
+→ Block1
+→ inter-block transition
+→ Block2
+→ Block2 end
 ```
 
-每次开始工作：
+正式 RGB 三支：
+
+| 模块 | 时间分辨率 | 算法 / 后端 |
+|---|---:|---|
+| Motion | 原视频 full FPS（约 30 fps） | OpenCV 相邻灰度帧差 |
+| Pose | 10 Hz | MediaPipe Pose Landmarker Lite |
+| Face | 15 Hz | Py-Feat 2.1.1 scientific core → ONNX Runtime DirectML |
+
+Face 当前性能配置为：
+
+```text
+RetinaFace batch = 32
+multitask batch = 64
+face threshold = 0.5
+NMS = 0.4
+prefetch = 3
+CPU postprocess inflight = 2
+```
+
+其中 batch / prefetch / inflight 属于性能参数；15 Hz、Py-Feat scientific core、0.5 detection threshold 等属于科学/测量定义，不在全量过程中按被试改变。
+
+## 2. 正式主链
+
+```text
+face_formal_prepare.py
+        ↓
+生成 timestamp-driven 15 Hz Face frame schedule
+        ↓
+┌────────────────┬───────────────────┬─────────────────────────────┐
+│ Motion         │ Pose              │ Face                        │
+│ full FPS       │ 10 Hz             │ 15 Hz                       │
+│ OpenCV         │ MediaPipe         │ Py-Feat ONNX / DirectML     │
+└────────────────┴───────────────────┴─────────────────────────────┘
+        三条独立 reader 并行
+                     ↓
+rgb_formal_validate.py
+                     ↓
+sub-XXX_manifest.json
+```
+
+正式 raw extraction **不再等待**：
+
+```text
+Face tracking
+primary-face selection
+EAR / eyelid
+blink / PERCLOS
+Pose features
+QC
+统计聚合
+```
+
+这些内容都可以从已落盘 raw 后续重建。
+
+实验性的 `SharedDecode` 已测试，目前没有显示出比三条独立 reader 更好的墙钟吞吐，因此不作为正式 cohort 默认路径。
+
+## 3. 每次打开新终端
 
 ```powershell
 cd "D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-rgb-amd"
+
 git status --short --branch
 git fetch origin --prune
+git switch rgb-amd
 git pull --ff-only
+git status --short --branch
 ```
 
-当前 branch 应为：
-
-```text
-rgb-amd
-```
-
-## RGB 当前目标
-
-正式 RGB 只做一件事：**从 baseline 开始连续到 Block2 结束，把 Face、Pose、Motion 能稳定获得的数据完整抽取并落盘。** QC、blink/PERCLOS、body motion 和统计聚合可以后续直接基于已保存结果完成，不阻挡当前全量抽取。
-
-当前正式链：
-
-```text
-Face 15 Hz：Py-Feat 2.1.1 scientific core + ONNX Runtime DirectML
-Pose 10 Hz：MediaPipe Pose Landmarker
-Motion full-fps：OpenCV frame difference
-```
-
-## 当前状态
-
-| 模块 | 状态 |
-|---|---|
-| Face formal | 已实现 |
-| Pose formal | 已实现 |
-| Motion formal | 已实现 |
-| 单被试总控 | **已实现** |
-| 被试最终完整性验证 + `sub-XXX_manifest.json` | **已实现** |
-| cohort batch / resume | **已实现，待实机验收** |
-| blink / PERCLOS / body_motion_energy | 后续派生，不阻挡抽取 |
-
-## 单被试运行
-
-环境保持隔离：
-
-| 任务 | Conda 环境 |
-|---|---|
-| RGB audit / Motion / Pose / validation | `D:\CondaEnvs\attention-rgb` |
-| Face ONNX Runtime DirectML | `D:\CondaEnvs\attention-face-directml` |
-| Py-Feat reference / ONNX export | `D:\CondaEnvs\attention-face-pyfeat` |
-
-先设置 Face 模型目录：
+设置 Face 模型目录：
 
 ```powershell
 $env:ATTENTION_FACE_MODEL_DIR = "D:\_AttentionData\Beijing-RGB\_test\face-directml\models\pyfeat"
 ```
 
-然后运行一个被试：
+环境：
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\run_rgb_formal_subject.ps1 `
-  -Subject sub-031
-```
+| 任务 | Conda 环境 |
+|---|---|
+| audit / Motion / Pose / validation | `D:\CondaEnvs\attention-rgb` |
+| Face DirectML | `D:\CondaEnvs\attention-face-directml` |
+| Py-Feat reference / ONNX export | `D:\CondaEnvs\attention-face-pyfeat` |
 
-总控顺序为：
-
-```text
-face_formal_prepare.py
-→ rgb_formal_motion_pose.py
-→ face_formal_directml.py
-→ face_formal_derive.py
-→ rgb_formal_validate.py
-```
-
-只有最终 validation 通过后，该被试才会生成：
-
-```text
-D:\_AttentionData\Beijing-RGB\sub-XXX\sub-XXX_manifest.json
-```
-
-其中 `extraction_complete=true` 表示抽取完整；它与后续 QC 是否通过是两件事。
-
-## cohort 全量运行
-
-`sub-031` 实机验收通过后直接运行：
+## 4. 正式全量运行
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\run_rgb_formal_cohort.ps1
 ```
 
-cohort runner 会：
+正常续跑不要使用 `-Force`。
+
+cohort runner 会自动：
 
 ```text
 刷新 rgb_inventory.csv
-→ 只选择 analysis_eligible=True 的正式被试
-→ 已有完整 sub-XXX_manifest.json 的自动跳过
-→ 未完成的继续运行
-→ 单个被试失败时记录错误并继续下一人
+→ 选择 analysis_eligible=True
+→ 完整被试自动 skip
+→ 已完成 raw branch 自动 resume/skip
+→ 单被试失败记录后继续
 → 持续更新 cohort_status.csv
-→ 最后生成 cohort_manifest.json
+→ 最终 cohort_manifest.json
 ```
 
-需要只跑指定被试时可以使用：
+只跑指定被试：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\run_rgb_formal_cohort.ps1 `
-  -Subjects sub-031,sub-032,sub-033
+  -Subjects sub-036,sub-037
 ```
 
-## 输出
+## 5. 正式输出
 
-正式输出统一位于：
+根目录：
 
 ```text
 D:\_AttentionData\Beijing-RGB
 ```
 
-单被试主要文件：
+单被试核心 raw：
 
 ```text
 sub-XXX_face_frames.csv
+sub-XXX_face_prepare_manifest.json
 sub-XXX_face_raw.parquet
-sub-XXX_face_tracks.parquet
-sub-XXX_eye_features.parquet
+sub-XXX_face_raw_manifest.json
+
 sub-XXX_motion_raw.parquet
+sub-XXX_motion_manifest.json
+
 sub-XXX_pose_landmarks.parquet
-sub-XXX_pose_features.parquet
+sub-XXX_pose_manifest.json
+
 sub-XXX_manifest.json
 ```
 
-cohort 级文件：
+`extraction_complete=true` 表示三类 raw 完整；`qc_pass=null` 是当前预期状态，表示后续科学 QC 尚未执行，并非 QC 失败。
+
+`face_tracks.parquet`、`eye_features.parquet`、`pose_features.parquet` 等属于 downstream derived，可以以后批量重建，不是 extraction complete 的必要文件。
+
+## 6. 当前 raw 能支持的后续分析
+
+当前 Face raw 已保存所有检测人脸、no-face 时点、bbox / score / 5-point landmarks、20 AU、7 emotion、valence/arousal、gaze、6DoF head pose、478 mesh、68-point compatibility landmarks、native blendshapes（含 `eyeBlinkLeft/Right`）以及完整时间/行为身份。
+
+因此后续无需重新运行 Py-Feat即可重建：
 
 ```text
-rgb_inventory.csv
-cohort_status.csv
-cohort_manifest.json
+Face tracking / primary face
+EAR
+眼睑开度 / 虹膜直径 / aperture-iris
+blink rate / approximate duration
+PERCLOS
+AU / gaze / head-pose 时间窗特征
+trial / block / probe / sliding-window 分析
+baseline normalization
 ```
 
-Git pull / switch / merge 不管理这些正式结果。
+Pose raw 保存全部 33 landmarks、world coordinates、visibility/presence；Motion raw 保存 full-FPS 帧差和 gap 信息。具体边界与方法见 049 / 410。
 
-## 文档入口
+## 7. 文档入口
 
-| 内容 | 入口 |
+| 内容 | 文档 |
 |---|---|
-| RGB 当前状态和正式运行 | [`docs/040-rgb/README.md`](docs/040-rgb/README.md) |
-| RGB 输出 Schema / 信息保留 | [`docs/040-rgb/044-RGB输出Schema与信息保留原则.md`](docs/040-rgb/044-RGB输出Schema与信息保留原则.md) |
-| AMD RGB 环境与指令 | [`docs/040-rgb/045-RGB开发环境与运行指令.md`](docs/040-rgb/045-RGB开发环境与运行指令.md) |
-| scripts 索引 | [`scripts/README.md`](scripts/README.md) |
-| 历史工作记录 | [`docs/工作记录/`](docs/工作记录/) |
+| 当前 RGB docs 首页 | [`docs/040-rgb/README.md`](docs/040-rgb/README.md) |
+| 输出 Schema / 信息保留 | [`044-RGB输出Schema与信息保留原则.md`](docs/040-rgb/044-RGB输出Schema与信息保留原则.md) |
+| AMD 环境与运行指令 | [`045-RGB开发环境与运行指令.md`](docs/040-rgb/045-RGB开发环境与运行指令.md) |
+| **正式方法、算法与参数依据** | [`049-RGB正式分析方法与参数依据.md`](docs/040-rgb/049-RGB正式分析方法与参数依据.md) |
+| **当前实现/全量状态快照** | [`410-RGB当前状态与全量执行总结_20260826.md`](docs/040-rgb/410-RGB当前状态与全量执行总结_20260826.md) |
 
-## 现在的执行顺序
+## 8. 当前执行顺序
 
 ```text
-sub-031 全程实机验收
-→ 修实际运行错误（如果有）
-→ cohort 全量抽取
-→ 根据 cohort_status 补失败被试
-→ 再处理 QC / blink / PERCLOS / body motion / 统计派生
+AMD cohort raw 全量继续运行
+→ 按 cohort_status 补失败/缺失
+→ NVIDIA sub-130 Gate + batch benchmark
+→ AMD DirectML ↔ NVIDIA native Py-Feat representative parity
+→ tracking / Pose features / EAR / blink / PERCLOS
+→ cohort QC
+→ trial / block / probe / sliding-window 与统计分析
 ```
