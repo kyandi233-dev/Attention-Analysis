@@ -52,10 +52,10 @@ face:
   selected_backend: pyfeat
   selected_backend_version: "py-feat 2.1.1 Detectorv2 scientific core"
   execution_provider: DmlExecutionProvider
-  # sub-032 used B8/B16 with only ~5.1/12 GB dedicated VRAM in the live run.
-  # Raise the formal default to B16/B32; CLI flags can override if a machine needs less.
-  retinaface_batch: 16
-  multitask_batch: 32
+  # B16/B32 used about 7/12 GB dedicated VRAM on the RX 6750 GRE live run.
+  # Benchmark the next tier at B32/B64; CLI flags can still override if a machine needs less.
+  retinaface_batch: 32
+  multitask_batch: 64
   prefetch_batches: 3
   postprocess_inflight: 2
   seek_threshold_frames: 120
