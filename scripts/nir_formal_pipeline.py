@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 
 from attention_pipeline.nir_analysis_ready.materialize import run_materialization
-from attention_pipeline.nir_formal_analysis.tables import run_cohort
+from attention_pipeline.nir_formal_analysis.cohort import run_cohort
 
 
 def parse_args() -> argparse.Namespace:
