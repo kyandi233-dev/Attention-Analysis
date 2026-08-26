@@ -65,7 +65,7 @@ def plot_pipeline_schematic(
         )
 
     branches = [
-        (0.58, 0.33, "Behavior-only QC"),
+        (0.58, 0.33, "Behavior / omission QC"),
         (0.68, 0.23, "Time-on-task / Block"),
         (0.54, 0.13, "Trial outcome / RT"),
         (0.42, 0.23, "Probe windows"),
@@ -165,7 +165,7 @@ def plot_trial_outcomes(
     formats: list[str],
     dpi: int,
 ) -> list[str]:
-    order = ["go_correct", "go_omission", "nogo_correct", "nogo_commission"]
+    order = ["go_correct", "go_omission_program", "nogo_correct", "nogo_commission"]
     subject = (
         trial_table.assign(
             pir_median=pd.to_numeric(trial_table["pir_median"], errors="coerce")
@@ -178,7 +178,7 @@ def plot_trial_outcomes(
         for name in order
     ]
 
-    fig, ax = plt.subplots(figsize=(8.8, 5.4))
+    fig, ax = plt.subplots(figsize=(9.4, 5.4))
     ax.boxplot(groups, labels=order, showfliers=False)
     rng = np.random.default_rng(0)
     for idx, values in enumerate(groups, start=1):
@@ -188,7 +188,70 @@ def plot_trial_outcomes(
         ax.scatter(x, values, s=26, alpha=0.55)
     ax.axhline(0, linewidth=0.8)
     ax.set_ylabel("Subject-median pre-trial PIR")
-    ax.set_title("Trial outcome × pre-trial PIR")
+    ax.set_title("Program-scored trial outcome × pre-trial PIR")
+    ax.tick_params(axis="x", rotation=18)
+    _banner(fig)
+    return _save(fig, base, formats, dpi)
+
+
+def plot_omission_subtypes(
+    trial_table: pd.DataFrame,
+    *,
+    base: Path,
+    formats: list[str],
+    dpi: int,
+) -> list[str]:
+    order = [
+        "clean_omission",
+        "prestimulus_associated_omission",
+        "carryover_associated_omission",
+        "prestimulus_and_carryover_associated_omission",
+        "go_omission_unclassified_qc_missing",
+    ]
+    labels = [
+        "clean",
+        "prestimulus",
+        "carry-over",
+        "pre + carry-over",
+        "QC missing",
+    ]
+    omission = trial_table[
+        trial_table["omission_qc_type"].astype(str).isin(order)
+    ].copy()
+    omission["pir_median"] = pd.to_numeric(omission["pir_median"], errors="coerce")
+    subject = (
+        omission.groupby(["subject", "omission_qc_type"], as_index=False)["pir_median"]
+        .median()
+    )
+    groups = [
+        subject.loc[
+            subject["omission_qc_type"].astype(str).eq(name), "pir_median"
+        ].dropna().to_numpy()
+        for name in order
+    ]
+
+    fig, ax = plt.subplots(figsize=(10.2, 5.6))
+    nonempty = any(len(values) for values in groups)
+    if nonempty:
+        ax.boxplot(groups, labels=labels, showfliers=False)
+        rng = np.random.default_rng(1)
+        for idx, values in enumerate(groups, start=1):
+            if len(values) == 0:
+                continue
+            x = idx + rng.normal(0, 0.035, size=len(values))
+            ax.scatter(x, values, s=28, alpha=0.6)
+    else:
+        ax.text(
+            0.5,
+            0.5,
+            "No Go omission rows available",
+            ha="center",
+            va="center",
+            transform=ax.transAxes,
+        )
+    ax.axhline(0, linewidth=0.8)
+    ax.set_ylabel("Subject-median pre-trial PIR")
+    ax.set_title("Go omission QC subtypes × pre-trial PIR")
     ax.tick_params(axis="x", rotation=18)
     _banner(fig)
     return _save(fig, base, formats, dpi)
