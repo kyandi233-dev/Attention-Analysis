@@ -69,59 +69,79 @@ RetinaFace B8
 - AU/mesh/blendshape 字段裁剪；
 - 15 Hz 改动。
 
-因此本轮属于工程调度优化，不应改变科学测量定义。
+因此本轮属于工程调度优化，不改变科学测量定义。
 
-## 为什么仍需 parity
+## sub-031 3600 帧 A/B 实机结果
 
-candidate 直接读取 AVI，而 reference dry-run 使用 JPEG quality 95。即使模型图与处理定义完全不变，去除 JPEG round-trip 后输入像素也可能产生小幅差异。因此必须做一次同 3600 时点 A/B：
+### Legacy JPEG95 reference
 
-1. legacy JPEG reference；
-2. optimized direct-AVI candidate；
-3. 比较 face count、bbox IoU、AU、emotion、V/A、pose、gaze、blendshapes、mesh。
+- 3600 input frames；
+- 3629 detected/output face rows；
+- RetinaFace B8；multitask 配置 B16，但旧 loop 实际通常仅处理当前 RetinaFace batch 产生的约 8 张 face chips；
+- pipeline wall = 212.1708 s；
+- throughput = **16.9675 fps**；
+- multitask DML = 42.7643 s。
 
-只有速度提升且 parity 可接受，v0.2 candidate 才能晋升为正式 Face runner 基础。
+### Optimized direct-AVI v0.2
 
-## 推荐实机命令
+- 3600 input frames；
+- 3630 detected/output face rows；
+- RetinaFace calls = 450（严格 B8）；
+- multitask full-B16 calls = **226**；partial calls = **1**；
+- faces sent to multitask = 3630；
+- pipeline wall before parquet = **123.4865 s**；
+- throughput before parquet = **29.1530 fps**；
+- including parquet write = **28.6060 fps**；
+- multitask DML = **19.0804 s**。
 
-### A. legacy reference（一次性）
+相对 legacy reference：
 
-```powershell
-python scripts/face_formal_dryrun_directml.py `
-  --sample-dir "D:\_AttentionData\Beijing-RGB\_test\face-formal-dryrun\sub-031" `
-  --model-dir "D:\_AttentionData\Beijing-RGB\_test\face-directml\models\pyfeat" `
-  --output-dir "D:\_AttentionData\Beijing-RGB\_test\face-formal-dryrun\sub-031\directml-v01-reference"
+- throughput = **1.718×**；
+- pipeline wall 降低约 **41.8%**；
+- 即使包含 parquet 写盘，仍为 **1.686×**；
+- multitask DML 时间降低约 **55.4%**，证明跨 RetinaFace batch 的 pending-B16 设计真正吃到了 B16 吞吐。
+
+reader thread wall=122.2945 s，而整个 pipeline wall=123.4865 s。reader timing 与主线程 DML/CPU 工作发生重叠，因此不能把各 stage 简单相加重构 wall；这一结果本身也说明 prefetch 已把视频读取/预处理与主推理链显著重叠。
+
+## Parity
+
+reference 是 JPEG quality 95 test frames，candidate 直接读取原 AVI，因此输入像素并非 bitwise identical。此 parity 的目的不是要求完全相等，而是确认移除 JPEG round-trip 与工程调度没有造成不可接受的科学输出漂移。
+
+结果：
+
+- reference rows=3629，candidate rows=3630，matched rows=3629；
+- 3600 帧 face-count agreement = **0.9997222**，即仅 1 帧 face count 不同；
+- bbox mean IoU = **0.995838**，min IoU = **0.940041**；
+- FaceScore Pearson≈0.99490；
+- AU20 MAE≈0.00781，Pearson≈0.99784；
+- emotion7 MAE≈0.00624，Pearson≈0.99826；
+- V/A MAE≈0.00784，Pearson≈0.99843；
+- pose6d MAE≈0.00218，Pearson≈0.9999969；
+- gaze MAE≈0.00493，Pearson≈0.99783；
+- blendshape MAE≈0.00161，Pearson≈0.999734；
+- normalized 478×3 mesh MAE≈0.000457，Pearson≈0.9999959；
+- original-frame mesh XY MAE≈0.0637 px，Pearson≈0.99999948。
+
+解释边界：candidate 是直接读原 AVI；reference 经过 JPEG95 有损编码。上述小幅非零差异不能解释为模型 graph 或科学定义改变。相反，formal runtime 本来就应优先使用原 AVI，避免把测试期 JPEG 压缩引入正式测量链。
+
+## 决策
+
+**First-tier optimization: Accepted.**
+
+正式 Face runner 基础从现在起采用：
+
+```text
+original AVI
+→ timestamp-driven 15 Hz selected frames
+→ reader/preprocess prefetch
+→ RetinaFace DirectML B8
+→ decode/NMS + 1.2 square-reflect crop
+→ cross-RetinaFace pending face chips
+→ multitask DirectML full B16 when available
+→ full scientific raw outputs
+→ parquet
 ```
 
-### B. optimized v0.2 candidate
+旧 `face_formal_dryrun_directml.py` 与 real-300 runner 保留作为历史/reference，不删除、不覆盖。
 
-```powershell
-python scripts/face_formal_dryrun_directml_v02.py `
-  --sample-dir "D:\_AttentionData\Beijing-RGB\_test\face-formal-dryrun\sub-031" `
-  --model-dir "D:\_AttentionData\Beijing-RGB\_test\face-directml\models\pyfeat" `
-  --output-dir "D:\_AttentionData\Beijing-RGB\_test\face-formal-dryrun\sub-031\directml-v02"
-```
-
-### C. parity
-
-```powershell
-python scripts/face_compare_pyfeat_runs.py `
-  --reference-raw "D:\_AttentionData\Beijing-RGB\_test\face-formal-dryrun\sub-031\directml-v01-reference\pyfeat_dml_raw.parquet" `
-  --candidate-raw "D:\_AttentionData\Beijing-RGB\_test\face-formal-dryrun\sub-031\directml-v02\pyfeat_dml_raw.parquet" `
-  --output "D:\_AttentionData\Beijing-RGB\_test\face-formal-dryrun\sub-031\directml-v02\optimization_parity.json"
-```
-
-## 回传重点
-
-优先检查/回传：
-
-- legacy `pyfeat_dml_real300_manifest.json`；
-- candidate `pyfeat_dml_formal_dryrun_v02_manifest.json`；
-- `optimization_parity.json`。
-
-速度比较应使用两者都不含 parquet write 的 pipeline wall/FPS；candidate manifest 同时单独记录 parquet write 与 including-write FPS。
-
-## 当前状态
-
-**First-tier optimization: Implemented, not yet accepted.**
-
-等待 `sub-031` 3600-frame A/B speed + parity。通过后再把 optimized direct-AVI/prefetch/pending-batch 结构作为正式 full-cohort runner 基础；第二档 detector cadence/tracking optimization 暂不进入。
+下一阶段 tracking / primary-face / eyelid derived 应以 optimized v0.2 raw 为输入。第二档 detector cadence / tracking-based detector skipping 仍暂不进入，除非后续正式全量成本仍需要进一步压缩。
