@@ -23,7 +23,7 @@ baseline start
 → Block2 end
 ```
 
-当前正式策略已经同步为 **raw-first**：先一次性保存昂贵/不可直接恢复的 Face、Pose、Motion raw；tracking、眼睑、Pose features、blink/PERCLOS、QC 和统计聚合全部后移。
+当前正式策略为 **raw-first**：先一次性保存昂贵/不可直接恢复的 Face、Pose、Motion raw；tracking、主脸选择、眼睑、Pose features、blink/PERCLOS、QC 和统计聚合全部后移。
 
 ## 2. NVIDIA Face 后端不能照抄 AMD DirectML
 
@@ -33,7 +33,7 @@ NVIDIA 正式 Face runner：
 scripts/face_formal_cuda.py
 ```
 
-它使用 Py-Feat 2.1.1 原生 PyTorch/CUDA：
+必须保持 Py-Feat 2.1.1 原生 PyTorch/CUDA 调用：
 
 ```python
 from feat import Detectorv2
@@ -54,31 +54,36 @@ fex = detector.detect(
 )
 ```
 
-正式 runner 还有两层硬保护：
+正式 runner 有硬保护：
 
+- `py-feat == 2.1.1`；
 - `torch.cuda.is_available()` 必须为 `True`；
-- `--device` 必须是 `cuda` 或 `cuda:<index>`。
-
-因此 **不允许静默退回 CPU**。
+- `--device` 必须为 `cuda` 或 `cuda:<index>`；
+- validator 要求 manifest 明确记录 `execution_backend=pytorch_cuda`；
+- 不允许 silent CPU fallback。
 
 ### Batch 语义
 
-AMD DirectML 是两个独立 ONNX 模型，因此有：
+AMD DirectML 当前可以分别调 RetinaFace batch 和 multitask batch，因为它实际运行两个独立 ONNX 模型；AMD 最近测试到 B32/B64 只是 AMD executor 的性能参数。
 
-```text
-RetinaFace batch
-multitask batch
-```
-
-NVIDIA native Detectorv2 是一个端到端的 Py-Feat 调用，因此正式配置只使用：
+NVIDIA native `Detectorv2` 是一个端到端调用，只有一个正式 CUDA batch：
 
 ```yaml
 face:
   native_cuda_batch: 16
   native_cuda_prefetch_batches: 2
+  native_cuda_num_workers: 0
+  native_cuda_pin_memory: false
+  native_cuda_batch_candidates: [16, 32, 64]
 ```
 
-RTX 5070 的最优 `native_cuda_batch` 必须实机 benchmark，不能把 AMD 当前 B32/B64 机械复制过来。
+因此：
+
+```text
+AMD B32/B64 ≠ NVIDIA B32/B64
+```
+
+不能把两套数字机械对应。RTX 5070 最优 `native_cuda_batch` 必须根据同一代表被试的吞吐、峰值显存和稳定性实测后冻结。
 
 ## 3. 当前正式单被试流程
 
@@ -106,7 +111,19 @@ scripts/run_rgb_formal_subject.ps1
    → sub-XXX_manifest.json
 ```
 
-默认不使用 single shared decode。此前临时分支中的 `rgb_formal_full_runner_v1.py` 仅作为设计参考；当前正式架构优先保留三条独立 reader 的并行度。
+### 为什么 NVIDIA 默认仍使用三条独立 reader
+
+AMD 侧已经做过 single shared decode 实验：一个 AVI reader 同时供给 Motion/Pose/Face 时，会由最慢消费者对共享生产者产生反压，实测并不一定比三条独立 reader 更快。因此 NVIDIA 当前正式默认继续采用：
+
+```text
+Motion reader ─┐
+Pose reader   ├─ parallel
+Face reader   ┘
+```
+
+而不是把临时分支 `rgb_formal_full_runner_v1.py` 的 single-pass draft 直接升级为 NVIDIA 正式入口。
+
+这不是否定 single-pass 的理论价值，而是当前没有 RTX 5070 实测证据支持替换已实现的并行架构。
 
 ## 4. 正式完成标准
 
@@ -132,7 +149,7 @@ completion_status = complete
 extraction_complete = true
 ```
 
-同时 NVIDIA Face manifest 还必须明确记录：
+同时 NVIDIA Face manifest 必须明确记录：
 
 ```text
 execution_backend = pytorch_cuda
@@ -177,7 +194,7 @@ Py-Feat native scientific core 保留：
 Pose features
 Face tracking
 primary-face selection
-EAR / eyel睑开度 / aperture-iris
+EAR / 眼睑开度 / aperture-iris
 blink events
 PERCLOS
 QC
@@ -243,7 +260,7 @@ D:\conda_envs\attention-face-cuda
 
 ## 9. 单被试实机验收
 
-先同步 `rgb-nvidia`：
+同步 `rgb-nvidia`：
 
 ```powershell
 cd "D:\Project\厚粲杯\08_算法\01_Attention-Analysis_nvidia-cuda"
@@ -254,13 +271,13 @@ git pull --ff-only
 git status --short --branch
 ```
 
-先检查 CUDA：
+检查 CUDA：
 
 ```powershell
 D:\conda_envs\attention-face-cuda\python.exe -c "import torch,importlib.metadata as m; print(torch.__version__, torch.version.cuda, torch.cuda.is_available(), torch.cuda.get_device_name(0) if torch.cuda.is_available() else None, m.version('py-feat'))"
 ```
 
-代表被试仍使用 NVIDIA 数据盘实际存在的：
+代表被试使用 NVIDIA 数据盘实际存在的：
 
 ```text
 sub-130
@@ -274,20 +291,34 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run_rgb_formal_subject.ps1 `
   -CudaDevice cuda
 ```
 
-如果只测试 CUDA batch：
+若要测试 native CUDA batch，可以通过 runner 的 `-FaceBatch` 显式覆盖：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\run_rgb_formal_subject.ps1 `
   -Subject sub-130 `
   -CudaDevice cuda `
-  -FaceBatch 16
+  -FaceBatch 32
 ```
 
-**不要在 sub-130 首次 full-span 验收通过前启动整 cohort。**
+候选值当前记录为：
+
+```text
+16 → 32 → 64
+```
+
+不要直接把 64 设为正式默认；先记录：
+
+```text
+input_frames_per_sec_total
+cuda_peak_memory_allocated_bytes
+total_wall_with_parquet_write
+```
+
+确认吞吐确实继续增加且显存有安全余量，再冻结正式 batch。
 
 ## 10. Cohort runner
 
-代码入口已经存在：
+代码入口：
 
 ```text
 scripts/run_rgb_formal_cohort.ps1
@@ -317,4 +348,4 @@ scripts/run_rgb_formal_cohort.ps1
 7. CUDA batch / peak memory / throughput 已记录；
 8. no-face / multi-face / capture-gap 情况不丢帧身份。
 
-当前结论是：**NVIDIA 正式代码已经同步到 raw-first + 三线并行架构，但仍需要 RTX 5070 的 sub-130 实机验收后才能冻结为 cohort 正式入口。**
+当前结论：**NVIDIA 正式代码与 AMD 保持相同 raw-first scientific contract，但 Face executor 始终使用 native PyTorch/CUDA 自己的调用合同；在 RTX 5070 sub-130 实机 Gate 完成前，不批准 cohort 全量。**
