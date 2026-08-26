@@ -1,20 +1,23 @@
 # 046｜NVIDIA CUDA RGB 运行路线
 
-**Branch:** `nvidia-cuda`
+**当前开发 Branch:** `rgb-nvidia`
+
+> `nvidia-cuda` 是 NVIDIA 综合线，目前有人在实际使用；本轮 RGB 文档同步不直接修改它。`rgb-nvidia` 与 `nvidia-cuda` 属于同一个 Attention-Analysis 项目，拆分只是为了让 CUDA RGB 能独立开发、减少冲突。分支关系见 `docs/010-overview/015-并行分支与同步约定.md`。
 
 ## 1. 目的
 
-在不改变已经由 RGB 开发阶段冻结的 scientific contract 的前提下，为 NVIDIA GPU 建立 CUDA 执行版本。当前长期主线已经收口到 `nvidia-cuda`，不再把 `rgb-nvidia-cuda` 当作正式运行入口。
+在不改变已冻结 scientific contract 的前提下，为 NVIDIA GPU 建立 CUDA 执行版本。当前 RGB CUDA 开发在 `rgb-nvidia` 继续；成熟改动之后再同步/回并 NVIDIA 综合线。
 
-当前硬盘分工：NVIDIA 工作站连接的是剩余约 72 名被试的数据盘，AMD 工作站连接另一块约 44 名被试的数据盘。因此 NVIDIA representative Face Gate 使用 `sub-130`；AMD 历史 `sub-031` / `sub-033` 继续作为 AMD/开发阶段 provenance，不要求在 NVIDIA 本机存在。
+当前硬盘分工：NVIDIA 工作站连接剩余约 72 名被试的数据盘，AMD 工作站连接另一块约 44 名被试的数据盘。因此 NVIDIA representative Face Gate 使用 `sub-130`；AMD 历史 `sub-031` / `sub-033` 继续作为 AMD provenance，不要求在 NVIDIA 本机存在。
 
 ## 2. 与 NIR 双后端策略一致
 
-现有 NIR 正式链采用“不同硬件后端、相同科研口径”的维护方式：
+现有 NIR 采用“不同硬件后端、相同科研口径”的方式：
 
-- NVIDIA：CUDA；
-- AMD：ONNX Runtime DirectML；
-- 跨硬件一致性由 shared scientific contract + representative parity 证明，而不是强制使用相同执行框架。
+```text
+NVIDIA: CUDA
+AMD:    ONNX Runtime DirectML
+```
 
 RGB 同样采用：
 
@@ -30,66 +33,80 @@ NVIDIA: Py-Feat 2.1.1 native     → PyTorch CUDA
 - 正式阶段最终使用 original AVI direct decode；
 - Detectorv2 / RetinaFace 检测语义、bbox expansion/crop contract、canonical pose/gaze 定义一致；
 - 所有 detected faces 先保留；
-- 20 AU、7 emotion、V/A、gaze、6DoF pose、478×3 mesh、68 compatibility view、52 blendshapes 全保留；
+- 20 AU、7 emotion、V/A、gaze、6DoF pose、478×3 mesh、68 compatibility landmarks、blendshapes 全保留；
 - identity 不属于当前 accepted scientific core；
 - `eyeBlinkLeft/Right` 保留 native raw；
 - EAR / aperture-iris / normalized openness / closure proxy 为可重算 derived；
-- primary-face 规则、QC 可视化和 output provenance 与 AMD 版本一致。
+- primary-face、QC 与 output provenance 与 AMD 版本保持同一 scientific semantics。
 
 CUDA 可以改变执行框架、device scheduling 和最优 batch，但不得删减科学字段、改变采样时间点或改变变量定义。
 
-## 4. NVIDIA 默认实现：native PyTorch CUDA
+## 4. 当前 NVIDIA 实现状态
 
-当前 CUDA dry-run runner 已实现：
+CUDA representative dry-run runner 已实现：
 
 ```text
 scripts/face_formal_dryrun_cuda.py
 ```
 
-第一轮 Gate 故意消费已经抽取好的 timestamp-driven JPEG sample，而不是直接把 I/O 优化和 backend 变化混在一起：
+第一轮 Gate 故意使用已抽取好的 timestamp-driven sample，把 scientific parity 与 I/O 优化分开：
 
 ```text
 sub-130 original RGB/timestamps
-→ timestamp-driven 15 Hz dry-run sample (~3600 frames)
-→ Py-Feat 2.1.1 Detectorv2 native CPU reference
-→ 同一 sample Py-Feat 2.1.1 Detectorv2 native CUDA
+→ timestamp-driven 15 Hz representative sample (~3600)
+→ 同一 sample Py-Feat 2.1.1 native CPU reference
+→ 同一 sample Py-Feat 2.1.1 native CUDA
 → field-level parity
 → tracking / eyelid / QC
 ```
 
-通过 scientific parity 后，正式 NVIDIA runner 才升级为：
+通过后，正式 NVIDIA full-video runner 应升级为：
 
 ```text
 original AVI
 → timestamp-driven 15 Hz
-→ decode/prefetch
+→ decode / prefetch
 → Py-Feat Detectorv2 on CUDA
-→ native Py-Feat crop / multitask semantics
-→ same raw schema
+→ same scientific raw schema
 → same tracking / eyelid derived / QC
 ```
 
-具体 CUDA batch 由 RTX 5070 benchmark 决定。AMD DirectML 的 RetinaFace B8 / multitask B16 是 AMD 工程参数，不强制作为 CUDA 最优参数。
+RTX 5070 的最优 batch 由 NVIDIA 实机 benchmark 决定。AMD DirectML 的 RetinaFace B8 / multitask B16 只是 AMD 工程参数，不强制照搬。
 
-## 5. 为什么不再写“sub-031 AMD↔NVIDIA 逐帧 parity”
+## 5. AMD formal runner 进展如何同步到 NVIDIA
 
-当前两台机器连接不同正式数据盘：
+AMD `rgb-amd` 已经实现并开始验收：
 
-```text
-AMD: 约 44 名被试的数据盘
-NVIDIA: 剩余约 72 名被试的数据盘
-```
+- full-span timestamp-driven Face frame preparation；
+- Motion/Pose 正式 subject wrapper；
+- original-AVI DirectML full-span Face runner；
+- continuous tracking/eyelid formal derive；
+- single-subject orchestration；
+- subject output / manifest / completion 结构。
 
-因此把 `sub-130` CUDA 输出和 `sub-031` DirectML 输出逐帧比较在科学上无意义。当前 validation chain 改为：
+这些设计中，共享逻辑可以同步到 NVIDIA；DirectML execution 不能直接照搬。NVIDIA 后续 full-video runner 应尽量复用相同：
+
+- frame manifest schema；
+- output naming；
+- manifest/completion semantics；
+- raw-first retention；
+- Motion/Pose orchestration；
+- tracking/eyelid derived。
+
+只把 Face executor 换成 native CUDA，并记录 CUDA-specific runtime/provider/batch/GPU memory。
+
+## 6. 为什么不写 sub-031 AMD↔sub-130 NVIDIA 逐帧 parity
+
+不同被试之间不能做 row-wise parity。当前验证链：
 
 ```text
 AMD 已完成：同输入 Py-Feat CPU reference ↔ DirectML parity
 NVIDIA 待完成：同一 sub-130 sample Py-Feat CPU reference ↔ PyTorch CUDA parity
 ```
 
-两边共同锚定同一个 Py-Feat 2.1.1 scientific reference。如果以后需要真正的 cross-device row-wise parity，再复制一小份 representative sample 到另一台机器即可，无需迁移完整数据盘。
+两边共同锚定 Py-Feat 2.1.1 scientific reference。需要真正 cross-device parity 时，再复制同一 representative sample 到另一台机器即可。
 
-## 6. NVIDIA sub-130 parity Gate
+## 7. NVIDIA sub-130 parity Gate
 
 进入 NVIDIA full-video 之前检查：
 
@@ -104,14 +121,31 @@ NVIDIA 待完成：同一 sub-130 sample Py-Feat CPU reference ↔ PyTorch CUDA 
 9. output schema / subject provenance；
 10. CUDA device evidence、peak GPU memory、throughput。
 
-允许 CPU/CUDA 正常浮点微小误差；不允许采样点、schema、primary 语义或科学变量定义分叉。
+允许正常浮点误差；不允许 sampling、schema、primary semantics 或科学变量定义分叉。
 
-## 7. 当前仍为两硬件共同待冻结的项目
+## 8. 当前 NVIDIA 仍未完成
 
-- NVIDIA representative timestamp/capture-gap stress subject（从 NVIDIA 当前 72 人数据盘选择，不硬编码 AMD `sub-033`）；
+- sub-130 native CPU ↔ CUDA parity 实机结果；
+- NVIDIA representative timestamp/capture-gap stress；
+- native CUDA original-AVI full-video Face runner；
+- single-subject formal CUDA orchestration；
+- cohort completion/resume；
+- `body_motion_energy`；
 - blink event threshold；
-- `perclos80_proxy` rolling/event threshold；
-- full-video formal runner 的 completion/resume/QC orchestration；
-- Face/Pose/Motion/body_motion_energy 正式统一。
+- `perclos80_proxy` 最终窗口、分母与 QC。
 
-这些项目最终形成同一 scientific definition，由 AMD / NVIDIA 两个 runtime 分别实现。
+## 9. 当前执行边界
+
+当前开发 branch：
+
+```text
+rgb-nvidia
+```
+
+NVIDIA 综合线：
+
+```text
+nvidia-cuda
+```
+
+由于 `nvidia-cuda` 当前有人使用，本轮不直接修改。`rgb-nvidia` 中通过实机验收的 CUDA RGB 改动再选择性同步回综合线。
