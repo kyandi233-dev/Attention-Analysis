@@ -45,11 +45,15 @@ retention:
 
 face:
   enabled: true
-  status: benchmark
+  status: backend_frozen_formal_dryrun
   candidates:
     - pyfeat
     - libreface2
-  selected_backend: null
+  selected_backend: pyfeat
+  selected_backend_version: "py-feat 2.1.1 Detectorv2 scientific core"
+  execution_provider: DmlExecutionProvider
+  retinaface_batch: 8
+  multitask_batch: 16
   target_outputs:
     - action_units
     - expression
@@ -59,7 +63,9 @@ face:
     - valence_arousal
     - face_landmarks
     - blendshapes
-  inference_fps: null
+  # Formal Face cadence is timestamp-driven 15 Hz. This is deliberately higher
+  # than Pose 10 Hz because blink/eyelid events are much shorter than posture changes.
+  inference_fps: 15.0
   directml_onnx_candidate: true
   benchmark:
     # One deterministic shared image set is extracted once and reused by every
@@ -74,12 +80,74 @@ face:
       interblock_transition: 45
       block2: 90
   continuous_benchmark:
-    # Second-round Face validation: one shared contiguous mid-Block1 window.
-    # 30 s x 10 fps ~= 300 frames; sampling is driven by real RGB timestamps.
+    # Historical second-round Face validation retained for provenance.
     phase: block1
     duration_sec: 30
     inference_fps: 10
     jpeg_quality: 95
+  formal_dryrun:
+    # Representative continuous windows: stable task + periods likely to stress
+    # primary-face tracking when the experimenter enters/leaves the view.
+    inference_fps: 15.0
+    jpeg_quality: 95
+    windows:
+      - name: baseline_start
+        phase: baseline
+        anchor: start
+        duration_sec: 30
+      - name: baseline_end
+        phase: baseline
+        anchor: end
+        duration_sec: 30
+      - name: block1_middle
+        phase: block1
+        anchor: middle
+        duration_sec: 60
+      - name: interblock_middle
+        phase: interblock_transition
+        anchor: middle
+        duration_sec: 60
+      - name: block2_middle
+        phase: block2
+        anchor: middle
+        duration_sec: 60
+  primary_face:
+    # Raw rows retain every detected face. These parameters are pilot values for
+    # deterministic temporal track assignment; the selected primary track is the
+    # one with maximal Block1+Block2 occupancy, not per-frame max confidence.
+    status: representative_dryrun
+    max_track_gap_ms: 2000
+    min_iou: 0.05
+    max_center_distance_normalized: 0.75
+    max_scale_log_ratio: 0.80
+    selection_scope:
+      - block1
+      - block2
+    selection_rule: "max task-frame occupancy; tie by median FaceScore then median bbox area"
+  eyelid:
+    status: continuous_signals_frozen_event_thresholds_pending_dryrun
+    mesh_topology: mediapipe_478
+    retain_native_blendshapes:
+      - eyeBlinkLeft
+      - eyeBlinkRight
+    derive:
+      - ear_left
+      - ear_right
+      - eyelid_aperture_px_left
+      - eyelid_aperture_px_right
+      - iris_diameter_px_left
+      - iris_diameter_px_right
+      - aperture_iris_left
+      - aperture_iris_right
+      - eye_openness_normalized
+      - closure_fraction
+      - closure80_proxy
+    open_reference: "median of top 30% valid aperture/iris values in baseline; fallback to all valid frames"
+    perclos_window_sec: 60
+    perclos_name: perclos80_proxy
+    # Do not freeze a blink-event threshold before representative distributions
+    # of EAR + native eyeBlink blendshape have been inspected.
+    blink_event_threshold_status: pending_representative_dryrun
 
 pose:
   enabled: true
