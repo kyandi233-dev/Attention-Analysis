@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Schema-safe real-300 Face parity wrapper.
+"""Schema-safe real-300 Face parity entrypoint.
 
 This v0.3 entrypoint preserves the v0.2 implementation as historical provenance
 while fixing two validation-only issues discovered on the first real run:
@@ -13,9 +13,10 @@ while fixing two validation-only issues discovered on the first real run:
    need SciPy for inference, so v0.3 computes Spearman as Pearson correlation of
    average ranks using pandas + NumPy only.
 
-No inference, model export, or saved parquet is modified by this wrapper.
+No inference, model export, or saved parquet is modified by this script.
 """
 
+import argparse
 import json
 from pathlib import Path
 from typing import Any
@@ -95,7 +96,6 @@ def _ordered_numeric_safe(cpu_path: Path, dml_path: Path, prefix: str) -> dict[s
         if c != "benchmark_index" and pd.api.types.is_numeric_dtype(dml[c])
     ]
 
-    # Prefer exact semantic names when the two schemas genuinely share them.
     shared = [c for c in cpu_num if c in dml_num]
     if shared:
         cpu_view = cpu[["benchmark_index", *shared]].copy()
@@ -115,10 +115,6 @@ def _ordered_numeric_safe(cpu_path: Path, dml_path: Path, prefix: str) -> dict[s
         result["dml_columns"] = shared
         return result
 
-    # LibreFace AU reference and DML outputs intentionally use different labels
-    # but preserve the documented model-output order. Normalize each side to a
-    # canonical temporary schema BEFORE merge; do not rely on merge suffixes for
-    # non-overlapping source names.
     if len(cpu_num) != len(dml_num):
         return {
             "columns": [],
@@ -155,33 +151,45 @@ def _ordered_numeric_safe(cpu_path: Path, dml_path: Path, prefix: str) -> dict[s
     return result
 
 
-# Patch only validation helpers; all candidate-specific matching and retention
-# logic continues to come from the frozen v0.2 implementation.
 base._metric = _metric_no_scipy
 base._group = _group_safe
 base._ordered_numeric = _ordered_numeric_safe
 
 
 def main() -> None:
-    # Reuse the tested v0.2 CLI and candidate logic, then rewrite the schema
-    # marker in the produced JSON so downstream records can distinguish the fix.
-    import sys
+    parser = argparse.ArgumentParser(
+        description="Schema-safe CPU-reference parity for real 300-frame DirectML Face validation"
+    )
+    parser.add_argument("--candidate", choices=["pyfeat", "libreface"], required=True)
+    parser.add_argument("--benchmark-dir", required=True)
+    parser.add_argument("--dml-dir", required=True)
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--prep-dir", help="Required for LibreFace fresh alignment/headpose/landmarks parity")
+    args = parser.parse_args()
 
-    base.main()
+    root = Path(args.benchmark_dir).resolve()
+    dml_dir = Path(args.dml_dir).resolve()
+    if args.candidate == "pyfeat":
+        result = base.parity_pyfeat(root, dml_dir)
+    else:
+        if not args.prep_dir:
+            raise ValueError("--prep-dir is required for LibreFace")
+        result = base.parity_libreface(root, Path(args.prep_dir).resolve(), dml_dir)
 
-    output = None
-    for i, token in enumerate(sys.argv[:-1]):
-        if token == "--output":
-            output = Path(sys.argv[i + 1]).resolve()
-            break
-    if output and output.exists():
-        payload = json.loads(output.read_text(encoding="utf-8"))
-        payload["schema_version"] = "rgb-face-real300-parity-v0.3"
-        payload["parity_fix"] = (
-            "v0.3 normalizes ordered LibreFace CPU/DML numeric schemas before merge "
-            "and computes Spearman without SciPy; no inference outputs were changed."
-        )
-        output.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    result["schema_version"] = "rgb-face-real300-parity-v0.3"
+    result["parity_fix"] = (
+        "v0.3 normalizes ordered LibreFace CPU/DML numeric schemas before merge "
+        "and computes Spearman without SciPy; no inference outputs were changed."
+    )
+    result["interpretation"] = (
+        "Parity and speed are separate decision dimensions. This report does not freeze the Face backend; "
+        "large scientific-output drift with strong bbox/alignment parity should first be checked for CPU preprocessing/interpolation differences."
+    )
+
+    out = Path(args.output).resolve()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
