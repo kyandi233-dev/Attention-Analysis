@@ -140,7 +140,7 @@ pose:
   schema_version: "rgb-pose-landmarks-v0.1"
   model_variant: lite
   model_path: "_test/pose_landmarker_lite.task"
-  model_url: "https://storage.googleapis.com/mediapipe-models/pose-landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
+  model_url: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
   inference_fps: 10.0
   num_poses: 2
   min_pose_detection_confidence: 0.5
