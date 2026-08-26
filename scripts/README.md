@@ -1,96 +1,113 @@
 # Scripts
 
-`scripts/` 保留当前仍有明确用途的任务入口，以及少量用户明确要求继续保留、可直接重跑的历史分析入口。正式 NIR 全量/补跑入口不在这里，而在 `runtime/nir-formal/`。
+`scripts/` 保留当前仍有明确用途的任务入口，以及少量需要继续保留、可直接重跑的历史验证入口。正式 NIR runtime 仍位于 `runtime/nir-formal/`。
+
+当前 NVIDIA RGB 开发 branch 为 `rgb-nvidia`；`nvidia-cuda` 是正在使用的综合线，本轮不直接修改。两者属于同一个 Attention-Analysis 项目。分支关系见 `docs/010-overview/015-并行分支与同步约定.md`。
 
 ## 当前入口索引
 
 | 脚本 | 定位 | 用途 |
 |---|---|---|
-| `extract_eye_dataset.py` | 当前 | NIR 眼框数据集抽帧与 provenance |
-| `evaluate_yolo_eye_test.py` | 当前 | YOLO26n frozen test 评估 |
-| `sart_formal_analysis.py` | **当前** | FocusWave v3.1.3 最终 BB 行为分析入口 |
-| `nir_behavior_alignment.py` | **当前** | frozen full-class NIR × v3.1.3 BB Behavior 的 Unix-ms 对齐、trial/probe 窗口、coverage/QC/diagnostics |
-| `build_stimulus_visual_table.py` | **当前** | 重建正式 SART 画面并生成视觉协变量/报告 PNG |
-| `rgb_analysis.py` | **当前，共享 RGB** | RGB audit / timeline / Motion / Pose / Face sampling 与 QC 入口 |
-| `face_formal_dryrun_sample.py` | **当前，共享 RGB** | timestamp-driven 15 Hz representative Face dry-run sampling |
-| `face_derive_tracking_eyelid_v02.py` | **当前，共享 RGB** | window-aware primary tracking + EAR / aperture-iris / eyeBlink derived |
-| `face_qc_visualize_v03.py` | **当前，共享 RGB** | 全脸 478 mesh + eyes/iris + primary/secondary + metrics QC；单层黑字 |
-| `face_compare_pyfeat_runs.py` | 当前辅助 | 两次 Py-Feat raw 输出 parity 比较 |
-| `face_benchmark_pyfeat.py` | reference/验证资产 | Py-Feat 官方/native reference 入口；可用于 CUDA runner 实现前后的语义核对 |
-| `sart_bbb_v3_0_analysis.py` | **历史、可执行** | 2026-08-16 FocusWave v3.0 BBB 行为分析重跑入口 |
+| `sart_formal_analysis.py` | 当前 | FocusWave v3.1.3 最终 BB Behavior |
+| `nir_behavior_alignment.py` | 当前 | NIR × Behavior Unix-ms / trial / probe 对齐 |
+| `build_stimulus_visual_table.py` | 当前 | SART 视觉协变量与报告图 |
+| `rgb_analysis.py` | 当前，共享 RGB | RGB audit / gaps / Motion / Pose / Face sampling / QC |
+| `face_formal_dryrun_sample.py` | 当前，共享 RGB | timestamp-driven 15 Hz representative Face sample |
+| `face_formal_dryrun_cuda.py` | **当前，NVIDIA CUDA Gate** | 同一 sample 上运行 Py-Feat 2.1.1 native PyTorch CUDA |
+| `face_derive_tracking_eyelid_v02.py` | 当前，共享 RGB | tracking / primary / EAR / aperture-iris / eyeBlink derived |
+| `face_qc_visualize_v03.py` | 当前，共享 RGB | 478 mesh + eyes/iris + primary/secondary + metrics QC |
+| `face_benchmark_pyfeat.py` | reference | Py-Feat native CPU reference / historical benchmark |
+| `sart_bbb_v3_0_analysis.py` | 历史、可执行 | FocusWave v3.0 BBB 行为分析重跑 |
 
-## Behavior
-
-当前 BB 行为分析默认配置为 `configs/behavior_formal.yaml`：
-
-```powershell
-$env:PYTHONPATH = "src"
-python scripts/sart_formal_analysis.py --stage all
-```
-
-正式 Behavior 默认输出位于仓库外：
-
-```text
-D:\Project\厚粲杯\11_数据\02_Attention-Analysis_nvidia-cuda_formal_Behavior
-```
-
-## NIR × Behavior
-
-`src/attention_pipeline/nir_behavior/`、`scripts/nir_behavior_alignment.py` 与 stimulus visual 代码已从共享科学层同步进入 `nvidia-cuda`。NVIDIA 配置保持同一科学参数，只使用 NVIDIA 工作站的数据/输出根。
-
-```powershell
-$env:PYTHONPATH = "src"
-python scripts/nir_behavior_alignment.py --subjects sub-031
-```
-
-默认 NIR-Behavior 输出位于：
-
-```text
-D:\Project\厚粲杯\11_数据\03_Attention-Analysis_nvidia-cuda_NIR-Behavior
-```
-
-## NVIDIA RGB 当前入口与边界
-
-RGB 共享科学层已经进入 `nvidia-cuda`，因此 Motion/Pose/Face sampling、tracking/eyelid derived 和 QC 不需要切换到 `rgb-nvidia-cuda` 才能查看或继续开发。
-
-当前 Face 科学定义：
+## NVIDIA RGB 当前科学定义
 
 ```text
 Py-Feat 2.1.1 Detectorv2 scientific core
 + timestamp-driven 15 Hz
-+ RetinaFace / crop / multitask canonical semantics
-+ complete raw schema
-+ primary tracking / EAR / eyelid derived / QC
++ native PyTorch CUDA execution
++ complete raw scientific schema
++ shared primary tracking / eyelid derived / QC
 ```
 
-但 **NVIDIA native PyTorch/CUDA formal Face runner 尚未实现/验收**。因此当前不要在 `nvidia-cuda` 中把任何 DirectML runner 当成 NVIDIA 正式入口，也不要因为共享脚本已经存在就直接启动 RGB Face 全量。
-
-NVIDIA 接下来的 Face 顺序：
+当前 NVIDIA representative 使用：
 
 ```text
-实现 native Py-Feat / PyTorch CUDA runner
-→ 使用同一 sub-031 3600 timestamp 与 AMD DirectML 做 parity
-→ sub-033 gap stress
-→ blink / perclos80_proxy 冻结
-→ full-video formal runner
+sub-130
 ```
 
-NVIDIA RGB 默认输出位于仓库外：
+原因是 NVIDIA 工作站连接的是剩余约 72 名被试的数据盘，而 AMD 工作站连接另一块约 44 名被试的数据盘。不同被试之间不能做逐帧 parity。
+
+## 当前 CUDA Gate
+
+当前已实现：
 
 ```text
-D:\Project\厚粲杯\11_数据\04_Attention-Analysis_nvidia-cuda_RGB
+face_formal_dryrun_cuda.py
 ```
 
-方法与边界见 `docs/040-rgb/README.md`、`docs/040-rgb/046-NVIDIA-CUDA-RGB运行路线.md` 和 `docs/050-decisions/055-RGB-Face-15Hz采样频率冻结.md`。
-
-## 历史 BBB
-
-旧 BBB 为避免与当前 BB 实现互相覆盖，使用独立配置和独立 Python 包：
+正确验证链：
 
 ```text
-configs/sart_bbb_v3_0.yaml
-src/attention_pipeline/behavior_bbb_v3_0/
-scripts/sart_bbb_v3_0_analysis.py
+sub-130 15 Hz representative sample
+→ 同一 sample native Py-Feat CPU reference
+→ 同一 sample native PyTorch CUDA
+→ field-level parity
+→ tracking / eyelid / QC
 ```
 
-旧 BBB 的计划、报告和图仍保存在 `docs/030-behavior/history/BBB-v3.0/`；Git 历史继续保留完整旧仓库快照。当前正式结果解释只认 v3.1.3 的 BB 管线，历史 BBB 入口不得被误作当前分析。
+而不是：
+
+```text
+sub-031 AMD output ↔ sub-130 NVIDIA output
+```
+
+CUDA runner 已存在，但 **sub-130 实机 parity 结果尚未完成**，所以现在还不能把 NVIDIA RGB Face 写成正式 full-video 已冻结。
+
+## AMD formal runner 的共享进展
+
+AMD `rgb-amd` 已经进入完整正式时间段 runner 验收阶段，包含：
+
+```text
+full-span Face frame preparation
+Motion/Pose formal wrapper
+original-AVI DirectML Face runner
+continuous tracking/eyelid formal derive
+single-subject orchestration
+subject manifests / completion semantics
+```
+
+这些成果中，frame manifest、output schema、Motion/Pose orchestration、tracking/eyelid 与 completion/resume 设计可以同步到 NVIDIA；**DirectML Face executor 不能直接当 CUDA executor**。
+
+NVIDIA 需要单独实现/验收：
+
+```text
+original AVI
+→ timestamp-driven 15 Hz
+→ native Py-Feat / PyTorch CUDA
+→ same raw schema
+→ same derived
+```
+
+并记录 RTX 5070 的 batch、throughput、GPU memory 与 CUDA runtime provenance。
+
+## 当前推荐执行顺序
+
+```text
+sub-130 3600-frame CPU↔CUDA parity
+→ tracking / eyelid / QC
+→ NVIDIA gap-stress representative
+→ original-AVI full-video CUDA runner
+→ single-subject orchestration
+→ cohort completion / resume
+→ NVIDIA RGB cohort queue
+```
+
+## Behavior / NIR-Behavior
+
+这些模块仍属于同一项目，不因为 branch 名称是 `rgb-nvidia` 就被排除。当前 NVIDIA 具体数据根与输出根应继续遵循 NVIDIA 环境配置，不直接复制 AMD 路径。
+
+## 历史与当前状态边界
+
+历史工作记录、旧 `rgb-nvidia-cuda` 名称、早期 `sub-031` 设想继续作为 provenance 保留，不追溯改写。当前状态以 `docs/040-rgb/README.md`、`docs/040-rgb/046-NVIDIA-CUDA-RGB运行路线.md` 和本页为准。
+
+`nvidia-cuda` 当前有人在使用，本轮文档同步没有直接修改该分支。
