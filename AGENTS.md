@@ -1,5 +1,9 @@
 # AGENTS.md｜Attention-Analysis 仓库规则
 
+跨客户端项目发现入口：先读取根目录 `AI_PROJECT.md`。它只负责本仓库的 producer 角色、central governance/workspace 指针和 related-repository role boundary；当前 NIR/RGB producer 状态、历史保护和运行口径仍以本文件、README、runtime/docs 和当前 Git 证据为准。
+
+中央跨 AI 治理唯一来源是 `greenboo26/ai-governance@main`；workspace 项目注册表是 `greenboo26/project@august/PROJECT_INDEX.md`。本仓库不得把 producer 工程结果自行升级为中央多模态科学结论；中央分析/identity/cohort/fold/inference 真相由 `greenboo26/focuswave-multimodal-attention-analysis` 负责。
+
 > 2026-08-24（Asia/Shanghai）｜仓库已改名为 Attention-Analysis；当前默认维护分支为 `nvidia-cuda`，后续 AMD/DirectML 路线使用 `amd-DirectML`。
 
 本文件是仓库级长期工作约束。项目当前已完成正式 NIR 全量分析；后续默认任务是结构整理、可复现维护、结果复核与必要的增量开发，不得重新把项目描述为“准备进入正式分析”。
@@ -23,14 +27,15 @@
 
 开始仓库工作前优先读取：
 
-1. `README.md`
-2. `docs/README.md`
-3. `docs/010-overview/README.md`
-4. 对应模块目录的 `README.md`
-5. `runtime/nir-formal/README.md`（涉及正式 NIR 运行口径）
-6. `runtime/nir-formal/INSTALL.md`（涉及新电脑安装/迁移）
-7. `docs/050-decisions/`（涉及路线变化或采纳/放弃理由）
-8. 最新日期型工作记录（仅在需要追溯执行过程时）
+1. `AI_PROJECT.md`
+2. `README.md`
+3. `docs/README.md`
+4. `docs/010-overview/README.md`
+5. 对应模块目录的 `README.md`
+6. `runtime/nir-formal/README.md`（涉及正式 NIR 运行口径）
+7. `runtime/nir-formal/INSTALL.md`（涉及新电脑安装/迁移）
+8. `docs/050-decisions/`（涉及路线变化或采纳/放弃理由）
+9. 最新日期型工作记录（仅在需要追溯执行过程时）
 
 历史文档中的“候选 / 待准入 / 准备全量 / BBB”等表述只代表当时状态；当前状态以上述入口为准。
 
