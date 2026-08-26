@@ -6,7 +6,7 @@ pipeline:
   random_seed: 20260824
 
 data:
-  # NVIDIA RTX 5060 工作站当前正式数据根固定为 J:/Data。
+  # NVIDIA RTX 5070 工作站当前正式数据根固定为 J:/Data。
   # Behavior 与 NIR 在该工作站使用同一根目录，避免跨机盘符配置互相污染。
   roots:
     - "J:/Data"
@@ -16,7 +16,9 @@ data:
   behavior_dir: "beh"
 
 paths:
-  output_root: "outputs/behavior-formal"
+  # Formal research outputs must stay outside the Git working tree so branch
+  # switches/pulls cannot touch previously generated analysis results.
+  output_root: "D:/Project/厚粲杯/11_数据/02_Attention-Analysis_nvidia-cuda_formal_Behavior"
 
 formal:
   expected_blocks: 2
