@@ -52,8 +52,20 @@ face:
   selected_backend: pyfeat
   selected_backend_version: "py-feat 2.1.1 Detectorv2 scientific core"
   execution_provider: DmlExecutionProvider
-  retinaface_batch: 8
-  multitask_batch: 16
+  # sub-032 used B8/B16 with only ~5.1/12 GB dedicated VRAM in the live run.
+  # Raise the formal default to B16/B32; CLI flags can override if a machine needs less.
+  retinaface_batch: 16
+  multitask_batch: 32
+  prefetch_batches: 3
+  postprocess_inflight: 2
+  seek_threshold_frames: 120
+  # Keep the frozen Py-Feat/RetinaFace formal decision rule. The optimized runner
+  # applies 0.5 before bbox/landmark decode and NMS, which is equivalent for
+  # greedy descending-score NMS but avoids decoding thousands of low-score anchors.
+  detection_threshold: 0.5
+  nms_threshold: 0.4
+  max_candidates_before_nms: 5000
+  max_faces_per_frame: 750
   target_outputs:
     - action_units
     - expression
