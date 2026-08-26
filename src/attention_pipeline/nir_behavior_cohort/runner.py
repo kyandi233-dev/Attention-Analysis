@@ -96,6 +96,7 @@ def run_phase1_cohort_qc(
     config: Config,
     *,
     subjects: list[str] | None = None,
+    output_root_override: str | Path | None = None,
 ) -> dict[str, Any]:
     aconfig = alignment_config(config)
     selected = selected_cohort_subjects(config, subjects)
@@ -105,7 +106,11 @@ def run_phase1_cohort_qc(
     qc_cfg = config.section("qc")
     provenance_cfg = config.section("provenance")
     hash_fullclass = bool(provenance_cfg.get("hash_fullclass_csv", False))
-    output_root = cohort_output_root(config)
+    output_root = (
+        Path(output_root_override).expanduser().resolve()
+        if output_root_override is not None
+        else cohort_output_root(config)
+    )
     inventory_dir = output_root / "00_inventory"
     qc_dir = output_root / "01_qc"
     provenance_dir = output_root / "provenance"
@@ -235,6 +240,7 @@ def run_phase1_cohort_qc(
         "git_head": _git_head(repo_root),
         "subjects": selected,
         "hash_fullclass_csv": hash_fullclass,
+        "output_root_override": str(output_root_override) if output_root_override is not None else None,
         "outputs": {
             "cohort_discovery": str(inventory_dir / "cohort_discovery.csv"),
             "preflight_summary": str(inventory_dir / "cohort_preflight_summary.json"),
