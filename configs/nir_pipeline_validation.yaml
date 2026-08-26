@@ -1,15 +1,15 @@
 pipeline:
   name: attention-analysis-nir-pipeline-validation
-  version: 2
-  schema_version: 3
-  purpose: "validation-only comprehensive downstream smoke tests using completed 11_analysis_tables plus read-only 10_analysis_ready subject baselines"
+  version: 3
+  schema_version: 4
+  purpose: "validation-only comprehensive downstream smoke tests plus publication-grade Figure 1-10 suite using completed 11_analysis_tables and read-only 10_analysis_ready"
 
 paths:
   analysis_ready_root: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v2/cohort-44-exploratory/10_analysis_ready"
   analysis_tables_root: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v2/cohort-44-exploratory/11_analysis_tables"
   output_root: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v2/cohort-44-exploratory/12_pipeline_validation"
 
-  # Optional external covariates. Missing files do not abort validation; status is written to extension_readiness.json.
+  # Optional external covariates. Missing files do not abort validation; status is written to extension_readiness.json / publication_suite_summary.json.
   stimulus_visual_table: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v1/stimulus_visual_properties.csv"
   questionnaire_csv: null
 
@@ -19,7 +19,7 @@ subjects:
 
 analysis:
   main_track: "binocular_primary"
-  track: "binocular_primary"  # backwards-compatible alias used by the original smoke-test code
+  track: "binocular_primary"  # backwards-compatible alias used by original diagnostic code
   robustness_tracks:
     - "binocular_primary"
     - "left_primary"
@@ -64,7 +64,20 @@ analysis:
     - "pir_diff_mad"
     - "pir_diff_rate_mad_per_sec"
 
+  # Whole-experiment Figure 1 / Block-transition Figure 2.
+  global_display_block_gap_sec: 60
+  global_summary_bin_sec: 10
   time_on_task_display_bin_sec: 30
+  block_transition_window_sec: 120
+  block_recovery_summary_sec: 60
+
+  # True continuous event-aligned trajectories read from 10_analysis_ready.
+  event_trajectory_start_sec: -60
+  event_trajectory_end_sec: 2
+  probe_trajectory_end_sec: 0
+  event_trajectory_bin_sec: 1
+  max_go_reference_events_per_subject_block: 60
+
   minimum_subjects_for_models: 3
 
   # Formal-statistics architecture flags. Validation may prepare these interfaces but must not select them from current effects.
@@ -77,10 +90,29 @@ analysis:
   questionnaire_optional: true
 
 figures:
+  # Core/diagnostic outputs remain for engineering provenance.
   formats:
     - png
     - pdf
   dpi: 180
+
+  # Manuscript-oriented Figure 1-10 outputs. PDF/SVG are vector; PNG/TIFF are high-resolution raster.
+  publication_formats:
+    - pdf
+    - svg
+    - png
+    - tiff
+  raster_dpi: 600
+  manuscript_widths_cm:
+    single: 8
+    medium: 14
+    full: 17
+  font_family: "Arial"
+  font_fallback: "DejaVu Sans"
+  nominal_font_size_pt: 8
+  panel_label_size_pt: 10
+  fixed_canvas: true
+  use_tight_bbox: false
 
 scientific_boundary:
   validation_only: true
@@ -91,3 +123,4 @@ scientific_boundary:
   write_formal_statistics: false
   direct_read_production_nir: false
   direct_read_oar_from_production: false
+  continuous_trajectories_may_read_analysis_ready_only: true
