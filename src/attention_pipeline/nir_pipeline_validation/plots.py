@@ -179,7 +179,8 @@ def plot_trial_outcomes(
     ]
 
     fig, ax = plt.subplots(figsize=(9.4, 5.4))
-    ax.boxplot(groups, labels=order, showfliers=False)
+    ax.boxplot(groups, showfliers=False)
+    ax.set_xticks(range(1, len(order) + 1), labels=order)
     rng = np.random.default_rng(0)
     for idx, values in enumerate(groups, start=1):
         if len(values) == 0:
@@ -233,7 +234,11 @@ def plot_omission_subtypes(
     fig, ax = plt.subplots(figsize=(10.2, 5.6))
     nonempty = any(len(values) for values in groups)
     if nonempty:
-        ax.boxplot(groups, labels=labels, showfliers=False)
+        # Matplotlib 3.9 renamed ``labels`` to ``tick_labels``.  Setting the
+        # ticks separately keeps this validation-only plot compatible with
+        # the supported Matplotlib versions without changing its data.
+        ax.boxplot(groups, showfliers=False)
+        ax.set_xticks(range(1, len(labels) + 1), labels=labels)
         rng = np.random.default_rng(1)
         for idx, values in enumerate(groups, start=1):
             if len(values) == 0:

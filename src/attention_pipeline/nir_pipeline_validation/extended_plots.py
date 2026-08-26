@@ -189,7 +189,9 @@ def plot_probe_rt_by_response(
         options = sorted(subject["probe_response"].dropna().unique())
         groups = [subject.loc[subject["probe_response"].eq(option), value_col].to_numpy(dtype=float) for option in options]
         if groups:
-            ax.boxplot(groups, labels=[str(x) for x in options], showfliers=False)
+            labels = [str(x) for x in options]
+            ax.boxplot(groups, showfliers=False)
+            ax.set_xticks(range(1, len(labels) + 1), labels=labels)
             rng = np.random.default_rng(1)
             for idx, values in enumerate(groups, start=1):
                 ax.scatter(idx + rng.normal(0, 0.035, size=len(values)), values, s=24, alpha=0.55)

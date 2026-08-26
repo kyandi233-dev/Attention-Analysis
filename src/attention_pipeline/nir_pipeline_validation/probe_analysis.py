@@ -13,7 +13,7 @@ def canonical_probe_response(series: pd.Series) -> pd.Series:
     result = pd.Series(pd.NA, index=series.index, dtype="string")
     numeric_mask = numeric.notna()
     if numeric_mask.any():
-        integer_like = numeric[numeric_mask].map(float.is_integer)
+        integer_like = numeric[numeric_mask].map(lambda value: float(value).is_integer())
         idx_integer = integer_like[integer_like].index
         idx_float = integer_like[~integer_like].index
         result.loc[idx_integer] = numeric.loc[idx_integer].astype("Int64").astype("string")

@@ -126,7 +126,9 @@ def plot_probe_response_behavior(
             df.loc[df["probe_response_code"].astype(str).eq(code), "go_rt_median_ms"].dropna().to_numpy()
             for code in codes
         ]
-        ax.boxplot(groups, labels=[f"raw {code}" for code in codes], showfliers=False)
+        labels = [f"raw {code}" for code in codes]
+        ax.boxplot(groups, showfliers=False)
+        ax.set_xticks(range(1, len(labels) + 1), labels=labels)
         rng = np.random.default_rng(0)
         for idx, values in enumerate(groups, start=1):
             if len(values):
@@ -158,7 +160,9 @@ def plot_probe_response_vigilance(
             for code in codes
         ]
         if codes:
-            ax.boxplot(groups, labels=[f"raw {code}" for code in codes], showfliers=False)
+            labels = [f"raw {code}" for code in codes]
+            ax.boxplot(groups, showfliers=False)
+            ax.set_xticks(range(1, len(labels) + 1), labels=labels)
             rng = np.random.default_rng(1)
             for idx, values in enumerate(groups, start=1):
                 if len(values):
