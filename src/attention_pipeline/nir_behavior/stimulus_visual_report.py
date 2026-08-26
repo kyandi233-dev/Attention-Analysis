@@ -42,15 +42,26 @@ def _font(size: int) -> ImageFont.ImageFont:
     return ImageFont.load_default()
 
 
-def _label_tile(image: Image.Image, label: str, *, width: int) -> Image.Image:
+def _fit_width(image: Image.Image, width: int) -> Image.Image:
     rgb = image.convert("RGB")
     target_h = max(1, int(round(rgb.height * width / rgb.width)))
-    thumb = rgb.resize((width, target_h), resample=Image.Resampling.LANCZOS)
+    if rgb.width == width:
+        return rgb
+    return rgb.resize((width, target_h), resample=Image.Resampling.LANCZOS)
+
+
+def _label_tile(image: Image.Image, label: str, *, width: int) -> Image.Image:
+    thumb = _fit_width(image, width)
     band_h = max(30, int(round(width * 0.08)))
-    canvas = Image.new("RGB", (width, target_h + band_h), "white")
+    canvas = Image.new("RGB", (width, thumb.height + band_h), "white")
     canvas.paste(thumb, (0, band_h))
     draw = ImageDraw.Draw(canvas)
-    draw.text((10, max(2, band_h // 5)), label, fill="black", font=_font(max(12, band_h // 2)))
+    draw.text(
+        (10, max(2, band_h // 5)),
+        label,
+        fill="black",
+        font=_font(max(12, band_h // 2)),
+    )
     return canvas
 
 
@@ -138,6 +149,7 @@ def write_stimulus_visual_images(
     central_size = int(render["fixed_central_roi_size_px"])
     filt = _resample(str(render.get("resize_filter", "nearest")))
     center_x, center_y = _psychopy_center_to_pil(width, height, pos_x, pos_y)
+    tile_width = int(report.get("overview_tile_width_px", 480))
 
     half = central_size // 2
     cx0 = max(0, int(round(center_x)) - half)
@@ -167,9 +179,12 @@ def write_stimulus_visual_images(
             image_path = conditions_dir / filename
             rgb.save(image_path, format="PNG", optimize=True)
 
-            full_tiles.append((stimulus_name, size_pct, rgb.copy()))
+            # Keep only report-sized thumbnails in memory; the exact full-resolution
+            # image has already been persisted above.
+            full_tiles.append((stimulus_name, size_pct, _fit_width(rgb, tile_width)))
+            central_crop = rgb.crop((cx0, cy0, cx1, cy1))
             central_tiles.append(
-                (stimulus_name, size_pct, rgb.crop((cx0, cy0, cx1, cy1)))
+                (stimulus_name, size_pct, _fit_width(central_crop, tile_width))
             )
             rendered_files.append(
                 {
@@ -189,7 +204,6 @@ def write_stimulus_visual_images(
             f"rendered condition count {len(rendered_files)} != table rows {expected}"
         )
 
-    tile_width = int(report.get("overview_tile_width_px", 480))
     full_sheet = _contact_sheet(
         full_tiles,
         stimulus_order=stimulus_order,
