@@ -1,6 +1,6 @@
 # NIR Timestamp Mapping Recovery Result
 
-状态：validation_ready；本报告只记录映射与 phase-window 验证，不上传原始 NIR 或行级时间戳。
+状态：recovery_review_ready；本报告只记录映射、恢复产物与下游对齐验证，不上传原始 NIR 或行级时间戳。
 
 ## Canonical mapping
 
@@ -16,8 +16,21 @@ NIR timestamp CSV 第一列保留为 source capture counter，AVI 内部 frame i
 | sub-100 | failed | 12 (23 frames) | 3258 | 47682 | 47682 | False | True | False | RECOVERED | smoke_complete (32 frames; pytorch-cuda) |
 | sub-178 | failed | 221 (390 frames) | 3990 | 54890 | 54890 | False | True | False | RECOVERED | smoke_complete (32 frames; pytorch-cuda) |
 
+## Full recovery and Probe alignment
+
+在隔离正式 recovery 输出根中，sub-100 与 sub-178 均完成完整 NIR video recovery、RITnet full-class extension 和 Probe alignment，未重跑原有 69 个 complete session。
+
+| subject | formal video completion | fullclass rows | fullclass backend | QC images | Probe alignment | probe rows | missing eye blocks |
+|---|---|---:|---|---:|---|---:|---|
+| sub-100 | complete, 39205/39205 | 68180/68180 | onnxruntime-cuda, cuda:0 | 142 | complete | 160 | none |
+| sub-178 | complete, 43080/43080 | 84810/84810 | onnxruntime-cuda, cuda:0 | 158 | complete | 160 | none |
+
+两场恢复均保留 fullclass CSV、summary、manifest、QC index/PNG、alignment trial/probe outputs 和 coverage 文件。Probe alignment 报告中的 coverage、边界截断和内部 NIR gap 为描述性 QC，不在本任务中冻结排除阈值。
+
+本轮 mapping-only validation 的 32 帧 smoke 已由上述完整恢复覆盖；恢复过程未发现 AVI decode/frame gap。capture counter gap 与 timestamp-time gap 仍作为独立质量信息保留，不解释为 AVI 缺帧。
+
 ## Limits
 
-本轮 mapping-only validation 未运行完整 YOLO/RITnet 全量分析，也未验证 Probe alignment 的下游数值，因此该字段记录为 not_checked_in_mapping_only_validation。sub-100 与 sub-178 已各完成 32 帧、pytorch-cuda、block1/block2 smoke recovery validation，确认 runtime 使用 sequential AVI frame mapping；恢复 session 如需进入后续 fullclass，必须在隔离 recovery 输出根中进行完整恢复运行并检查 completion/QC。
+controls 的 `probe_alignment_validity` 保留为 `not_checked_in_mapping_only_validation`，因为本任务只对 recovery subjects 执行完整下游 alignment。sub-099 不属于本任务；其 master_timeline 缺失问题不因 timestamp mapping 修复而改变。
 
-sub-099 不属于本任务；其 master_timeline 缺失问题不因 timestamp mapping 修复而改变。
+当前 cohort 计数因此由 69/72 增至潜在 71/72。下一步应重新生成 matched NIR cohort，并单独评估是否按扩大后的 cohort 重跑 NIR v1；本任务不自动重跑既有 68-session/1360-probe NIR v1 结果。

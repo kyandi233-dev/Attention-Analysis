@@ -208,8 +208,17 @@ def save_qc_pair(
     labels_path, overlay_path = qc_image_paths(qc_dir, subject, source_row)
     labels_color, overlay = render_qc_images(roi_gray, labels)
 
-    if not cv2.imwrite(str(labels_path), labels_color):
-        raise RuntimeError(f"Failed to write QC labels image: {labels_path}")
-    if not cv2.imwrite(str(overlay_path), overlay):
-        raise RuntimeError(f"Failed to write QC overlay image: {overlay_path}")
+    # OpenCV's Windows image writer can reject valid non-ASCII paths. Encode
+    # first, then write bytes through pathlib so QC output remains portable.
+    for image, path, kind in (
+        (labels_color, labels_path, "labels"),
+        (overlay, overlay_path, "overlay"),
+    ):
+        ok, encoded = cv2.imencode(".png", image)
+        if not ok:
+            raise RuntimeError(f"Failed to encode QC {kind} image: {path}")
+        try:
+            path.write_bytes(encoded.tobytes())
+        except OSError as exc:
+            raise RuntimeError(f"Failed to write QC {kind} image: {path}") from exc
     return labels_path, overlay_path
