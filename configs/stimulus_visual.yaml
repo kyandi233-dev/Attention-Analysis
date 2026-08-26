@@ -1,6 +1,6 @@
 pipeline:
   name: attention-analysis-stimulus-visual
-  version: "stimulus-visual-v1.1"
+  version: "stimulus-visual-v1.2"
 
 focuswave:
   repository: "kyandi233-dev/FocusWave"
@@ -13,6 +13,9 @@ paths:
   materials_dir: null
   output_csv: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v1/stimulus_visual_properties.csv"
   manifest_json: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v1/stimulus_visual_manifest.json"
+  rendered_images_dir: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v1/stimulus_visual_rendered"
+  overview_full_png: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v1/stimulus_visual_overview_full.png"
+  overview_central_png: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v1/stimulus_visual_overview_central.png"
 
 render:
   # Historical Beijing formal-display profile.
@@ -36,6 +39,12 @@ render:
   resize_filter: "nearest"
   fixed_central_roi_size_px: 600
   alpha_visible_threshold: 0.05
+
+report_outputs:
+  # Individual PNGs preserve the complete reconstructed 2880x1920 task window.
+  # Overview sheets are only downsampled aids for writing/report figures.
+  save_full_resolution_pngs: true
+  overview_tile_width_px: 480
 
 stimuli:
   go:
