@@ -12,7 +12,7 @@
 | `nir_materialize_analysis_ready.py` | **当前 NIR 下游** | production → `10_analysis_ready` |
 | `nir_build_analysis_tables.py` | **当前 NIR 下游** | `10_analysis_ready` + Behavior → `11_analysis_tables` |
 | `nir_formal_pipeline.py` | **当前 NIR 下游统一入口** | 分阶段运行 `materialize / tables / all`；不会调用 YOLO/RITnet |
-| `nir_pipeline_validation.py` | **当前 validation-only** | 读取已完成 `11_analysis_tables` + 只读 `10_analysis_ready`，验证完整 Behavior / PIR / Probe / QC / robustness / visual-covariate / model / code-figure 分析接口，写入 `12_pipeline_validation` |
+| `nir_pipeline_validation.py` | **当前 validation-only** | core diagnostic validation + publication analysis + Figure 1–10；只写 `12_pipeline_validation` |
 | `nir_behavior_alignment.py` | **历史 prototype、可执行** | 旧 production-based NIR × Behavior schema-v2 对齐；不再是当前正式主分析入口 |
 | `build_stimulus_visual_table.py` | **当前** | 重建正式 SART 画面并生成视觉协变量/报告 PNG |
 | `rgb_analysis.py` | **当前，共享 RGB** | RGB audit / timeline / Motion / Pose / Face sampling 与 QC 入口 |
@@ -41,8 +41,6 @@ D:\_AttentionData\Beijing-Behavior\formal-v1
 ```
 
 ## NIR 下游层级
-
-当前完整层级定义为：
 
 ```text
 NIR production / full-class
@@ -83,10 +81,16 @@ docs/020-nir/215-2026-08-27-NIR正式下游分析管线运行手册.md
 
 ## 当前完整 `12_pipeline_validation`
 
-当前总方法导航：
+科学总导航：
 
 ```text
 docs/020-nir/218-2026-08-27-NIR完整分析管线与统计逻辑总说明.md
+```
+
+论文级 Figure / 补充分析实现：
+
+```text
+docs/020-nir/219-2026-08-27-NIR论文级Figure体系与补充分析实现.md
 ```
 
 错误 PIR 条件下的解释边界：
@@ -114,6 +118,7 @@ python -m pytest `
   tests/test_nir_pipeline_validation.py `
   tests/test_nir_probe_validation.py `
   tests/test_nir_pipeline_validation_extended.py `
+  tests/test_nir_publication_suite.py `
   tests/test_nir_formal_analysis.py -q
 ```
 
@@ -123,25 +128,32 @@ python -m pytest `
 python scripts/nir_pipeline_validation.py
 ```
 
-输出：
+默认会顺序执行：
 
 ```text
-D:\_AttentionData\Beijing-NIR\analysis\nir-behavior-v2\cohort-44-exploratory\12_pipeline_validation\
-├── tables\
-├── figures\
-├── extension_readiness.json
-└── validation_summary.json
+core diagnostic validation
+        ↓
+publication validation
+        ↓
+Figure 1–10
 ```
 
-### 当前 validation 分析逻辑
+也可以单独运行：
 
-代码不再只验证 PIR median，而是覆盖五条互相衔接的分析线。
+```powershell
+python scripts/nir_pipeline_validation.py --core-only
+python scripts/nir_pipeline_validation.py --publication-only
+```
 
-**持续状态层**验证 Block1→Block2、1 s time-on-task、30 s 展示轨迹，以及后续 mixed model / GAMM 所需时间结构。
+### 当前完整分析覆盖
 
-**Trial / Behavior 层**保留 program scoring，同时分别处理 Go RT、RT-CV、ex-Gaussian、d′/c/β、commission、program omission、clean/ambiguous omission、anticipatory/multiple-keypress，并增加 No-Go 之前若干正确 Go trial 的 RT/PIR precursor trajectory。
+**持续状态层**：whole-experiment global PIR、Block1→Block2、1 s time-on-task、Block transition/recovery、个体 slope 与前后半 Block 对照。
 
-**NIR 动态层**并行保留：
+**Trial / Behavior 层**：Go RT、RT-CV、ex-Gaussian、d′/c/β、commission、program omission、clean/ambiguous omission、anticipatory/multiple-keypress；同时保留 No-Go 离散 trial-lag precursor。
+
+**真实 continuous event 层**：只读 `10_analysis_ready`，用 `11_analysis_tables` 的 trial/probe onset 对齐，默认按 1 s bin 构造 `-60s→event` 的 No-Go、omission、Probe 连续 PIR trajectory。这里不会绕回 production。
+
+**NIR 动态层**：
 
 ```text
 median / mean / P10 / P90
@@ -151,54 +163,51 @@ diff_mad
 diff_rate_mad_per_sec
 ```
 
-用于区分状态水平、波动、趋势和短时不稳定性，而不是只看平均 PIR。
+并增加 feature redundancy、within-person correlation、between-person raw-PIR correlation 与 prespecified window-effect stability。
 
-**Probe 层**同时分析 `probe_response` raw option、`probe_vigilance`、`probe_rt`、`probe_vigilance_rt`，并连接 pre-10/20/30/60 s 的 PIR 与客观 SART 行为；raw `probe_response` 在正式任务源码语义核验前不得擅自贴文字心理状态标签。
+**Probe 层**：`probe_response` raw option、`probe_vigilance`、`probe_rt`、`probe_vigilance_rt`、pre-10/20/30/60 s Behavior + PIR、continuous pre-Probe trajectory、Probe sequential transition。
 
-**QC / robustness / confound 层**验证：
+**QC / robustness / confound 层**：六条 primary/strict/eye track、source-mode、available duration、boundary truncation、internal coverage、max gap、PIR validity、current/previous stimulus luminance/contrast/visible area、raw PIR between-person baseline、individual heterogeneity。
 
-```text
-binocular_primary / left_primary / right_primary
-binocular_strict / left_strict / right_strict
-source-mode composition
-available duration / boundary truncation / internal coverage / max gap / PIR validity
-current + previous stimulus luminance / contrast / visible-area covariates
-raw PIR between-person baseline characteristics
-questionnaire optional subject-level interface
-OAR / RGB extension readiness
-```
+### 论文级 Figure 1–10
 
-### 代码生成图
-
-图全部由 Python/Matplotlib 生成，不使用图片生成模型。除原有 Block/time-on-task/trial/Probe/model 图外，当前还包括：
+论文候选图不再使用零散 `fig03a/fig04b/...` 作为主输出，而固定为：
 
 ```text
-fig07_dynamic_pir_feature_matrix
-fig08_trial_multiscale_pir_trajectory
-fig09a_nogo_precursor_rt
-fig09b_nogo_precursor_pir
-fig10a_probe_response_rt
-fig10b_probe_vigilance_rt_by_response
-fig10c_probe_prebehavior_rt_cv_multiscale
-fig10d_probe_prebehavior_ambiguous_omission_multiscale
-fig11_advanced_behavior_block_profile
-fig12_track_robustness_pre_5s
-fig13_source_mode_qc_pre_5s
-fig14a_coverage_multidimensional_trial_pre_5s
-fig14b_coverage_multidimensional_probe_pre_20s
-fig15_visual_luminance_pir
-fig16_raw_between_person_pir
+Figure01_global_PIR_landscape
+Figure02_Block_time_on_task
+Figure03_trial_behavior_states
+Figure04_error_precursor_trajectories
+Figure05_probe_states_trajectories
+Figure06_visual_PLR_controls
+Figure07_individual_differences
+Figure08_feature_structure_multiscale
+Figure09_data_quality_coverage
+Figure10_robustness_models
 ```
 
-所有含当前错误 PIR 的 PNG/PDF 必须带固定标记：
+全部由 Python/Matplotlib 代码生成，不使用图片生成模型。论文级 Figure 固定 17 cm 整版宽度、A/B/C/D panel、统一 Arial（fallback DejaVu Sans）、字号、线宽、图例、坐标轴和画布边距；PDF/SVG 为矢量，PNG/TIFF 为 600 dpi。旧 diagnostic figures 继续保留工程 provenance，但不再当 manuscript Figure 主候选。
+
+输出：
+
+```text
+D:\_AttentionData\Beijing-NIR\analysis\nir-behavior-v2\cohort-44-exploratory\12_pipeline_validation\
+├── tables\
+│   └── publication_analysis\
+├── figures\
+│   └── publication\
+├── extension_readiness.json
+├── validation_summary.json
+└── publication_suite_summary.json
+```
+
+所有含当前错误 PIR 的图必须带：
 
 ```text
 PIPELINE VALIDATION ONLY — CURRENT NIR VALUES KNOWN INVALID
 ```
 
-`extension_readiness.json` 明确记录当前哪些扩展能运行、哪些尚未具备正式数据契约。例如：问卷未配置时应写 `unavailable`；OAR 尚未进入 `10_analysis_ready` 时应写 `blocked_by_analysis_ready_schema`，而不是绕回 production 读取。
-
-当前可以检查代码、join、模型是否拟合、专业图形结构、coverage/source-mode/visual-covariate 接口；禁止解释任何 PIR 方向、p 值、窗口优劣或据此调整 QC 阈值。
+当前可以检查代码、join、真实 event alignment、Figure 版式、coverage/source-mode/visual-covariate 接口；禁止解释任何 PIR 方向、p 值、窗口优劣或据此调整 QC 阈值。
 
 ## 正确 NIR 修复后的顺序
 
@@ -207,7 +216,8 @@ PIPELINE VALIDATION ONLY — CURRENT NIR VALUES KNOWN INVALID
 → 重建 10_analysis_ready
 → 重建 11_analysis_tables
 → 重跑 12_pipeline_validation
-→ 冻结 primary inferential windows / coverage / Probe 语义 / visual covariates / sensitivity set
+→ 检查 Figure 1–10 / coverage / Probe 语义 / visual controls / sensitivity set
+→ 冻结正式模型与报告顺序
 → 进入 20_formal_statistics
 ```
 
