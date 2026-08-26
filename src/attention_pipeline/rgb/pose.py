@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import platform
+import shutil
 import subprocess
 import time
 import urllib.request
+import ctypes
 from bisect import bisect_left, bisect_right
 from datetime import datetime, timezone
 from pathlib import Path
@@ -106,6 +109,25 @@ def _ensure_model(path: Path, url: str) -> Path:
     if not path.exists() or path.stat().st_size <= 0:
         raise RuntimeError(f"Failed to download MediaPipe pose model: {url}")
     return path
+
+
+def _native_model_path(path: Path) -> str:
+    """Return a MediaPipe-readable path on Windows even under a Chinese output root."""
+    if not path.exists() or os.name != "nt":
+        return str(path)
+    get_short = ctypes.windll.kernel32.GetShortPathNameW
+    buffer = ctypes.create_unicode_buffer(32768)
+    length = get_short(str(path), buffer, len(buffer))
+    if length and buffer.value != str(path):
+        return buffer.value
+    # MediaPipe's native loader may reject Unicode paths even when the file is
+    # present. Keep the configured model in the output root, and expose an
+    # identical ASCII-path cache only for the native reader.
+    ascii_cache = Path("D:/AttentionAnalysis_models") / path.name
+    ascii_cache.parent.mkdir(parents=True, exist_ok=True)
+    if not ascii_cache.exists() or ascii_cache.stat().st_size != path.stat().st_size:
+        shutil.copy2(path, ascii_cache)
+    return str(ascii_cache)
 
 
 def _bbox(landmarks) -> tuple[float | None, float | None, float | None, float | None]:
@@ -244,7 +266,7 @@ def run_pose_test(config: Config, subject: str) -> dict[str, object]:
     PoseLandmarkerOptions = mp.tasks.vision.PoseLandmarkerOptions
     RunningMode = mp.tasks.vision.RunningMode
     options = PoseLandmarkerOptions(
-        base_options=BaseOptions(model_asset_path=str(model_path)),
+        base_options=BaseOptions(model_asset_path=_native_model_path(model_path)),
         running_mode=RunningMode.VIDEO,
         num_poses=int(pose_cfg.get("num_poses", 2)),
         min_pose_detection_confidence=float(pose_cfg.get("min_pose_detection_confidence", 0.5)),
@@ -268,6 +290,11 @@ def run_pose_test(config: Config, subject: str) -> dict[str, object]:
     valid_frames = 0
     multi_pose_frames = 0
     next_sample_unix_ms = float(analysis_start)
+    previous_sample_capture_idx: int | None = None
+    previous_sample_unix_ms: int | None = None
+    expected_capture_step = max(
+        1, int(round(float(metadata.get("video_fps_nominal", 30.0)) / inference_fps))
+    )
 
     try:
         with PoseLandmarker.create_from_options(options) as landmarker:
@@ -308,6 +335,14 @@ def run_pose_test(config: Config, subject: str) -> dict[str, object]:
                     "pose_timestamp_ms": relative_timestamp_ms,
                     "phase": phase,
                     "block": block,
+                    "capture_gap_before": bool(
+                        previous_sample_capture_idx is not None
+                        and capture_idx - previous_sample_capture_idx > expected_capture_step + 1
+                    ),
+                    "timestamp_gap_before": bool(
+                        previous_sample_unix_ms is not None
+                        and unix_ms - previous_sample_unix_ms > int(pose_cfg.get("feature_gap_reset_ms", 300))
+                    ),
                 }
                 base.update(behavior)
                 flattened = pose_result_rows(result, base=base)
@@ -318,6 +353,8 @@ def run_pose_test(config: Config, subject: str) -> dict[str, object]:
                     valid_frames += 1
                 if pose_count > 1:
                     multi_pose_frames += 1
+                previous_sample_capture_idx = capture_idx
+                previous_sample_unix_ms = unix_ms
     finally:
         cap.release()
 

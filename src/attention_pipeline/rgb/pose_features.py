@@ -116,12 +116,21 @@ def derive_pose_features(
 
         unix_ms = int(first["unix_ms"])
         dt_ms = float(unix_ms - previous_unix_ms) if previous_unix_ms is not None else None
-        gap_before = previous_unix_ms is None or dt_ms is None or dt_ms <= 0 or dt_ms > gap_reset_ms
+        capture_gap_before = bool(first.get("capture_gap_before", False))
+        timestamp_gap_before = bool(first.get("timestamp_gap_before", False))
+        gap_before = (
+            previous_unix_ms is None or dt_ms is None or dt_ms <= 0
+            or dt_ms > gap_reset_ms or capture_gap_before or timestamp_gap_before
+        )
         if previous_unix_ms is None:
             gap_reason = "analysis_start"
         elif dt_ms is not None and dt_ms <= 0:
             gap_reason = "nonpositive_dt"
         elif dt_ms is not None and dt_ms > gap_reset_ms:
+            gap_reason = "pose_timestamp_gap"
+        elif capture_gap_before:
+            gap_reason = "pose_capture_gap"
+        elif timestamp_gap_before:
             gap_reason = "pose_timestamp_gap"
         else:
             gap_reason = ""

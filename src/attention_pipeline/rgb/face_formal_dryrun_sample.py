@@ -192,8 +192,14 @@ def run_face_formal_dryrun_sample(config: Config, subject: str) -> dict[str, obj
                 behavior = behavior_indexes[block].context_at(int(unix_ms), trial_duration_ms=trial_duration_ms)
             filename = f"{subject}_f{pos:08d}_t{int(unix_ms)}.jpg"
             image_path = frames_dir / filename
-            if not cv2.imwrite(str(image_path), frame, [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality]):
+            # OpenCV's Windows imwrite may reject non-ASCII paths. Encode in memory
+            # and write bytes so the formal output root can remain the project path.
+            encoded_ok, encoded = cv2.imencode(
+                ".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality]
+            )
+            if not encoded_ok:
                 raise RuntimeError(f"Failed to write dry-run frame: {image_path}")
+            image_path.write_bytes(encoded.tobytes())
             row: dict[str, object] = {
                 "schema_version": FACE_FORMAL_DRYRUN_SAMPLE_SCHEMA,
                 "subject": subject,
