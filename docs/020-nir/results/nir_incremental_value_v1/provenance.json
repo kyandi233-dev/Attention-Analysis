@@ -1,0 +1,33 @@
+{
+  "source_git_commit": "358d7693a56553b93943c7f09d9ce3edf9a3c46f",
+  "inputs": {
+    "nir": {
+      "path": "D:\\Project\\厚粲杯\\11_数据\\derived\\nir_v1_scientific_fix_v1\\nir_v1_probe_features.csv",
+      "sha256": "0eaee4b9515296939c6268f507474443571b003a6491a50f56084551092b556a"
+    },
+    "behavior": {
+      "path": "D:\\Project\\厚粲杯\\11_数据\\derived\\c2b_v2_canonical_baselines_20260826\\window_10s\\canonical_feature_matrix_local.csv",
+      "sha256": "213b623c262a6b30a9ecd2803a30d3aae5f2ddcd4677d78b35d66e38bfd0cd8d"
+    },
+    "mmwave": {
+      "path": "D:\\Project\\厚粲杯\\11_数据\\derived\\j_m1_q0_71_rerun_v1\\m1_q0_probe_matrix.csv",
+      "sha256": "24a88b313c3855bb462f8afa1047aa19b2eb7a601d332c1661fe05698f950263"
+    },
+    "crosswalk": {
+      "path": "D:\\Project\\厚粲杯\\11_数据\\derived\\beijing_zhuhai_canonical_harmonization_v1\\beijing_zhuhai_person_session_crosswalk.csv",
+      "sha256": "10ca16877640b4cfcdc80618258280712863dc8ccf06aaf6117653cd88388839"
+    }
+  },
+  "joined_rows": 1174,
+  "sessions": 69,
+  "participant_clusters": 47,
+  "feature_sets": {
+    "Behavior": 11,
+    "Behavior + NIR": 14,
+    "Behavior + mmWave": 40,
+    "Behavior + mmWave + NIR": 43
+  },
+  "split": "5-fold StratifiedGroupKFold by repeat_participant_id; imputation and scaling fit inside training fold",
+  "bootstrap": "1000 participant-cluster resamples",
+  "rgb_formal_input": "not found; existing RGB paths were pilot/gate outputs and excluded"
+}
