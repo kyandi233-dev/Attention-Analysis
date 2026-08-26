@@ -35,6 +35,8 @@ RITnet failure、ROI clipped、segmentation failure、PIR invalid 只作为 QC/m
 
 30 s PIR fused median（n=1413）分布：min=0.1292，q01=0.2140，q05=0.2462，q25=0.2842，median=0.3227，q75=0.3623，q95=0.4428，q99=0.5918，max=0.7454，mean=0.3306，SD=0.0670。按本次 audit-only 规则 `[0, 2]` 检查，明显异常数为 0；该规则不是新的纳入阈值。
 
+在不改变 coverage tier 的前提下，30 s primary tier 的 1174 个 probe 中 PIR fused feature 可用 1174 个，双眼均可用 1155 个。其余 30 s PIR 缺失集中在 sensitivity/excluded rows，不会被本层静默改写为 primary 纳入或排除。
+
 30 s 至少一次有效 PIR 的左右眼 probe 数分别为 left=1409、right=1388；左右眼有效率以每眼 window 内 `fullclass_normalization_valid` 且 PIR 有限为准，并保留每行 valid fraction。每个 subject 均有 20 个 30 s probe rows，min=max=20，0 个 subject 偏离 20，因此没有 subject probe-count imbalance。
 
 新 PIR fused median 与同 window、同 probe 的旧 absolute `pupil_equiv_diameter` median 的相关性：
