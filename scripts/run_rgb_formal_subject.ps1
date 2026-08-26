@@ -65,6 +65,42 @@ function Quote-ProcessArg {
     return $Value
 }
 
+function Test-CompleteManifest {
+    param([string]$Path)
+    if (-not (Test-Path $Path -PathType Leaf)) {
+        return $false
+    }
+    try {
+        $data = Get-Content $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+        return $data.completion_status -eq "complete"
+    }
+    catch {
+        return $false
+    }
+}
+
+function Test-RawStageComplete {
+    param([string]$Name)
+    switch ($Name) {
+        "motion" {
+            $raw = Join-Path $SubjectDir "$Subject`_motion_raw.parquet"
+            $manifest = Join-Path $SubjectDir "$Subject`_motion_manifest.json"
+        }
+        "pose" {
+            $raw = Join-Path $SubjectDir "$Subject`_pose_landmarks.parquet"
+            $manifest = Join-Path $SubjectDir "$Subject`_pose_manifest.json"
+        }
+        "face" {
+            $raw = Join-Path $SubjectDir "$Subject`_face_raw.parquet"
+            $manifest = Join-Path $SubjectDir "$Subject`_face_raw_manifest.json"
+        }
+        default {
+            throw "Unknown raw stage: $Name"
+        }
+    }
+    return ((Test-Path $raw -PathType Leaf) -and (Test-CompleteManifest $manifest))
+}
+
 function Start-RawStage {
     param(
         [string]$Name,
@@ -90,9 +126,9 @@ function Start-RawStage {
     }
 }
 
-# Step 1 is intentionally quick and sequential because Face raw needs the 15 Hz
-# frame manifest. After it exists, Motion, Pose and Py-Feat are independent readers
-# of the same source AVI and can run concurrently.
+# Step 1 is quick and sequential because Face raw needs the timestamp-driven
+# 15 Hz frame manifest. Motion and Pose do not depend on it, but keeping this
+# preparation first makes the subject time span explicit before raw extraction.
 Invoke-Checked "1/3 Prepare formal Face frame manifest (15 Hz, baseline start -> Block2 end)" `
     $RgbPython `
     @("scripts/face_formal_prepare.py", "--config", $Config, "--subject", $Subject)
@@ -117,36 +153,66 @@ $faceArgs = @(
     "--subject", $Subject, "--model-dir", $FaceModelDir
 ) + $ForceArg
 
-$stages = @(
-    (Start-RawStage "motion" $RgbPython $motionArgs),
-    (Start-RawStage "pose" $RgbPython $poseArgs),
-    (Start-RawStage "face" $FacePython $faceArgs)
-)
-
-$parallelStarted = Get-Date
-while ($true) {
-    $running = @($stages | Where-Object { -not $_.Process.HasExited })
-    $elapsed = (Get-Date) - $parallelStarted
-    $states = @()
-    foreach ($stage in $stages) {
-        if ($stage.Process.HasExited) {
-            $states += "$($stage.Name)=done($($stage.Process.ExitCode))"
-        }
-        else {
-            $states += "$($stage.Name)=running"
-        }
-    }
-    Write-Host ("[parallel {0:hh\:mm\:ss}] {1}" -f $elapsed, ($states -join " | "))
-    if ($running.Count -eq 0) { break }
-    Start-Sleep -Seconds 15
+$stages = @()
+if (-not $Force -and (Test-RawStageComplete "motion")) {
+    Write-Host "[resume] motion=skip_complete"
+}
+else {
+    $stages += Start-RawStage "motion" $RgbPython $motionArgs
 }
 
-$failed = @()
-foreach ($stage in $stages) {
-    $stage.Process.WaitForExit()
-    if ($stage.Process.ExitCode -ne 0) {
+if (-not $Force -and (Test-RawStageComplete "pose")) {
+    Write-Host "[resume] pose=skip_complete"
+}
+else {
+    $stages += Start-RawStage "pose" $RgbPython $poseArgs
+}
+
+if (-not $Force -and (Test-RawStageComplete "face")) {
+    Write-Host "[resume] face=skip_complete"
+}
+else {
+    $stages += Start-RawStage "face" $FacePython $faceArgs
+}
+
+if ($stages.Count -gt 0) {
+    $parallelStarted = Get-Date
+    while ($true) {
+        $running = @()
+        $elapsed = (Get-Date) - $parallelStarted
+        $states = @()
+        foreach ($stage in $stages) {
+            $stage.Process.Refresh()
+            if ($stage.Process.HasExited) {
+                $states += "$($stage.Name)=finished"
+            }
+            else {
+                $running += $stage
+                $states += "$($stage.Name)=running"
+            }
+        }
+        Write-Host ("[parallel {0:hh\:mm\:ss}] {1}" -f $elapsed, ($states -join " | "))
+        if ($running.Count -eq 0) { break }
+        Start-Sleep -Seconds 15
+    }
+
+    $failed = @()
+    foreach ($stage in $stages) {
+        $stage.Process.WaitForExit()
+        $stage.Process.Refresh()
+
+        # The formal raw file + a manifest explicitly marked complete are the
+        # authoritative success signal. Windows PowerShell can occasionally leave
+        # Start-Process ExitCode unset even after a short child process exits, which
+        # previously caused completed/skipped stages to be reported as failures.
+        if (Test-RawStageComplete $stage.Name) {
+            Write-Host "[parallel] $($stage.Name)=complete"
+            continue
+        }
+
+        $exitCode = $stage.Process.ExitCode
         $failed += $stage.Name
-        Write-Warning "$($stage.Name) failed with exit code $($stage.Process.ExitCode)"
+        Write-Warning "$($stage.Name) incomplete (process exit code: $exitCode)"
         if (Test-Path $stage.StdErr) {
             Write-Host "--- $($stage.Name) stderr tail ---"
             Get-Content $stage.StdErr -Tail 40
@@ -156,9 +222,12 @@ foreach ($stage in $stages) {
             Get-Content $stage.StdOut -Tail 20
         }
     }
+    if ($failed.Count -gt 0) {
+        throw "Parallel raw extraction incomplete: $($failed -join ', '). Completed branches are kept for resume."
+    }
 }
-if ($failed.Count -gt 0) {
-    throw "Parallel raw extraction failed: $($failed -join ', '). Completed branches are kept for resume."
+else {
+    Write-Host "[resume] all three raw stages already complete; no extraction process started."
 }
 
 Invoke-Checked "3/3 Validate raw extraction completeness" `
