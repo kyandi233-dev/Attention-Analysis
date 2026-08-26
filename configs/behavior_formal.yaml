@@ -20,7 +20,9 @@ data:
   behavior_dir: "beh"
 
 paths:
-  output_root: "outputs/behavior-formal"
+  # Formal research outputs must stay outside the Git working tree so branch
+  # switches/pulls cannot touch previously generated analysis results.
+  output_root: "D:/_AttentionData/Beijing-Behavior/formal-v1"
 
 formal:
   expected_blocks: 2
