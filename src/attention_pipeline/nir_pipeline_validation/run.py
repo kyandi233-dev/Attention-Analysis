@@ -16,6 +16,7 @@ from .analysis import (
     coarse_time_on_task,
     fit_smoke_models,
     load_cohort_tables,
+    omission_subject_summary,
     output_root,
     probe_analysis_table,
     selected_subjects,
@@ -25,6 +26,7 @@ from .plots import (
     plot_block_pairs,
     plot_coverage_heatmap,
     plot_model_forest,
+    plot_omission_subtypes,
     plot_pipeline_schematic,
     plot_probe_windows,
     plot_time_on_task,
@@ -76,6 +78,7 @@ def run_validation(
         track=track,
         window_name=trial_window,
     )
+    omission_summary = omission_subject_summary(trial_table)
     probe_table = probe_analysis_table(
         tables["probe_windows"],
         track=track,
@@ -91,6 +94,7 @@ def run_validation(
 
     table_outputs = {
         "behavior_subject_summary": table_dir / "behavior_subject_summary.csv",
+        "omission_qc_subject_summary": table_dir / "omission_qc_subject_summary.csv",
         "block_pir_summary": table_dir / "block_pir_summary.csv",
         "time_on_task_coarse": table_dir / f"time_on_task_{coarse_bin_sec}s.csv",
         "trial_analysis": table_dir / f"trial_analysis_{trial_window}.csv",
@@ -99,6 +103,9 @@ def run_validation(
     }
     behavior_summary.to_csv(
         table_outputs["behavior_subject_summary"], index=False, encoding="utf-8-sig"
+    )
+    omission_summary.to_csv(
+        table_outputs["omission_qc_subject_summary"], index=False, encoding="utf-8-sig"
     )
     block_summary.to_csv(
         table_outputs["block_pir_summary"], index=False, encoding="utf-8-sig"
@@ -140,6 +147,12 @@ def run_validation(
         formats=formats,
         dpi=dpi,
     )
+    figure_outputs["omission_subtypes"] = plot_omission_subtypes(
+        trial_table,
+        base=figure_dir / f"fig03b_omission_qc_subtypes_{trial_window}",
+        formats=formats,
+        dpi=dpi,
+    )
     figure_outputs["probe_windows"] = plot_probe_windows(
         tables["probe_windows"],
         track=track,
@@ -176,8 +189,15 @@ def run_validation(
         "trial_display_window": trial_window,
         "probe_model_window": probe_model_window,
         "time_on_task_display_bin_sec": coarse_bin_sec,
+        "behavior_policy": {
+            "program_scoring_preserved": True,
+            "omission_qc_subtypes_preserved": True,
+            "ambiguous_omission_not_silently_recoded": True,
+            "anticipatory_candidate_kept_as_separate_motor_timing_phenotype": True,
+        },
         "rows": {
             "behavior_subject_summary": len(behavior_summary),
+            "omission_qc_subject_summary": len(omission_summary),
             "block_pir_summary": len(block_summary),
             "time_on_task_coarse": len(coarse),
             "trial_analysis": len(trial_table),
