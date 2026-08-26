@@ -1,65 +1,103 @@
-# Attention-Analysis
+# Attention-Analysis｜AMD RGB 工作线
 
-> 2026-08-24（Asia/Shanghai）｜GitHub 仓库已统一命名为 `Attention-Analysis`；当前默认维护分支为 `nvidia-cuda`，后续 AMD/DirectML 路线使用 `amd-DirectML`。
+> 当前 branch：`rgb-amd`。这是 Attention-Analysis 的 **AMD RGB 并行开发工作线**，不是独立项目，也不是只允许放 RGB 文件的子仓库。NIR、Behavior、NIR-Behavior、共享配置和共享 docs 可以从 `amd-DirectML` 同步进来；RGB 通过验收后的成熟改动也会再回并综合线。
 
-> 本 checkout 为 `amd-DirectML` package `0.1.1`：YOLO26n 与 RITnet 已改用 ONNX Runtime DirectML，并增加正式完成性校验；NVIDIA/CUDA 基线仍保存在 `nvidia-cuda`。
+> 分支关系与同步规则见 [`docs/010-overview/015-并行分支与同步约定.md`](docs/010-overview/015-并行分支与同步约定.md)。日期型 `docs/工作记录/` 保留历史原文，不追溯改写。
 
-## 当前状态｜2026-08-24
-
-- 正式 NIR 全量分析已经完成。
-- 当前正式 NIR 主链：FocusWave v3.1.3 phase windows → **逐帧 YOLO26n** → ROI → RITnet batch inference → 指标/QC 输出。
-- 正式 NIR runtime：`runtime/nir-formal/`；正式输出保存在仓库外独立分析目录。
-- 当前正式实验版本为 FocusWave v3.1.3，正式阶段包含 `block1`、`block2` 两个 B block。
-- 当前正式 Behavior 分析已经按最终 BB 版本建立：`configs/behavior_formal.yaml` → `scripts/sart_formal_analysis.py` → `src/attention_pipeline/behavior_formal/`。
-- 旧 v3.0 BBB 行为分析仍保留独立历史可执行入口，方便以后重跑，但不作为当前正式口径。
-- AMD runtime 已用 ONNX Runtime DirectML 替换 Ultralytics/PyTorch CUDA 推理，固定 RITnet batch=16 + FP32，尾批补位后丢弃补位输出，默认输出使用 `amd-directml` 隔离层。
-
-## 快速入口
-
-| 我想找 | 入口 |
-|---|---|
-| 项目整体结构与数据流 | [`docs/010-overview/`](docs/010-overview/) |
-| NIR 方法、当前入口与历史路线 | [`docs/020-nir/`](docs/020-nir/) |
-| 当前 BB 行为分析与历史 BBB | [`docs/030-behavior/`](docs/030-behavior/) |
-| RGB 保留接口 | [`docs/040-rgb/`](docs/040-rgb/) |
-| 技术选择与路线变更原因 | [`docs/050-decisions/`](docs/050-decisions/) |
-| 日期型研究过程 | [`docs/工作记录/`](docs/工作记录/) |
-| 正式 NIR 运行包 | [`runtime/nir-formal/`](runtime/nir-formal/) |
-| 仓库长期工作规则 | [`AGENTS.md`](AGENTS.md) |
-
-完整文档导航见 [`docs/README.md`](docs/README.md)。
-
-## 关键资产关系
+## 当前工作目录
 
 ```text
-datasets/
-    ↓
-training/
-    ↓
-trained weights
-    ↓
-runtime/nir-formal/
-    ↓
-正式 NIR 全量分析
+D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-rgb-amd
 ```
 
-其中：
+每次开始工作：
 
-- `datasets/` 保存冻结训练/标注数据与 provenance；
-- `training/` 保存本项目 YOLO 训练过程与结果；
-- `runtime/nir-formal/` 保存正式分析所需的冻结 YOLO/RITnet 权重、RITnet 运行源码、配置和执行入口；
-- `scripts/sart_formal_analysis.py` 与 `src/attention_pipeline/behavior_formal/` 是当前 FocusWave v3.1.3 BB 行为分析；
-- `scripts/sart_bbb_v3_0_analysis.py` 与 `src/attention_pipeline/behavior_bbb_v3_0/` 是明确标记的历史 BBB 可执行复现；
-- `tests/` 保存仓库级自动化测试；`runtime/nir-formal/tests/` 保存正式 runtime 自包含测试；
-- 已淘汰的第三方模型源码、历史候选模型和阶段性 artifacts 已从当前 `nvidia-cuda` 删除，历史用途通过 `docs/工作记录/`、决策记录、tags 和 Git 历史追溯。
+```powershell
+cd "D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-rgb-amd"
+git status --short --branch
+git branch --show-current
+git fetch origin --prune
+git pull --ff-only
+```
 
-更完整说明见 [`docs/010-overview/013-仓库资产与复现关系.md`](docs/010-overview/013-仓库资产与复现关系.md)。
+正常应看到：
 
-## 正式原始数据根
+```text
+rgb-amd
+```
 
-正式原始数据分布在两个逻辑数据目录：`正式实验` 与 `Data`。它们位于两块外接存储设备上，而 Windows 可能根据连接顺序把两块盘分配为 `E:` 或 `F:`，因此不能把某个逻辑目录与某个盘符永久绑定。
+## 当前项目状态
 
-当前 Behavior 与 NIR 配置统一声明四个候选路径：
+| 模块 | 当前状态 |
+|---|---|
+| NIR | 正式 YOLO26n + RITnet runtime 已存在；AMD DirectML full-class 补充分析资产可从综合线同步 |
+| Behavior | FocusWave v3.1.3 BB 正式分析已建立 |
+| NIR × Behavior | Unix-ms / trial / probe 对齐、coverage/QC/diagnostics 已建立 |
+| RGB Face | Py-Feat 2.1.1 scientific core + DirectML backend 已冻结；15 Hz 已冻结 |
+| RGB Pose | MediaPipe Pose 10 Hz science/QC/features 已验证 |
+| RGB Motion | full-fps global Motion 已验证 |
+| RGB formal single-subject | **完整正式时间段总控入口已实现，当前下一步是 sub-031 从头到尾实机验收** |
+| RGB cohort | 44 人 batch + completion/resume 尚未实现 |
+
+## 当前 RGB 正式链
+
+AMD Face 工程基线：
+
+```text
+original AVI
+→ timestamp-driven 15 Hz
+→ reader/preprocess prefetch
+→ RetinaFace DirectML B8
+→ decode/NMS + square-reflect crop
+→ pooled multitask DirectML B16
+→ full scientific raw outputs
+→ continuous tracking / primary face
+→ eyelid / openness derived
+```
+
+当前单被试自动流程：
+
+```text
+face_formal_prepare.py
+→ rgb_formal_motion_pose.py
+→ face_formal_directml.py
+→ face_formal_derive.py
+```
+
+总控入口：
+
+```text
+scripts/run_rgb_formal_subject.ps1
+```
+
+当前工程优先级：
+
+```text
+sub-031 单被试正式全程实机验收
+→ 修复实际出现的 orchestration / environment / output 问题
+→ 44 人 batch + resume
+→ body_motion_energy
+→ blink / perclos80_proxy 最终科学规则
+```
+
+时间戳 gap 继续保留为 QC 信息，但不再单独阻挡首个完整 pipeline 验收。
+
+## 环境
+
+AMD RGB 继续使用彼此隔离的环境：
+
+| 任务 | Conda 环境 |
+|---|---|
+| RGB audit / Motion / Pose / Face frame preparation / QC | `D:\CondaEnvs\attention-rgb` |
+| Face ONNX Runtime DirectML 正式推理 | `D:\CondaEnvs\attention-face-directml` |
+| Py-Feat reference / ONNX export | `D:\CondaEnvs\attention-face-pyfeat` |
+| LibreFace historical reference/export | `D:\CondaEnvs\attention-face-libreface` |
+
+不要为了方便把这些依赖塞进同一个环境。
+
+## 正式原始数据与输出
+
+AMD 当前数据 discovery roots 保留：
 
 ```text
 E:/正式实验
@@ -68,20 +106,45 @@ E:/Data
 F:/Data
 ```
 
-运行时会忽略不存在的候选根，并在所有有效根中发现被试。若同一被试在多个有效根中出现重复正式数据，程序应拒绝静默选取并报告重复数据。
+实际运行以本机 discovery 为准；`sub-9504` 不属于正式 cohort。
 
-最终正式 Behavior/NIR 均从 `sub-031` 及以后进入 v3.1.3 两-block 口径。典型正式行为文件为 `sub-XXX_/beh/sub-XXX_Block1_B_beh.csv` 与 `sub-XXX_/beh/sub-XXX_Block2_B_beh.csv`。
+RGB 输出统一位于仓库外：
 
-## 分支状态
+```text
+D:\_AttentionData\Beijing-RGB
+```
 
-`nvidia-cuda` 是 GitHub default，保存已完成正式全量分析的 NVIDIA/CUDA `1.0.0` 基线。`amd-DirectML` 已从该冻结基线开始实际改造，当前 package 为 `0.1.1`。
+测试/benchmark：
 
-tracking 时代已冻结为 tag `v0.8-tracking`；正式 NIR 全量完成阶段为 `v0.9-nir-formal`；历史 BBB 行为分析为 `behavior-bbb-v3.0`。旧开发分支已删除，新开发不再从 tracking 路线继续。
+```text
+D:\_AttentionData\Beijing-RGB\_test
+```
+
+正式 subject：
+
+```text
+D:\_AttentionData\Beijing-RGB\sub-XXX
+```
+
+Git pull / switch / merge 不管理这些正式结果。
+
+## 文档入口
+
+| 我想找 | 入口 |
+|---|---|
+| 分支关系与同步原则 | [`docs/010-overview/015-并行分支与同步约定.md`](docs/010-overview/015-并行分支与同步约定.md) |
+| 项目整体结构 | [`docs/010-overview/`](docs/010-overview/) |
+| NIR | [`docs/020-nir/`](docs/020-nir/) |
+| Behavior | [`docs/030-behavior/`](docs/030-behavior/) |
+| RGB 当前状态 | [`docs/040-rgb/README.md`](docs/040-rgb/README.md) |
+| RGB 输出 Schema / 信息保留 | [`docs/040-rgb/044-RGB输出Schema与信息保留原则.md`](docs/040-rgb/044-RGB输出Schema与信息保留原则.md) |
+| AMD RGB 环境与命令 | [`docs/040-rgb/045-RGB开发环境与运行指令.md`](docs/040-rgb/045-RGB开发环境与运行指令.md) |
+| 技术决策 | [`docs/050-decisions/`](docs/050-decisions/) |
+| 历史工作记录 | [`docs/工作记录/`](docs/工作记录/) |
+| 当前 scripts 索引 | [`scripts/README.md`](scripts/README.md) |
+
+完整导航见 [`docs/README.md`](docs/README.md)。
 
 ## 历史与 provenance
 
-日期型工作记录和历史研究文档不追溯改写。旧文档中的“候选 / 待准入 / 准备全量 / YOLO + tracking + RITnet / BBB”等表述代表当时阶段，不代表当前正式流程。
-
-原根目录《项目总览与架构》的 2026-08-23 快照完整保留在：
-
-[`docs/010-overview/014-2026-08-23项目总览与架构历史快照.md`](docs/010-overview/014-2026-08-23项目总览与架构历史快照.md)
+历史工作记录、旧 `rgb-dev` 名称、旧候选 backend、阶段性“待完成”表述按当时语境保留，不代表当前状态。判断现在该怎么运行时，优先看本 README、`docs/README.md`、`docs/040-rgb/README.md`、`docs/040-rgb/045-RGB开发环境与运行指令.md` 和 `scripts/README.md`。
