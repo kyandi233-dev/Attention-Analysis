@@ -14,13 +14,15 @@
 | `face_directml_diagnose.py` | **RGB 历史诊断** | strict-DML 与 ORT kernel profiling；解释 Gate-1 异常 |
 | `face_real_prepare_libreface.py` | **RGB real-300 历史验证** | LibreFace fresh CPU prep |
 | `face_real_directml_libreface.py` | **RGB real-300 历史验证** | LibreFace DirectML learned heads |
-| `face_real_directml_pyfeat.py` | **RGB validated backend runner** | raw RGB/JPEG → RetinaFace DML → crop → multitask DML；保留完整 scientific outputs |
+| `face_real_directml_pyfeat.py` | **RGB validated backend reference** | JPEG/raw-image reference runner；保留 real-300 与 parity provenance |
 | `face_real_parity_v02.py` | **RGB real-300 历史 parity** | 首次 retention-aware parity；保留 provenance |
 | `face_real_parity_v03.py` | **RGB real-300 最终 parity** | 修复 LibreFace schema alignment 与 SciPy 依赖后的最终 parity |
 | `face_real_directml.py` | **RGB real-300 早期原型** | 首版合并 runner；保留历史，不作为当前推荐入口 |
 | `face_real_parity.py` | **RGB real-300 早期原型** | 首版 parity；保留历史，不作为当前推荐入口 |
 | `face_formal_dryrun_sample.py` | **RGB 正式化 dry-run** | timestamp-driven 15 Hz 连续代表窗口抽帧；测试 primary-face / eyelid / schema |
-| `face_formal_dryrun_directml.py` | **RGB 正式化 dry-run** | 使用已冻结 Py-Feat DirectML backend 跑 dry-run frames |
+| `face_formal_dryrun_directml.py` | **RGB legacy reference** | JPEG95 dry-run reference；仅用于已完成的优化 A/B，不再作为推荐入口 |
+| `face_formal_dryrun_directml_v02.py` | **RGB 当前正式工程基线** | direct AVI + prefetch + RetinaFace B8 + pending face chips + multitask B16；第一档优化已 Accepted |
+| `face_compare_pyfeat_runs.py` | **RGB 优化验证** | legacy JPEG95 与 optimized direct-AVI 输出 parity 比较 |
 | `face_derive_tracking_eyelid.py` | **RGB 正式化 dry-run/derived** | 从已保存 Py-Feat raw 分配 track / primary face，并派生 EAR、aperture/iris、normalized openness；不重跑模型 |
 
 当前 BB 行为分析默认配置为 `configs/behavior_formal.yaml`：
@@ -56,22 +58,43 @@ Py-Feat 2.1.1 Detectorv2 scientific core
 + ONNX Runtime DmlExecutionProvider
 ```
 
-Real-300 已证明：300/300 coverage、bbox / AU / emotion / V-A / pose / gaze / mesh / blendshape parity 均通过；AMD raw-frame end-to-end≈17.29 fps。LibreFace 2.0 保留 reference/fallback，不进入 44-subject 主全量。
+Real-300 已证明 backend coverage / parity 通过。随后 `sub-031` 3600-frame first-tier optimization A/B 进一步证明：
 
-Face 正式采样频率已冻结为 **timestamp-driven 15 Hz**。Pose 保留 10 Hz；Motion 保留原始全帧。
+- legacy JPEG95 dry-run：16.97 fps；
+- optimized direct-AVI pipeline：29.15 fps；
+- including parquet write：28.61 fps；
+- throughput≈1.718×，pipeline wall 减少约41.8%；
+- 226次 multitask full-B16，仅1次 partial；
+- 3600帧 face-count agreement=0.99972，bbox mean IoU≈0.99584，其余 scientific outputs 保持高相关。
+
+因此正式 Face 工程基线已冻结为：
+
+```text
+original AVI
+→ timestamp-driven 15 Hz
+→ reader/preprocess prefetch
+→ RetinaFace DirectML B8
+→ decode/NMS + 1.2 square-reflect crop
+→ cross-batch pending face chips
+→ multitask DirectML B16
+→ full scientific raw outputs
+→ parquet
+```
+
+Face 正式采样频率仍为 **timestamp-driven 15 Hz**。Pose 保留 10 Hz；Motion 保留原始全帧。
 
 ### Representative dry-run
 
-第一批推荐：
+第一批：
 
 ```text
 sub-031  reference subject
 sub-033  capture/timestamp-gap stress subject
 ```
 
-每人抽取约 4 min 连续窗口：baseline start/end、Block1 middle、interblock middle、Block2 middle；15 Hz 约 3600 sampled frames。
+每人约 4 min 连续窗口：baseline start/end、Block1 middle、interblock middle、Block2 middle；15 Hz 约 3600 sampled frames。
 
-步骤：
+抽样：
 
 ```powershell
 conda activate "D:\CondaEnvs\attention-rgb"
@@ -80,24 +103,24 @@ cd "D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-rgb-dev"
 python scripts/face_formal_dryrun_sample.py --subject sub-031
 ```
 
-然后切 DirectML：
+当前推荐的 DirectML runner：
 
 ```powershell
 conda activate "D:\CondaEnvs\attention-face-directml"
 
-python scripts/face_formal_dryrun_directml.py `
+python scripts/face_formal_dryrun_directml_v02.py `
   --sample-dir "D:\_AttentionData\Beijing-RGB\_test\face-formal-dryrun\sub-031" `
   --model-dir "D:\_AttentionData\Beijing-RGB\_test\face-directml\models\pyfeat" `
-  --output-dir "D:\_AttentionData\Beijing-RGB\_test\face-formal-dryrun\sub-031\directml"
+  --output-dir "D:\_AttentionData\Beijing-RGB\_test\face-formal-dryrun\sub-031\directml-v02"
 ```
 
 最后只读取已保存 raw 做 tracking / eyelid derived：
 
 ```powershell
 python scripts/face_derive_tracking_eyelid.py `
-  --raw "D:\_AttentionData\Beijing-RGB\_test\face-formal-dryrun\sub-031\directml\pyfeat_dml_raw.parquet" `
+  --raw "D:\_AttentionData\Beijing-RGB\_test\face-formal-dryrun\sub-031\directml-v02\pyfeat_dml_raw.parquet" `
   --frame-manifest "D:\_AttentionData\Beijing-RGB\_test\face-formal-dryrun\sub-031\sub-031_face-dryrun_frames.csv" `
-  --output-dir "D:\_AttentionData\Beijing-RGB\_test\face-formal-dryrun\sub-031\derived"
+  --output-dir "D:\_AttentionData\Beijing-RGB\_test\face-formal-dryrun\sub-031\derived-v02"
 ```
 
 `sub-033` 将上述 `sub-031` 全部替换为 `sub-033` 即可。
@@ -119,4 +142,5 @@ python scripts/face_derive_tracking_eyelid.py `
 docs/050-decisions/054-RGB-Face-Backend冻结.md
 docs/050-decisions/055-RGB-Face-15Hz采样频率冻结.md
 docs/050-decisions/056-RGB-Face-Primary与眼睑派生规则.md
+docs/050-decisions/057-RGB-Face第一档工程优化冻结.md
 ```
