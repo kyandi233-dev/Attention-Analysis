@@ -1,7 +1,7 @@
 pipeline:
   name: attention-analysis-rgb
   status: development
-  branch: rgb-dev
+  branch: rgb-amd
   base_backend: amd-directml
 
 focuswave:
