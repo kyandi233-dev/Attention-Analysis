@@ -1,8 +1,6 @@
 # Attention-Analysis｜AMD RGB 工作线
 
-> 当前 branch：`rgb-amd`。这是 Attention-Analysis 的 **AMD RGB 并行开发工作线**，不是独立项目，也不是只允许放 RGB 文件的子仓库。NIR、Behavior、NIR-Behavior、共享配置和共享 docs 可以从 `amd-DirectML` 同步进来；RGB 通过验收后的成熟改动也会再回并综合线。
-
-> 分支关系与同步规则见 [`docs/010-overview/015-并行分支与同步约定.md`](docs/010-overview/015-并行分支与同步约定.md)。日期型 `docs/工作记录/` 保留历史原文，不追溯改写。
+> 当前 branch：`rgb-amd`。这是 Attention-Analysis 的 AMD RGB 并行开发工作线，不是独立项目。分支关系见 [`docs/010-overview/015-并行分支与同步约定.md`](docs/010-overview/015-并行分支与同步约定.md)。
 
 ## 当前工作目录
 
@@ -15,136 +13,155 @@ D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-rgb-amd
 ```powershell
 cd "D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-rgb-amd"
 git status --short --branch
-git branch --show-current
 git fetch origin --prune
 git pull --ff-only
 ```
 
-正常应看到：
+当前 branch 应为：
 
 ```text
 rgb-amd
 ```
 
-## 当前项目状态
+## RGB 当前目标
 
-| 模块 | 当前状态 |
-|---|---|
-| NIR | 正式 YOLO26n + RITnet runtime 已存在；AMD DirectML full-class 补充分析资产可从综合线同步 |
-| Behavior | FocusWave v3.1.3 BB 正式分析已建立 |
-| NIR × Behavior | Unix-ms / trial / probe 对齐、coverage/QC/diagnostics 已建立 |
-| RGB Face | Py-Feat 2.1.1 scientific core + DirectML backend 已冻结；15 Hz 已冻结 |
-| RGB Pose | MediaPipe Pose 10 Hz science/QC/features 已验证 |
-| RGB Motion | full-fps global Motion 已验证 |
-| RGB formal single-subject | **完整正式时间段总控入口已实现，当前下一步是 sub-031 从头到尾实机验收** |
-| RGB cohort | 44 人 batch + completion/resume 尚未实现 |
+正式 RGB 只做一件事：**从 baseline 开始连续到 Block2 结束，把 Face、Pose、Motion 能稳定获得的数据完整抽取并落盘。** QC、blink/PERCLOS、body motion 和统计聚合可以后续直接基于已保存结果完成，不阻挡当前全量抽取。
 
-## 当前 RGB 正式链
-
-AMD Face 工程基线：
+当前正式链：
 
 ```text
-original AVI
-→ timestamp-driven 15 Hz
-→ reader/preprocess prefetch
-→ RetinaFace DirectML B8
-→ decode/NMS + square-reflect crop
-→ pooled multitask DirectML B16
-→ full scientific raw outputs
-→ continuous tracking / primary face
-→ eyelid / openness derived
+Face 15 Hz：Py-Feat 2.1.1 scientific core + ONNX Runtime DirectML
+Pose 10 Hz：MediaPipe Pose Landmarker
+Motion full-fps：OpenCV frame difference
 ```
 
-当前单被试自动流程：
+## 当前状态
+
+| 模块 | 状态 |
+|---|---|
+| Face formal | 已实现 |
+| Pose formal | 已实现 |
+| Motion formal | 已实现 |
+| 单被试总控 | **已实现** |
+| 被试最终完整性验证 + `sub-XXX_manifest.json` | **已实现** |
+| cohort batch / resume | **已实现，待实机验收** |
+| blink / PERCLOS / body_motion_energy | 后续派生，不阻挡抽取 |
+
+## 单被试运行
+
+环境保持隔离：
+
+| 任务 | Conda 环境 |
+|---|---|
+| RGB audit / Motion / Pose / validation | `D:\CondaEnvs\attention-rgb` |
+| Face ONNX Runtime DirectML | `D:\CondaEnvs\attention-face-directml` |
+| Py-Feat reference / ONNX export | `D:\CondaEnvs\attention-face-pyfeat` |
+
+先设置 Face 模型目录：
+
+```powershell
+$env:ATTENTION_FACE_MODEL_DIR = "D:\_AttentionData\Beijing-RGB\_test\face-directml\models\pyfeat"
+```
+
+然后运行一个被试：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_rgb_formal_subject.ps1 `
+  -Subject sub-031
+```
+
+总控顺序为：
 
 ```text
 face_formal_prepare.py
 → rgb_formal_motion_pose.py
 → face_formal_directml.py
 → face_formal_derive.py
+→ rgb_formal_validate.py
 ```
 
-总控入口：
+只有最终 validation 通过后，该被试才会生成：
 
 ```text
-scripts/run_rgb_formal_subject.ps1
+D:\_AttentionData\Beijing-RGB\sub-XXX\sub-XXX_manifest.json
 ```
 
-当前工程优先级：
+其中 `extraction_complete=true` 表示抽取完整；它与后续 QC 是否通过是两件事。
+
+## cohort 全量运行
+
+`sub-031` 实机验收通过后直接运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_rgb_formal_cohort.ps1
+```
+
+cohort runner 会：
 
 ```text
-sub-031 单被试正式全程实机验收
-→ 修复实际出现的 orchestration / environment / output 问题
-→ 44 人 batch + resume
-→ body_motion_energy
-→ blink / perclos80_proxy 最终科学规则
+刷新 rgb_inventory.csv
+→ 只选择 analysis_eligible=True 的正式被试
+→ 已有完整 sub-XXX_manifest.json 的自动跳过
+→ 未完成的继续运行
+→ 单个被试失败时记录错误并继续下一人
+→ 持续更新 cohort_status.csv
+→ 最后生成 cohort_manifest.json
 ```
 
-时间戳 gap 继续保留为 QC 信息，但不再单独阻挡首个完整 pipeline 验收。
+需要只跑指定被试时可以使用：
 
-## 环境
-
-AMD RGB 继续使用彼此隔离的环境：
-
-| 任务 | Conda 环境 |
-|---|---|
-| RGB audit / Motion / Pose / Face frame preparation / QC | `D:\CondaEnvs\attention-rgb` |
-| Face ONNX Runtime DirectML 正式推理 | `D:\CondaEnvs\attention-face-directml` |
-| Py-Feat reference / ONNX export | `D:\CondaEnvs\attention-face-pyfeat` |
-| LibreFace historical reference/export | `D:\CondaEnvs\attention-face-libreface` |
-
-不要为了方便把这些依赖塞进同一个环境。
-
-## 正式原始数据与输出
-
-AMD 当前数据 discovery roots 保留：
-
-```text
-E:/正式实验
-F:/正式实验
-E:/Data
-F:/Data
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_rgb_formal_cohort.ps1 `
+  -Subjects sub-031,sub-032,sub-033
 ```
 
-实际运行以本机 discovery 为准；`sub-9504` 不属于正式 cohort。
+## 输出
 
-RGB 输出统一位于仓库外：
+正式输出统一位于：
 
 ```text
 D:\_AttentionData\Beijing-RGB
 ```
 
-测试/benchmark：
+单被试主要文件：
 
 ```text
-D:\_AttentionData\Beijing-RGB\_test
+sub-XXX_face_frames.csv
+sub-XXX_face_raw.parquet
+sub-XXX_face_tracks.parquet
+sub-XXX_eye_features.parquet
+sub-XXX_motion_raw.parquet
+sub-XXX_pose_landmarks.parquet
+sub-XXX_pose_features.parquet
+sub-XXX_manifest.json
 ```
 
-正式 subject：
+cohort 级文件：
 
 ```text
-D:\_AttentionData\Beijing-RGB\sub-XXX
+rgb_inventory.csv
+cohort_status.csv
+cohort_manifest.json
 ```
 
 Git pull / switch / merge 不管理这些正式结果。
 
 ## 文档入口
 
-| 我想找 | 入口 |
+| 内容 | 入口 |
 |---|---|
-| 分支关系与同步原则 | [`docs/010-overview/015-并行分支与同步约定.md`](docs/010-overview/015-并行分支与同步约定.md) |
-| 项目整体结构 | [`docs/010-overview/`](docs/010-overview/) |
-| NIR | [`docs/020-nir/`](docs/020-nir/) |
-| Behavior | [`docs/030-behavior/`](docs/030-behavior/) |
-| RGB 当前状态 | [`docs/040-rgb/README.md`](docs/040-rgb/README.md) |
+| RGB 当前状态和正式运行 | [`docs/040-rgb/README.md`](docs/040-rgb/README.md) |
 | RGB 输出 Schema / 信息保留 | [`docs/040-rgb/044-RGB输出Schema与信息保留原则.md`](docs/040-rgb/044-RGB输出Schema与信息保留原则.md) |
-| AMD RGB 环境与命令 | [`docs/040-rgb/045-RGB开发环境与运行指令.md`](docs/040-rgb/045-RGB开发环境与运行指令.md) |
-| 技术决策 | [`docs/050-decisions/`](docs/050-decisions/) |
+| AMD RGB 环境与指令 | [`docs/040-rgb/045-RGB开发环境与运行指令.md`](docs/040-rgb/045-RGB开发环境与运行指令.md) |
+| scripts 索引 | [`scripts/README.md`](scripts/README.md) |
 | 历史工作记录 | [`docs/工作记录/`](docs/工作记录/) |
-| 当前 scripts 索引 | [`scripts/README.md`](scripts/README.md) |
 
-完整导航见 [`docs/README.md`](docs/README.md)。
+## 现在的执行顺序
 
-## 历史与 provenance
-
-历史工作记录、旧 `rgb-dev` 名称、旧候选 backend、阶段性“待完成”表述按当时语境保留，不代表当前状态。判断现在该怎么运行时，优先看本 README、`docs/README.md`、`docs/040-rgb/README.md`、`docs/040-rgb/045-RGB开发环境与运行指令.md` 和 `scripts/README.md`。
+```text
+sub-031 全程实机验收
+→ 修实际运行错误（如果有）
+→ cohort 全量抽取
+→ 根据 cohort_status 补失败被试
+→ 再处理 QC / blink / PERCLOS / body motion / 统计派生
+```
