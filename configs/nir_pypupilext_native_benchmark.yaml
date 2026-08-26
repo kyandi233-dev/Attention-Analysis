@@ -1,11 +1,10 @@
 pipeline:
   name: attention-analysis-nir-pypupilext-native-benchmark
-  version: 0.1.1
+  version: 0.2.0
   schema_version: 1
 
 paths:
   alignment_config: "configs/nir_behavior_alignment.yaml"
-  formal_runtime_config: "runtime/nir-formal/config.yaml"
   raw_data_root: "E:/正式实验"
   output_root: "D:/_AttentionData/Beijing-NIR/analysis/pypupilext-native-benchmark/sub031-040"
 
@@ -36,17 +35,14 @@ algorithms:
     - run
 
 sampling:
+  # Per subject. Sampling is decided before candidate algorithms run.
   block_uniform_n: 300
-  high_quality_n: 100
-  difficult_n: 100
   temporal_n: 300
   temporal_preferred_phase: block1
   manual_qc_n: 12
 
 smoke:
   block_uniform_n: 5
-  high_quality_n: 2
-  difficult_n: 2
   temporal_n: 30
   manual_qc_n: 2
 
@@ -54,21 +50,14 @@ input:
   frame_index_base: 0
   min_crop_width: 20
   min_crop_height: 12
+  grayscale: true
+  # IMPORTANT: keep the existing YOLO eye box in source-video pixels.
+  # Do not resize the crop before ElSe / ExCuSe / Swirski2D.
+  resize_native_crop: false
 
-  # IMPORTANT: do not conflate these two coordinate systems.
-  # Current formal runtime uses RITnet at 640x400, while pupil ellipse outputs
-  # are stored in the stable 320x160 ROI analysis coordinate system.
-  # The runner must verify these values against runtime/nir-formal/config.yaml
-  # before any benchmark run; they are provenance expectations, not an
-  # independent source of truth.
-  expected_ritnet_model_input_width: 640
-  expected_ritnet_model_input_height: 400
-  expected_production_roi_coord_width: 320
-  expected_production_roi_coord_height: 160
-
-# Column names are resolved only from the safe aliases below. If the current
-# production schema cannot resolve a tight YOLO eye box, preflight must stop;
-# the benchmark must never silently substitute the padded RITnet ROI.
+# Only frame identity and the existing YOLO tight-eye box are consumed from
+# production outputs. No RITnet mask, geometry, validity or confidence field is
+# used by this benchmark.
 columns:
   phase:
     aliases: [phase]
@@ -84,48 +73,12 @@ columns:
     aliases: [eye_bbox_x2, bbox_x2, yolo_bbox_x2, yolo_x2, detection_x2, det_x2]
   tight_bbox_y2:
     aliases: [eye_bbox_y2, bbox_y2, yolo_bbox_y2, yolo_y2, detection_y2, det_y2]
-  ritnet_roi_x1:
-    aliases: [roi_x1, ritnet_roi_x1, padded_roi_x1]
-  ritnet_roi_y1:
-    aliases: [roi_y1, ritnet_roi_y1, padded_roi_y1]
-  ritnet_roi_x2:
-    aliases: [roi_x2, ritnet_roi_x2, padded_roi_x2]
-  ritnet_roi_y2:
-    aliases: [roi_y2, ritnet_roi_y2, padded_roi_y2]
-  pupil_center_x:
-    aliases: [pupil_center_x]
-  pupil_center_y:
-    aliases: [pupil_center_y]
-  pupil_axis_a:
-    aliases: [pupil_axis_a]
-  pupil_axis_b:
-    aliases: [pupil_axis_b]
-  pupil_angle:
-    aliases: [pupil_angle, pupil_angle_deg]
-  pupil_confidence:
-    aliases: [pupil_confidence]
-  primary_valid:
-    aliases: [pir_valid_primary]
-    required: false
-  strict_valid:
-    aliases: [pir_valid_strict, fullclass_normalization_valid]
-    required: false
-  difficult_flags:
-    optional_aliases:
-      - roi_clipped
-      - pupil_touches_edge
-      - iris_touches_edge
-      - fullclass_pupil_touches_edge
-      - fullclass_iris_outer_touches_edge
-      - fullclass_pupil_mask_touches_edge
-      - fullclass_iris_outer_mask_touches_edge
 
 analysis_policy:
   rerun_yolo: false
-  rerun_ritnet: false
+  run_neural_pupil_model: false
+  use_ritnet_outputs: false
   resize_native_crop: false
-  confidence_is_exclusion_gate: false
   returned_ellipse_equals_credible_pupil: false
-  ritnet_is_reference_not_ground_truth: true
   upload_subject_images: false
   upload_frame_level_outputs: false
