@@ -23,7 +23,8 @@
 | `face_formal_dryrun_directml.py` | **RGB legacy reference** | JPEG95 dry-run reference；仅用于已完成的优化 A/B，不再作为推荐入口 |
 | `face_formal_dryrun_directml_v02.py` | **RGB 当前正式工程基线** | direct AVI + prefetch + RetinaFace B8 + pending face chips + multitask B16；第一档优化已 Accepted |
 | `face_compare_pyfeat_runs.py` | **RGB 优化验证** | legacy JPEG95 与 optimized direct-AVI 输出 parity 比较 |
-| `face_derive_tracking_eyelid.py` | **RGB 正式化 dry-run/derived** | 从已保存 Py-Feat raw 分配 track / primary face，并派生 EAR、aperture/iris、normalized openness；不重跑模型 |
+| `face_derive_tracking_eyelid.py` | **RGB dry-run v0.1 历史结果** | 单 global primary track；对多个彼此不连续 dry-run windows 会低估 primary coverage，保留 provenance |
+| `face_derive_tracking_eyelid_v02.py` | **RGB dry-run 当前入口** | 每个 dryrun window 独立 temporal tracking + primary segment，再汇总 EAR、aperture/iris、normalized openness；不伪造跨省略区间的连续 tracking |
 
 当前 BB 行为分析默认配置为 `configs/behavior_formal.yaml`：
 
@@ -114,16 +115,27 @@ python scripts/face_formal_dryrun_directml_v02.py `
   --output-dir "D:\_AttentionData\Beijing-RGB\_test\face-formal-dryrun\sub-031\directml-v02"
 ```
 
-最后只读取已保存 raw 做 tracking / eyelid derived：
+最后只读取已保存 raw 做 window-aware tracking / eyelid derived：
 
 ```powershell
-python scripts/face_derive_tracking_eyelid.py `
+python scripts/face_derive_tracking_eyelid_v02.py `
   --raw "D:\_AttentionData\Beijing-RGB\_test\face-formal-dryrun\sub-031\directml-v02\pyfeat_dml_raw.parquet" `
   --frame-manifest "D:\_AttentionData\Beijing-RGB\_test\face-formal-dryrun\sub-031\sub-031_face-dryrun_frames.csv" `
-  --output-dir "D:\_AttentionData\Beijing-RGB\_test\face-formal-dryrun\sub-031\derived-v02"
+  --output-dir "D:\_AttentionData\Beijing-RGB\_test\face-formal-dryrun\sub-031\derived-v03"
 ```
 
 `sub-033` 将上述 `sub-031` 全部替换为 `sub-033` 即可。
+
+### dry-run primary 语义
+
+5 个 representative windows 彼此相隔几十秒到数分钟，因此不能要求 temporal tracker 跨人为省略的区间维持一个 track ID。当前 v0.2：
+
+- 每个 `dryrun_window` 内独立 temporal tracking；
+- 每个窗口选择 frame occupancy 最大的 primary segment；
+- tie 时仍按 median FaceScore、median bbox area；
+- 这些 segment 只在 dry-run 眼睑评估层作为同一个逻辑 participant 流；
+- 不伪造跨被省略区间的 temporal continuity；
+- 正式 full-video runner 仍按连续视频执行连续 tracking。
 
 ### 信息保留原则
 
@@ -133,7 +145,7 @@ python scripts/face_derive_tracking_eyelid.py `
 - Py-Feat 20 AU、7 emotion、V/A、gaze、pose、478 mesh、68 compatibility landmarks、52 blendshapes 全部保留；
 - `eyeBlinkLeft/Right` 属于 native raw；
 - EAR、aperture/iris、normalized eye openness 属于 derived，可从 mesh 重建；
-- primary-face 先 temporal tracking，再按 Block1+Block2 长期 occupancy 选主轨迹；
+- 正式连续视频 primary-face 先 temporal tracking，再按任务期长期 occupancy 选主轨迹；
 - blink event threshold / `perclos80_proxy` 最终 QC 在 representative dry-run 后才冻结。
 
 决策入口：
