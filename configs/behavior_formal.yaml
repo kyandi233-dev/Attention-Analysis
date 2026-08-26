@@ -16,7 +16,9 @@ data:
     - "F:/Data"
   min_subject_number: 31
   include: []
-  exclude: []
+  # Formal cohort boundary: include subjects >=31, explicitly exclude pilot 9504.
+  exclude:
+    - "sub-9504"
   behavior_dir: "beh"
 
 paths:
