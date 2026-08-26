@@ -36,8 +36,10 @@ Luna 默认不自行：
 
 - `amd-DirectML`：AMD 正式/稳定硬件运行主线。
 - `nvidia-cuda`：NVIDIA 正式/稳定硬件运行主线。
-- `analysis/multimodal-integration`：NIR、Behavior、后续 RGB 的下游融合分析主线；以稳定硬件主线为输入，不在这里继续开发硬件专属 runtime。
-- RGB 独立开发使用单独 feature branch（功能分支），优先修改 `src/attention_pipeline/rgb/`、RGB configs/scripts、`docs/040-rgb/`，避免与融合分析同时修改共享入口文件。
+- `analysis/multimodal-integration`：NIR、Behavior、Probe、Questionnaire 以及后续 RGB 的下游融合分析主线；以稳定硬件主线为输入，不在这里继续开发硬件专属 runtime。
+- `rgb-amd`：AMD 平台 RGB 分析/运行开发分支。
+- `rgb-nvidia`：NVIDIA 平台 RGB 分析/运行开发分支。
+- RGB 分支优先修改 `src/attention_pipeline/rgb/`、RGB configs/scripts、`docs/040-rgb/`；融合分析分支优先修改 cohort / multimodal 模块。双方尽量避免同时改共享 `README.md`、`AGENTS.md`、`pyproject.toml`、`docs/README.md` 和 `docs/010-overview/`，共享入口尽量在合并阶段统一更新。
 
 ## NIR cohort 特别边界
 
@@ -45,3 +47,7 @@ Luna 默认不自行：
 - frozen 输入保持 `nir-behavior-v1.2 / schema 2`。
 - 任何 QC、排除、标准化、窗口和模型规则不能因为 44 人中的结果更显著而选择。
 - 当前本地任务以仓库中仍处于 open 状态、标题明确为 NIR cohort 执行任务的独立 Issue 为准。
+
+## 术语表达
+
+向用户说明变量、代码字段或专业方法时，第一次出现尽量采用“英文术语（中文解释）”形式，例如 `preflight（运行前检查）`、`QC（质量控制）`、`alignment（时间对齐）`。
