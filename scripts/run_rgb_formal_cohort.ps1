@@ -68,7 +68,7 @@ foreach ($row in $eligible) {
             $existing = Get-Content $subjectManifest -Raw -Encoding UTF8 | ConvertFrom-Json
             if ($existing.completion_status -eq "complete" -and $existing.extraction_complete -eq $true) {
                 $status = "skipped_complete"
-                Write-Host "`n=== $subject: already complete, skip ==="
+                Write-Host "`n=== ${subject}: already complete, skip ==="
             }
         }
         catch {
@@ -100,7 +100,7 @@ foreach ($row in $eligible) {
         catch {
             $status = "failed"
             $errorText = $_.Exception.Message -replace "[\r\n]+", " "
-            Write-Warning "$subject failed: $errorText"
+            Write-Warning "${subject} failed: $errorText"
         }
     }
 
