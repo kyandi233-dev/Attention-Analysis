@@ -1,0 +1,132 @@
+pipeline:
+  name: attention-analysis-nir-formal-analysis-tables
+  version: 1.0.0
+  schema_version: 1
+  cohort_label: cohort-44-exploratory
+  timezone: Asia/Shanghai
+
+paths:
+  behavior_config: "configs/behavior_formal.yaml"
+  analysis_ready_root: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v2/cohort-44-exploratory/10_analysis_ready"
+  output_root: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v2/cohort-44-exploratory/11_analysis_tables"
+
+subjects:
+  # Empty = discover every completed subject in 10_analysis_ready/frame_level.
+  include: []
+
+behavior_qc:
+  # Candidate flag only; does not become a final exclusion threshold here.
+  carryover_candidate_ms: 200
+
+tracks:
+  primary: binocular_primary
+  include:
+    - name: binocular_primary
+      family: primary
+      value_column: binocular_PIR
+      valid_column: null
+      source_mode_column: binocular_source_mode
+
+    - name: left_primary
+      family: eye_preserved
+      value_column: left_centered_PIR
+      valid_column: left_valid_primary
+      source_mode_column: null
+
+    - name: right_primary
+      family: eye_preserved
+      value_column: right_centered_PIR
+      valid_column: right_valid_primary
+      source_mode_column: null
+
+    - name: binocular_strict
+      family: strict_sensitivity
+      value_column: binocular_strict_PIR
+      valid_column: null
+      source_mode_column: binocular_strict_source_mode
+
+    - name: left_strict
+      family: strict_sensitivity
+      value_column: left_strict_centered_PIR
+      valid_column: left_valid_strict
+      source_mode_column: null
+
+    - name: right_strict
+      family: strict_sensitivity
+      value_column: right_strict_centered_PIR
+      valid_column: right_valid_strict
+      source_mode_column: null
+
+windows:
+  trial:
+    - name: pre_200ms
+      family: event
+      start_offset_ms: -200
+      end_offset_ms: 0
+    - name: post_200ms
+      family: event
+      start_offset_ms: 0
+      end_offset_ms: 200
+    - name: post_200_1150ms
+      family: event
+      start_offset_ms: 200
+      end_offset_ms: 1150
+    - name: pre_1s
+      family: state
+      start_offset_ms: -1000
+      end_offset_ms: 0
+    - name: pre_3s
+      family: state
+      start_offset_ms: -3000
+      end_offset_ms: 0
+    - name: pre_5s
+      family: state
+      start_offset_ms: -5000
+      end_offset_ms: 0
+    - name: pre_10s
+      family: state
+      start_offset_ms: -10000
+      end_offset_ms: 0
+    - name: pre_20s
+      family: state
+      start_offset_ms: -20000
+      end_offset_ms: 0
+    - name: pre_30s
+      family: state
+      start_offset_ms: -30000
+      end_offset_ms: 0
+    - name: pre_60s
+      family: state
+      start_offset_ms: -60000
+      end_offset_ms: 0
+
+  probe:
+    - name: pre_10s
+      family: probe_state
+      start_offset_ms: -10000
+      end_offset_ms: 0
+    - name: pre_20s
+      family: probe_state
+      start_offset_ms: -20000
+      end_offset_ms: 0
+    - name: pre_30s
+      family: probe_state
+      start_offset_ms: -30000
+      end_offset_ms: 0
+    - name: pre_60s
+      family: probe_state
+      start_offset_ms: -60000
+      end_offset_ms: 0
+
+time_on_task:
+  # Descriptive continuous base. This is not a hard cleaning unit.
+  bin_sec: 1.0
+
+analysis_policy:
+  analysis_ready_is_only_nir_input: true
+  production_nir_read_directly: false
+  coverage_thresholds_applied: false
+  choose_window_from_outcome: false
+  auto_exclude_subjects: false
+  auto_exclude_eyes: false
+  exploratory_cohort_only: true
