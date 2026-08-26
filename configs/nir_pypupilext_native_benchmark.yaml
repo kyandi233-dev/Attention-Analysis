@@ -1,10 +1,11 @@
 pipeline:
   name: attention-analysis-nir-pypupilext-native-benchmark
-  version: 0.1.0
+  version: 0.1.1
   schema_version: 1
 
 paths:
   alignment_config: "configs/nir_behavior_alignment.yaml"
+  formal_runtime_config: "runtime/nir-formal/config.yaml"
   raw_data_root: "E:/正式实验"
   output_root: "D:/_AttentionData/Beijing-NIR/analysis/pypupilext-native-benchmark/sub031-040"
 
@@ -51,10 +52,19 @@ smoke:
 
 input:
   frame_index_base: 0
-  ritnet_input_width: 320
-  ritnet_input_height: 160
   min_crop_width: 20
   min_crop_height: 12
+
+  # IMPORTANT: do not conflate these two coordinate systems.
+  # Current formal runtime uses RITnet at 640x400, while pupil ellipse outputs
+  # are stored in the stable 320x160 ROI analysis coordinate system.
+  # The runner must verify these values against runtime/nir-formal/config.yaml
+  # before any benchmark run; they are provenance expectations, not an
+  # independent source of truth.
+  expected_ritnet_model_input_width: 640
+  expected_ritnet_model_input_height: 400
+  expected_production_roi_coord_width: 320
+  expected_production_roi_coord_height: 160
 
 # Column names are resolved only from the safe aliases below. If the current
 # production schema cannot resolve a tight YOLO eye box, preflight must stop;
