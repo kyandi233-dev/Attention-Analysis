@@ -2,6 +2,8 @@
 
 本文件是 `runtime/nir-formal/` 在 AMD/DirectML Windows 机器上的安装入口。当前正式分支为 `amd-DirectML`，package version 为 `0.2.0`，正式组合为 **YOLO b8 + RITnet b16**。
 
+新机器安装完成后，正式批量运行前必须继续读取 `RUNBOOK_V1.md`。特别是：当前 `config.yaml` 冻结为两个正式 B block 的 v3.1.3 scope；若实际数据是三 block/BBB 或其他 site/protocol，不得仅因为环境安装成功就直接全量运行，必须先通过 protocol compatibility gate。
+
 ## 1. 获取当前分支
 
 ```powershell
@@ -16,6 +18,8 @@ git switch amd-DirectML
 git switch amd-DirectML
 git pull --ff-only
 ```
+
+正式运行时还必须记录 exact Git commit，不能只记录移动的分支名。
 
 ## 2. 创建独立环境
 
@@ -81,9 +85,11 @@ python run_pipeline.py discover --formal-only
 python run_formal_batch.py --dry-run
 ```
 
+这一步只说明环境/数据发现是否工作，不等于实际 protocol 已被批准。发现结果必须与 `RUNBOOK_V1.md` 的 protocol compatibility gate 一起审查。
+
 ## 5. 正式运行
 
-确认 dry-run 正确后：
+仅当 dry-run 和 protocol gate 都通过后：
 
 ```powershell
 python run_formal_batch.py
@@ -133,3 +139,10 @@ tracking: none
 YOLO 尾批和 RITnet 尾批都只在固定 ONNX 输入所需时复制最后一个真实样本补齐，padding 输出被丢弃；正式结果仍是一帧一条 frame identity，不跳帧。
 
 本版本的同机同段完整 benchmark（sub-031，1800 帧）约为 30.50 FPS；旧正式运行约 20.21 FPS。性能数字只描述该测试硬件和数据段，不保证跨设备一致。
+
+## 8. 安装完成后的下一份文档
+
+不要直接从本文件跳到全量生产。继续读取：
+
+1. `README.md`：当前 NIR 科研/算法口径；
+2. `RUNBOOK_V1.md`：第二台机器操作、protocol gate、provenance 和中央交付。
