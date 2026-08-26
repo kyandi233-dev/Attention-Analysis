@@ -14,8 +14,8 @@ from attention_pipeline.config import Config
 from attention_pipeline.nir_behavior.contract import normalize_subject, parse_subject_list
 from attention_pipeline.nir_behavior.discovery import resolve_repo_path
 
-PIPELINE_VERSION = "nir-pipeline-validation-v1"
-SCHEMA_VERSION = 1
+PIPELINE_VERSION = "nir-pipeline-validation-v1.1"
+SCHEMA_VERSION = 2
 VALIDATION_LABEL = "PIPELINE VALIDATION ONLY — CURRENT NIR VALUES KNOWN INVALID"
 
 
@@ -119,7 +119,9 @@ def load_cohort_tables(config: Config, subjects: Iterable[str]) -> dict[str, pd.
     for subject in subjects:
         paths = subject_paths(config, subject)
         if not valid_completion(paths):
-            raise FileNotFoundError(f"{subject}: completion or required 11_analysis_tables artifacts missing")
+            raise FileNotFoundError(
+                f"{subject}: completion or required 11_analysis_tables artifacts missing"
+            )
         for name in buckets:
             buckets[name].append(
                 pd.read_csv(getattr(paths, name), encoding="utf-8-sig", low_memory=False)
@@ -130,7 +132,54 @@ def load_cohort_tables(config: Config, subjects: Iterable[str]) -> dict[str, pd.
     }
 
 
+def _bool_flag(frame: pd.DataFrame, column: str) -> pd.Series:
+    if column not in frame.columns:
+        return pd.Series(False, index=frame.index, dtype=bool)
+    series = frame[column]
+    if pd.api.types.is_bool_dtype(series):
+        return series.fillna(False).astype(bool)
+    return (
+        series.astype(str)
+        .str.strip()
+        .str.lower()
+        .isin({"1", "true", "yes", "y"})
+    )
+
+
+def omission_qc_type(frame: pd.DataFrame) -> pd.Series:
+    """Return a descriptive, non-destructive omission subtype label.
+
+    Program omission scoring remains authoritative. This label only separates
+    omissions with prestimulus/carry-over motor timing evidence from omissions
+    without those currently defined ambiguity flags.
+    """
+    is_go = ~pd.to_numeric(frame["is_no_go"], errors="coerce").eq(1)
+    omission = pd.to_numeric(frame["omission"], errors="coerce").eq(1)
+    pre = _bool_flag(frame, "prestimulus_press_flag")
+    carry = _bool_flag(frame, "carryover_candidate_flag")
+    qc_available = {
+        "prestimulus_press_flag",
+        "carryover_candidate_flag",
+        "ambiguous_omission_flag",
+    }.issubset(frame.columns)
+
+    labels = np.full(len(frame), "not_go_omission", dtype=object)
+    go_omission = is_go & omission
+    if not qc_available:
+        labels[go_omission.to_numpy()] = "go_omission_unclassified_qc_missing"
+        return pd.Series(labels, index=frame.index, dtype="string")
+
+    labels[(go_omission & ~pre & ~carry).to_numpy()] = "clean_omission"
+    labels[(go_omission & pre & ~carry).to_numpy()] = "prestimulus_associated_omission"
+    labels[(go_omission & ~pre & carry).to_numpy()] = "carryover_associated_omission"
+    labels[(go_omission & pre & carry).to_numpy()] = (
+        "prestimulus_and_carryover_associated_omission"
+    )
+    return pd.Series(labels, index=frame.index, dtype="string")
+
+
 def trial_outcome_label(frame: pd.DataFrame) -> pd.Series:
+    """Broad program-scoring outcome; omission QC subtype is kept separately."""
     is_nogo = pd.to_numeric(frame["is_no_go"], errors="coerce").eq(1)
     commission = pd.to_numeric(frame["commission"], errors="coerce").eq(1)
     omission = pd.to_numeric(frame["omission"], errors="coerce").eq(1)
@@ -141,7 +190,7 @@ def trial_outcome_label(frame: pd.DataFrame) -> pd.Series:
             is_nogo & (~commission),
             is_nogo & commission,
         ],
-        ["go_correct", "go_omission", "nogo_correct", "nogo_commission"],
+        ["go_correct", "go_omission_program", "nogo_correct", "nogo_commission"],
         default="other",
     )
     return pd.Series(values, index=frame.index, dtype="string")
@@ -151,10 +200,11 @@ def behavior_subject_summary(trials: pd.DataFrame) -> pd.DataFrame:
     df = trials.copy()
     for column in ("is_no_go", "correct", "commission", "omission", "rt"):
         df[column] = pd.to_numeric(df[column], errors="coerce")
+    df["omission_qc_type"] = omission_qc_type(df)
     rows: list[dict[str, Any]] = []
     for (subject, block_num), frame in df.groupby(["subject", "block_num"], sort=True):
-        go = frame[frame["is_no_go"].eq(0)]
-        nogo = frame[frame["is_no_go"].eq(1)]
+        go = frame[frame["is_no_go"].eq(0)].copy()
+        nogo = frame[frame["is_no_go"].eq(1)].copy()
         go_rt = pd.to_numeric(
             go.loc[go["correct"].eq(1), "rt"], errors="coerce"
         ).dropna()
@@ -163,11 +213,26 @@ def behavior_subject_summary(trials: pd.DataFrame) -> pd.DataFrame:
             if "is_probe" in frame.columns
             else 0
         )
+        go_n = max(1, len(go))
+        subtype = go["omission_qc_type"].astype(str)
+        n_program = int(go["omission"].eq(1).sum())
+        n_clean = int(subtype.eq("clean_omission").sum())
+        n_pre = int(subtype.eq("prestimulus_associated_omission").sum())
+        n_carry = int(subtype.eq("carryover_associated_omission").sum())
+        n_both = int(
+            subtype.eq("prestimulus_and_carryover_associated_omission").sum()
+        )
+        n_unclassified = int(
+            subtype.eq("go_omission_unclassified_qc_missing").sum()
+        )
+        n_ambiguous = n_pre + n_carry + n_both
         rows.append(
             {
                 "subject": subject,
                 "block_num": int(block_num),
                 "n_trials": int(len(frame)),
+                "n_go": int(len(go)),
+                "n_nogo": int(len(nogo)),
                 "accuracy": float(frame["correct"].mean()) if len(frame) else np.nan,
                 "go_rt_median_ms": float(go_rt.median()) if len(go_rt) else np.nan,
                 "go_rt_mad_ms": (
@@ -176,10 +241,64 @@ def behavior_subject_summary(trials: pd.DataFrame) -> pd.DataFrame:
                     else np.nan
                 ),
                 "commission_rate": float(nogo["commission"].mean()) if len(nogo) else np.nan,
-                "omission_rate": float(go["omission"].mean()) if len(go) else np.nan,
+                "omission_program_n": n_program,
+                "omission_program_rate": n_program / go_n,
+                "clean_omission_n": n_clean,
+                "clean_omission_rate": n_clean / go_n,
+                "ambiguous_omission_n": n_ambiguous,
+                "ambiguous_omission_rate": n_ambiguous / go_n,
+                "prestimulus_associated_omission_n": n_pre,
+                "carryover_associated_omission_n": n_carry,
+                "prestimulus_and_carryover_omission_n": n_both,
+                "unclassified_omission_qc_missing_n": n_unclassified,
+                "anticipatory_candidate_rate": float(
+                    _bool_flag(go, "anticipatory_candidate_flag").mean()
+                )
+                if len(go)
+                else np.nan,
+                "multiple_keypress_rate": float(
+                    _bool_flag(frame, "multiple_keypress_flag").mean()
+                )
+                if len(frame)
+                else np.nan,
                 "n_probes": probe_count,
             }
         )
+    return pd.DataFrame(rows)
+
+
+def omission_subject_summary(trial_table: pd.DataFrame) -> pd.DataFrame:
+    df = trial_table.copy()
+    df["is_no_go"] = pd.to_numeric(df["is_no_go"], errors="coerce")
+    df["omission"] = pd.to_numeric(df["omission"], errors="coerce")
+    if "omission_qc_type" not in df.columns:
+        df["omission_qc_type"] = omission_qc_type(df)
+    go = df[df["is_no_go"].eq(0)].copy()
+    rows: list[dict[str, Any]] = []
+    categories = (
+        "clean_omission",
+        "prestimulus_associated_omission",
+        "carryover_associated_omission",
+        "prestimulus_and_carryover_associated_omission",
+        "go_omission_unclassified_qc_missing",
+    )
+    for (subject, block_num), frame in go.groupby(["subject", "block_num"], sort=True):
+        record: dict[str, Any] = {
+            "subject": subject,
+            "block_num": int(block_num),
+            "n_go": int(len(frame)),
+            "program_omission_n": int(frame["omission"].eq(1).sum()),
+        }
+        for category in categories:
+            record[f"{category}_n"] = int(
+                frame["omission_qc_type"].astype(str).eq(category).sum()
+            )
+        record["ambiguous_omission_n"] = (
+            record["prestimulus_associated_omission_n"]
+            + record["carryover_associated_omission_n"]
+            + record["prestimulus_and_carryover_associated_omission_n"]
+        )
+        rows.append(record)
     return pd.DataFrame(rows)
 
 
@@ -251,8 +370,29 @@ def trial_analysis_table(
         "correct",
         "commission",
         "omission",
+        "response",
         "rt",
         "time_in_block_sec",
+        "raw_keypresses",
+        "prestimulus_press_ms",
+        "n_raw_keypresses",
+        "first_raw_keypress_ms",
+        "second_raw_keypress_ms",
+        "rt_reconstructed_ms",
+        "rt_reconstruction_error_ms",
+        "prestimulus_press_flag",
+        "prestimulus_delta_to_onset_ms",
+        "multiple_keypress_flag",
+        "previous_second_press_to_current_onset_ms",
+        "carryover_candidate_flag",
+        "ambiguous_omission_flag",
+        "anticipatory_candidate_flag",
+        "rt_candidate_lt_100_flag",
+        "rt_candidate_lt_150_flag",
+        "rt_candidate_lt_200_flag",
+        "rt_candidate_gt_900_flag",
+        "rt_candidate_gt_1000_flag",
+        "rt_candidate_gt_1150_flag",
     ]
     behavior = trial_level[
         [column for column in behavior_cols if column in trial_level.columns]
@@ -264,6 +404,7 @@ def trial_analysis_table(
     ]
     merged = behavior.merge(windows, on=keys, how="inner", validate="one_to_one")
     merged["outcome"] = trial_outcome_label(merged)
+    merged["omission_qc_type"] = omission_qc_type(merged)
     return merged
 
 
@@ -361,7 +502,11 @@ def fit_smoke_models(
         )
     else:
         status.append(
-            {"model": "lmm_time_on_task_pir", "status": "skipped", "reason": "too_few_subjects"}
+            {
+                "model": "lmm_time_on_task_pir",
+                "status": "skipped",
+                "reason": "too_few_subjects",
+            }
         )
 
     trial = add_within_between(trial_table)
@@ -371,6 +516,9 @@ def fit_smoke_models(
         if "time_in_block_sec" in trial.columns
         else np.nan
     )
+    if "omission_qc_type" not in trial.columns:
+        trial["omission_qc_type"] = omission_qc_type(trial)
+
     go_correct = trial[
         pd.to_numeric(trial["is_no_go"], errors="coerce").eq(0)
         & pd.to_numeric(trial["correct"], errors="coerce").eq(1)
@@ -426,7 +574,7 @@ def fit_smoke_models(
     )
     if go["subject"].nunique() >= min_subjects and go["omission"].nunique() == 2:
         record(
-            "gee_go_omission_pir",
+            "gee_go_program_omission_pir",
             lambda: smf.gee(
                 "omission ~ pir_median_within + pir_median_between + time_z + C(block_num)",
                 groups="subject",
@@ -437,19 +585,82 @@ def fit_smoke_models(
     else:
         status.append(
             {
-                "model": "gee_go_omission_pir",
+                "model": "gee_go_program_omission_pir",
                 "status": "skipped",
                 "reason": "binary_outcome_unavailable",
             }
         )
 
+    qc_go = go[
+        ~go["omission_qc_type"].astype(str).isin(
+            [
+                "prestimulus_associated_omission",
+                "carryover_associated_omission",
+                "prestimulus_and_carryover_associated_omission",
+                "go_omission_unclassified_qc_missing",
+            ]
+        )
+    ].copy()
+    if (
+        qc_go["subject"].nunique() >= min_subjects
+        and qc_go["omission"].nunique() == 2
+    ):
+        record(
+            "gee_go_clean_omission_sensitivity",
+            lambda: smf.gee(
+                "omission ~ pir_median_within + pir_median_between + time_z + C(block_num)",
+                groups="subject",
+                data=qc_go,
+                family=sm.families.Binomial(),
+            ).fit(),
+        )
+    else:
+        status.append(
+            {
+                "model": "gee_go_clean_omission_sensitivity",
+                "status": "skipped",
+                "reason": "clean_binary_outcome_unavailable",
+            }
+        )
+
+    if "anticipatory_candidate_flag" in go.columns:
+        go["anticipatory_candidate"] = _bool_flag(
+            go, "anticipatory_candidate_flag"
+        ).astype(int)
+        if (
+            go["subject"].nunique() >= min_subjects
+            and go["anticipatory_candidate"].nunique() == 2
+        ):
+            record(
+                "gee_go_anticipatory_candidate_pir",
+                lambda: smf.gee(
+                    "anticipatory_candidate ~ pir_median_within + pir_median_between + time_z + C(block_num)",
+                    groups="subject",
+                    data=go,
+                    family=sm.families.Binomial(),
+                ).fit(),
+            )
+        else:
+            status.append(
+                {
+                    "model": "gee_go_anticipatory_candidate_pir",
+                    "status": "skipped",
+                    "reason": "anticipatory_binary_outcome_unavailable",
+                }
+            )
+
     probe = add_within_between(probe_table)
     if "probe_vigilance" in probe.columns:
-        probe["probe_vigilance"] = pd.to_numeric(probe["probe_vigilance"], errors="coerce")
+        probe["probe_vigilance"] = pd.to_numeric(
+            probe["probe_vigilance"], errors="coerce"
+        )
         probe = probe.dropna(
             subset=["probe_vigilance", "pir_median_within", "pir_median_between"]
         )
-        if probe["subject"].nunique() >= min_subjects and len(probe) > probe["subject"].nunique():
+        if (
+            probe["subject"].nunique() >= min_subjects
+            and len(probe) > probe["subject"].nunique()
+        ):
             record(
                 "lmm_probe_vigilance_pir",
                 lambda: smf.mixedlm(
