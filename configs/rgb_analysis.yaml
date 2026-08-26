@@ -46,7 +46,7 @@ face:
   selected_backend: pyfeat
   selected_backend_version: "py-feat 2.1.1 Detectorv2 scientific core"
   execution_backend: pytorch_cuda
-  cuda_runtime_status: dryrun_runner_implemented_pending_sub130_cross_backend_parity
+  cuda_runtime_status: dryrun_runner_implemented_pending_sub130_native_cpu_cuda_parity
   retinaface_batch: 8
   multitask_batch: 16
   target_outputs: [action_units, expression, gaze, head_pose]
