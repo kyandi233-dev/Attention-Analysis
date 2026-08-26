@@ -1,0 +1,39 @@
+pipeline:
+  name: attention-analysis-nir-behavior-cohort
+  version: 0.1.0
+  phase: 1
+  cohort_label: cohort-44-exploratory
+  timezone: Asia/Shanghai
+
+paths:
+  # Frozen v1.2/schema-2 alignment configuration is read as an input contract only.
+  alignment_config: "configs/nir_behavior_alignment.yaml"
+  output_root: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v2/cohort-44-exploratory"
+
+subjects:
+  # Empty means: discover completed production full-class subjects from the frozen
+  # alignment source roots. This intentionally ignores the sub-031 prototype safety
+  # gate in nir_behavior_alignment.yaml.
+  include: []
+
+qc:
+  # Robust trend is calculated from 5-s median bins to avoid fitting millions of
+  # frame-level points directly. This is descriptive QC, not an exclusion rule.
+  slope_bin_sec: 5.0
+  fragmentation_component_count_gt: 1
+  fragmentation_largest_fraction_lt: 0.90
+
+provenance:
+  # Full CSV hashing doubles large-file I/O. Phase 1 records file size, mtime and
+  # completion-marker SHA by default; enable this only when a full content hash is required.
+  hash_fullclass_csv: false
+
+analysis_policy:
+  exploratory_cohort_only: true
+  auto_exclude_subjects: false
+  auto_exclude_eyes: false
+  define_qc_cutoffs: false
+  fuse_eyes: false
+  choose_primary_standardization: false
+  choose_primary_windows: false
+  define_nir_blink_or_perclos: false
