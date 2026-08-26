@@ -1,0 +1,34 @@
+pipeline:
+  name: attention-analysis-nir-pipeline-validation
+  version: 1
+  schema_version: 1
+  purpose: "validation-only downstream smoke tests using completed 11_analysis_tables"
+
+paths:
+  analysis_tables_root: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v2/cohort-44-exploratory/11_analysis_tables"
+  output_root: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v2/cohort-44-exploratory/12_pipeline_validation"
+
+subjects:
+  # Empty means discover only subjects with validated 11_analysis_tables completion.
+  include: []
+
+analysis:
+  track: "binocular_primary"
+  # Fixed smoke-test windows. They are not selected from current outcome patterns.
+  trial_display_window: "pre_5s"
+  probe_model_window: "pre_20s"
+  time_on_task_display_bin_sec: 30
+  minimum_subjects_for_models: 3
+
+figures:
+  formats:
+    - png
+    - pdf
+  dpi: 180
+
+scientific_boundary:
+  validation_only: true
+  nir_values_known_invalid: true
+  allow_scientific_interpretation: false
+  allow_window_selection_from_effects: false
+  write_formal_statistics: false
