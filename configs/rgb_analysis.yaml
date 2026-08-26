@@ -1,0 +1,156 @@
+pipeline:
+  name: attention-analysis-rgb
+  status: development
+  branch: nvidia-cuda
+  base_backend: nvidia-cuda
+
+focuswave:
+  repository: kyandi233-dev/FocusWave
+  branch: formaltest
+  accepted_formal_versions:
+    - "v3.1.3"
+    - "v3.1.4"
+  formal_structure: "BB"
+  expected_blocks: 2
+  baseline_duration_sec: 180
+  trial_duration_ms: 1150
+
+data:
+  roots:
+    - "J:/Data"
+  min_subject_number: 31
+  rgb_video_pattern: "sub-*_/rgb/*_rgb.avi"
+  rgb_timestamp_suffix: "_rgb_timestamps.csv"
+  behavior_dir: "beh"
+  master_timeline: "master_timeline.csv"
+  exclude:
+    sub-9504: "not part of the formal analysis cohort"
+
+analysis_window:
+  start: "baseline_stop_minus_duration"
+  end: "last_formal_block_stop"
+  preserve_transition_phases: true
+
+retention:
+  schema_version: "rgb-dev-0.1"
+  preserve_supported_raw_model_outputs: true
+  preserve_frame_identity_and_timestamps: true
+  preserve_qc_flags_before_filtering: true
+  drop_invalid_rows_before_raw_save: false
+  write_manifest_for_formal_subject_outputs: true
+
+face:
+  enabled: true
+  status: backend_frozen_cuda_runtime_pending_parity
+  candidates: [pyfeat, libreface2]
+  selected_backend: pyfeat
+  selected_backend_version: "py-feat 2.1.1 Detectorv2 scientific core"
+  execution_backend: pytorch_cuda
+  cuda_runtime_status: pending_implementation_and_cross_backend_parity
+  retinaface_batch: 8
+  multitask_batch: 16
+  target_outputs: [action_units, expression, gaze, head_pose]
+  optional_outputs: [valence_arousal, face_landmarks, blendshapes]
+  inference_fps: 15.0
+  benchmark:
+    jpeg_quality: 95
+    phase_samples:
+      baseline: 50
+      instructions: 25
+      practice: 35
+      transition: 15
+      block1: 90
+      interblock_transition: 45
+      block2: 90
+  continuous_benchmark:
+    phase: block1
+    duration_sec: 30
+    inference_fps: 10
+    jpeg_quality: 95
+  formal_dryrun:
+    inference_fps: 15.0
+    jpeg_quality: 95
+    windows:
+      - {name: baseline_start, phase: baseline, anchor: start, duration_sec: 30}
+      - {name: baseline_end, phase: baseline, anchor: end, duration_sec: 30}
+      - {name: block1_middle, phase: block1, anchor: middle, duration_sec: 60}
+      - {name: interblock_middle, phase: interblock_transition, anchor: middle, duration_sec: 60}
+      - {name: block2_middle, phase: block2, anchor: middle, duration_sec: 60}
+  primary_face:
+    status: representative_dryrun
+    max_track_gap_ms: 2000
+    min_iou: 0.05
+    max_center_distance_normalized: 0.75
+    max_scale_log_ratio: 0.80
+    selection_scope: [block1, block2]
+    selection_rule: "max task-frame occupancy; tie by median FaceScore then median bbox area"
+  eyelid:
+    status: continuous_signals_frozen_event_thresholds_pending_dryrun
+    mesh_topology: mediapipe_478
+    retain_native_blendshapes: [eyeBlinkLeft, eyeBlinkRight]
+    derive:
+      - ear_left
+      - ear_right
+      - eyelid_aperture_px_left
+      - eyelid_aperture_px_right
+      - iris_diameter_px_left
+      - iris_diameter_px_right
+      - aperture_iris_left
+      - aperture_iris_right
+      - eye_openness_normalized
+      - closure_fraction
+      - closure80_proxy
+    open_reference: "median of top 30% valid aperture/iris values in baseline; fallback to all valid frames"
+    perclos_window_sec: 60
+    perclos_name: perclos80_proxy
+    blink_event_threshold_status: pending_representative_dryrun
+
+pose:
+  enabled: true
+  backend: mediapipe_pose
+  status: pilot_validated_10fps
+  schema_version: "rgb-pose-landmarks-v0.1"
+  model_variant: lite
+  model_path: "_test/pose_landmarker_lite.task"
+  model_url: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task"
+  inference_fps: 10.0
+  num_poses: 2
+  min_pose_detection_confidence: 0.5
+  min_pose_presence_confidence: 0.5
+  min_tracking_confidence: 0.5
+  output_segmentation_masks: false
+  decode_sampled_frames_only: true
+  normalize_motion_by_body_scale: true
+  formal_landmark_scope: upper_body
+  upper_body_landmarks: [nose, left_shoulder, right_shoulder, left_elbow, right_elbow, left_wrist, right_wrist]
+  optional_trunk_landmarks: [left_hip, right_hip]
+  feature_min_visibility: 0.5
+  feature_min_presence: 0.5
+  feature_require_in_frame: true
+  feature_gap_reset_ms: 300
+  target_outputs: [wrist_motion, elbow_motion, shoulder_motion, upper_body_motion, trunk_lean, posture_variability]
+
+motion:
+  enabled: true
+  backend: opencv_frame_difference
+  status: pilot_validated_global
+  schema_version: "rgb-motion-raw-v0.1"
+  process_full_fps: true
+  gap_reset_ms: 100
+  irregular_dt_multiple: 1.5
+  pixel_diff_threshold: 15
+  target_outputs: [global_motion_energy, body_motion_energy]
+  optical_flow_fallback: false
+
+qc:
+  min_face_valid_rate: null
+  min_pose_valid_rate: null
+  timestamp_gap_warning_ms: 100
+
+output:
+  root: "D:/Project/厚粲杯/11_数据/04_Attention-Analysis_nvidia-cuda_RGB"
+  test_dir: "_test"
+  raw_format: parquet
+  analysis_format: parquet
+  summary_format: csv
+  subject_file_prefix: true
