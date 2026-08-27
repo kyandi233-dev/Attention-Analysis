@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import csv
-
 import cv2
 import numpy as np
 
 import ritnet_fullclass_qc_producer as producer
+from ritnet_fullclass_io import atomic_write_csv, csv_fieldnames, iter_csv
 from ritnet_fullclass_qc_producer import produce_qc_artifacts
 
 
@@ -35,32 +34,36 @@ class FakeCapture:
         pass
 
 
-def write_csv(path, fields, rows):
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(fields))
-        writer.writeheader()
-        writer.writerows(rows)
+def test_plain_csv_io_roundtrips_without_gzip(tmp_path):
+    path = tmp_path / "eye_metrics.csv"
+    fields = ("subject", "frame_idx", "eye")
+    rows = [
+        {"subject": "sub-031", "frame_idx": 10, "eye": "frame_left"},
+        {"subject": "sub-031", "frame_idx": 10, "eye": "frame_right"},
+    ]
+
+    count = atomic_write_csv(path, rows, fields)
+
+    assert count == 2
+    assert path.suffix == ".csv"
+    assert csv_fieldnames(path) == fields
+    assert list(iter_csv(path)) == [
+        {"subject": "sub-031", "frame_idx": "10", "eye": "frame_left"},
+        {"subject": "sub-031", "frame_idx": "10", "eye": "frame_right"},
+    ]
 
 
-def test_qc_consumer_accepts_current_plain_csv_contract(monkeypatch, tmp_path):
+def test_qc_consumes_rows_without_reopening_final_csv(monkeypatch, tmp_path):
     monkeypatch.setattr(producer.cv2, "VideoCapture", FakeCapture)
-    coverage = tmp_path / "frame_coverage.csv"
-    eyes = tmp_path / "eye_metrics.csv"
-    write_csv(
-        coverage,
-        ("phase", "phase_segment", "frame_idx", "coverage_status", "fixed_qc_anchor"),
-        [
-            {
-                "phase": "block1",
-                "phase_segment": 1,
-                "frame_idx": 10,
-                "coverage_status": "yolo_no_eye",
-                "fixed_qc_anchor": True,
-            }
-        ],
-    )
-    write_csv(eyes, ("phase", "phase_segment", "frame_idx", "eye"), [])
-
+    coverage_rows = [
+        {
+            "phase": "block1",
+            "phase_segment": 1,
+            "frame_idx": 10,
+            "coverage_status": "yolo_no_eye",
+            "fixed_qc_anchor": True,
+        }
+    ]
     config = {
         "models": {"ritnet_fullclass_final": "models/missing-test.onnx"},
         "fullclass": {
@@ -75,18 +78,16 @@ def test_qc_consumer_accepts_current_plain_csv_contract(monkeypatch, tmp_path):
             "qc_artifact_budget_bytes": 10_000_000,
         },
     }
-    subject_dir = tmp_path / "out" / "sub-031"
+
     artifacts = produce_qc_artifacts(
         subject="sub-031",
-        subject_dir=subject_dir,
+        subject_dir=tmp_path / "out" / "sub-031",
         source_video=tmp_path / "source.avi",
         config=config,
-        eye_metrics_path=eyes,
-        frame_coverage_path=coverage,
+        eye_metric_rows=[],
+        frame_coverage_rows=coverage_rows,
     )
 
     assert artifacts.saved_image_count == 1
     assert artifacts.index_path.is_file()
     assert artifacts.pixel_evidence_path.is_file()
-    assert coverage.suffix == ".csv"
-    assert eyes.suffix == ".csv"
