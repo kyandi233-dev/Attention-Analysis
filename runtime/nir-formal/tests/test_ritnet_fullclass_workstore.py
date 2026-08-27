@@ -9,7 +9,10 @@ from ritnet_fullclass_workstore import (
     V7_LEGACY_UNCERTAINTY_ALGORITHM_VERSION,
     V7_LEGACY_UNCERTAINTY_DOMAIN_VERSION,
     V8_CORE_VERSION,
+    WORKSTORE_SCHEMA_VERSION,
     FullClassWorkStore,
+    canonical_json,
+    identity_digest,
 )
 
 
@@ -79,6 +82,48 @@ def scientific_identity(core_version, *, subject="sub-031", model_hash="m" * 64)
     return identity
 
 
+def seed_legacy_v7(path, identity, rows=()):
+    con = sqlite3.connect(path)
+    try:
+        con.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        con.execute(
+            """
+            CREATE TABLE eye_rows (
+                row_ordinal INTEGER PRIMARY KEY,
+                phase TEXT NOT NULL,
+                phase_segment INTEGER NOT NULL,
+                frame_idx INTEGER NOT NULL,
+                eye TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                UNIQUE(phase, phase_segment, frame_idx, eye)
+            )
+            """
+        )
+        con.executemany(
+            "INSERT INTO meta(key, value) VALUES (?, ?)",
+            [
+                ("schema_version", str(WORKSTORE_SCHEMA_VERSION)),
+                ("identity_json", canonical_json(identity)),
+                ("identity_digest", identity_digest(identity)),
+            ],
+        )
+        for ordinal, row in rows:
+            phase, segment, frame_idx, eye = (
+                str(row["phase"]),
+                int(row["phase_segment"]),
+                int(row["frame_idx"]),
+                str(row["eye"]),
+            )
+            con.execute(
+                "INSERT INTO eye_rows(row_ordinal, phase, phase_segment, frame_idx, eye, payload_json) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (ordinal, phase, segment, frame_idx, eye, canonical_json(row)),
+            )
+        con.commit()
+    finally:
+        con.close()
+
+
 def read_meta(path):
     con = sqlite3.connect(path)
     try:
@@ -136,8 +181,7 @@ def test_v7_checkpoint_migrates_to_v8_when_real_payload_science_is_identical(tmp
     path = tmp_path / "work.sqlite"
     stored = scientific_identity(V7_CORE_VERSION)
     source = [source_row(10, "frame_left")]
-    with FullClassWorkStore(path, identity=stored) as store:
-        store.append_rows([(0, payload(10, "frame_left", 0.1))])
+    seed_legacy_v7(path, stored, [(0, payload(10, "frame_left", 0.1))])
 
     current = scientific_identity(V8_CORE_VERSION)
     current["git_commit"] = "b" * 40
@@ -159,8 +203,7 @@ def test_v7_checkpoint_payload_version_mismatch_does_not_mutate_identity(tmp_pat
     stored = scientific_identity(V7_CORE_VERSION)
     bad = payload(10, "frame_left", 0.1)
     bad["uncertainty_algorithm_version"] = "wrong"
-    with FullClassWorkStore(path, identity=stored) as store:
-        store.append_rows([(0, bad)])
+    seed_legacy_v7(path, stored, [(0, bad)])
     before = read_meta(path)
 
     with FullClassWorkStore(path, identity=scientific_identity(V8_CORE_VERSION)) as candidate:
@@ -176,8 +219,7 @@ def test_v7_checkpoint_payload_version_mismatch_does_not_mutate_identity(tmp_pat
 def test_v7_checkpoint_bad_prefix_does_not_mutate_identity(tmp_path):
     path = tmp_path / "work.sqlite"
     stored = scientific_identity(V7_CORE_VERSION)
-    with FullClassWorkStore(path, identity=stored) as store:
-        store.append_rows([(0, payload(10, "frame_left", 0.1))])
+    seed_legacy_v7(path, stored, [(0, payload(10, "frame_left", 0.1))])
     before = read_meta(path)
 
     current = scientific_identity(V8_CORE_VERSION)
@@ -191,19 +233,19 @@ def test_v7_checkpoint_bad_prefix_does_not_mutate_identity(tmp_path):
     assert "resume_migrated_from_identity_digest" not in after
 
 
-def test_v7_checkpoint_rejects_v8_migration_when_scientific_key_is_missing(tmp_path):
+def test_v7_checkpoint_missing_scientific_key_is_not_migrated(tmp_path):
     path = tmp_path / "work.sqlite"
     stored = scientific_identity(V7_CORE_VERSION)
     del stored["roi_contract"]
-    with pytest.raises(ValueError, match="missing scientific keys"):
-        FullClassWorkStore(path, identity=stored)
+    seed_legacy_v7(path, stored)
+
+    with pytest.raises(RuntimeError, match="scientific run"):
+        FullClassWorkStore(path, identity=scientific_identity(V8_CORE_VERSION))
 
 
 def test_v7_checkpoint_rejects_v8_migration_when_model_hash_differs(tmp_path):
     path = tmp_path / "work.sqlite"
-    stored = scientific_identity(V7_CORE_VERSION)
-    with FullClassWorkStore(path, identity=stored):
-        pass
+    seed_legacy_v7(path, scientific_identity(V7_CORE_VERSION))
 
     current = scientific_identity(V8_CORE_VERSION, model_hash="x" * 64)
     with pytest.raises(RuntimeError, match="scientific run"):
@@ -212,9 +254,7 @@ def test_v7_checkpoint_rejects_v8_migration_when_model_hash_differs(tmp_path):
 
 def test_v7_checkpoint_rejects_v8_migration_when_source_differs(tmp_path):
     path = tmp_path / "work.sqlite"
-    stored = scientific_identity(V7_CORE_VERSION)
-    with FullClassWorkStore(path, identity=stored):
-        pass
+    seed_legacy_v7(path, scientific_identity(V7_CORE_VERSION))
 
     current = scientific_identity(V8_CORE_VERSION, subject="sub-032")
     with pytest.raises(RuntimeError, match="scientific run"):
