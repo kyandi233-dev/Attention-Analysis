@@ -10,8 +10,9 @@ from __future__ import annotations
 
 from collections import deque
 from math import hypot, isfinite
-from statistics import median
 from typing import Any, Iterable, Iterator, Mapping
+
+import numpy as np
 
 
 ROBUST_Z_SCALE = 0.6744897501960817
@@ -89,9 +90,9 @@ def _success(row: Mapping[str, Any]) -> bool:
 def _robust_z(value: float, history: deque[float]) -> float | None:
     if len(history) < TEMPORAL_ANOMALY_MIN_SAMPLES:
         return None
-    center = float(median(history))
-    deviations = [abs(item - center) for item in history]
-    mad = float(median(deviations))
+    values = np.fromiter(history, dtype=np.float64, count=len(history))
+    center = float(np.median(values))
+    mad = float(np.median(np.abs(values - center)))
     distance = abs(float(value) - center)
     tolerance = max(1e-12, 1e-9 * max(1.0, abs(center)))
     if mad <= tolerance:
