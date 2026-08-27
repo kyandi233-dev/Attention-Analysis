@@ -1,35 +1,38 @@
 """Canonical batch RITnet full-class runner.
 
-This outer gate requires a clean Git worktree, then delegates source discovery
-and per-subject dispatch to the internal batch selector. Every child run uses the
-same final <=1 GiB single-subject entrypoint; no legacy chunk/compression knobs
-remain in the canonical CLI.
+This outer gate allows only the locally generated final RITnet ONNX/.data files
+to be dirty in Git; their SHA256 is recorded separately. All source code/config
+must remain clean. Every child uses the same final <=1 GiB single-subject path.
 """
 from __future__ import annotations
 
-import subprocess
+import sys
 from pathlib import Path
 
-from run_ritnet_fullclass_native_batch import main
+from ritnet_fullclass_git import require_clean_code_worktree
+from run_ritnet_fullclass_native_batch import load_config, main
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
 
 
+def _config_path_from_argv() -> Path:
+    if "--config" in sys.argv:
+        index = sys.argv.index("--config")
+        if index + 1 >= len(sys.argv):
+            raise SystemExit("--config requires a path value")
+        return Path(sys.argv[index + 1]).expanduser().resolve()
+    return (PACKAGE_ROOT / "config.yaml").resolve()
+
+
 def _enforce_canonical_provenance() -> None:
+    config_path = _config_path_from_argv()
+    if not config_path.is_file():
+        raise SystemExit(f"Config not found: {config_path}")
+    config = load_config(config_path)
     try:
-        dirty = subprocess.check_output(
-            ["git", "status", "--porcelain"],
-            cwd=PACKAGE_ROOT,
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
+        require_clean_code_worktree(config)
     except Exception as exc:
-        raise SystemExit("Canonical full-class batch requires a readable Git worktree") from exc
-    if dirty:
-        raise SystemExit(
-            "Canonical full-class batch requires a clean Git worktree so the recorded commit "
-            "fully identifies the executed code. Commit/stash local changes first."
-        )
+        raise SystemExit(str(exc)) from exc
 
 
 if __name__ == "__main__":

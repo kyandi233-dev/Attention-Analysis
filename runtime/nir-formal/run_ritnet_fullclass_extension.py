@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import subprocess
 from pathlib import Path
 
 from ritnet_fullclass_final_completion import (
@@ -22,6 +21,7 @@ from ritnet_fullclass_final_engine import (
     resolve_package_path,
     run_numeric_core,
 )
+from ritnet_fullclass_git import require_clean_code_worktree
 from ritnet_fullclass_qc_producer import produce_qc_artifacts
 from ritnet_fullclass_source import load_source_context
 
@@ -37,23 +37,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=Path, default=PACKAGE_ROOT / "config.yaml")
     parser.add_argument("--device", default="0", help="DirectML device id")
     return parser.parse_args()
-
-
-def _require_clean_git() -> None:
-    try:
-        dirty = subprocess.check_output(
-            ["git", "status", "--porcelain"],
-            cwd=PACKAGE_ROOT,
-            text=True,
-            stderr=subprocess.DEVNULL,
-        ).strip()
-    except Exception as exc:
-        raise RuntimeError("final full-class run requires a readable Git worktree") from exc
-    if dirty:
-        raise RuntimeError(
-            "final full-class run requires a clean Git worktree so the recorded commit fully "
-            "identifies the executed code; commit/stash local changes first"
-        )
 
 
 def _subject_dir(context) -> Path:
@@ -109,8 +92,6 @@ def _strict_skip_or_preflight(context, config_path: Path) -> tuple[Path, dict]:
             "refusing automatic overwrite: " + validation.reason
         )
 
-    # Numeric data may be regenerated transactionally from the SQLite workstore,
-    # but partially published QC/final metadata are intentionally not overwritten.
     blockers = [
         subject_dir / "summary.json",
         subject_dir / "manifest.json",
@@ -128,7 +109,6 @@ def _strict_skip_or_preflight(context, config_path: Path) -> tuple[Path, dict]:
 
 def main() -> int:
     args = parse_args()
-    _require_clean_git()
     run_dir = args.run_dir.expanduser().resolve()
     config_path = args.config.expanduser().resolve()
     if not run_dir.is_dir():
@@ -137,6 +117,10 @@ def main() -> int:
         raise FileNotFoundError(config_path)
 
     context = load_source_context(run_dir, config_path)
+    # The final model is intentionally allowed to be generated locally and may
+    # therefore appear as the only untracked/modified Git artifact. Its SHA256
+    # is frozen separately in work_identity/manifest. Code/config must be clean.
+    require_clean_code_worktree(context.config)
     subject_dir, expected_identity = _strict_skip_or_preflight(context, config_path)
     completion_path = subject_dir / COMPLETION_NAME
     if completion_path.is_file():

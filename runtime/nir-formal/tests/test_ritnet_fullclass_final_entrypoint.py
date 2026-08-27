@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import ritnet_fullclass_git as git_gate
 import run_ritnet_fullclass_extension as single
 import run_ritnet_fullclass_native_batch as batch
 
@@ -26,10 +27,10 @@ def test_single_strict_skip_does_not_rerun_numeric_core(monkeypatch, tmp_path):
     subject_dir.mkdir(parents=True)
     (subject_dir / "completion.json").write_text("{}", encoding="utf-8")
 
-    context = SimpleNamespace(subject="sub-031")
+    context = SimpleNamespace(subject="sub-031", config={})
     monkeypatch.setattr(single, "parse_args", lambda: Namespace(run_dir=run_dir, config=config, device="0"))
-    monkeypatch.setattr(single, "_require_clean_git", lambda: None)
     monkeypatch.setattr(single, "load_source_context", lambda *_: context)
+    monkeypatch.setattr(single, "require_clean_code_worktree", lambda *_: None)
     monkeypatch.setattr(single, "_strict_skip_or_preflight", lambda *_: (subject_dir, {"identity": 1}))
     monkeypatch.setattr(
         single,
@@ -75,3 +76,21 @@ def test_batch_cli_keeps_only_final_operational_controls(monkeypatch, tmp_path):
     assert args.dry_run is True
     assert not hasattr(args, "chunk_rows")
     assert not hasattr(args, "compression")
+
+
+def test_git_gate_allows_only_generated_final_model_artifacts(monkeypatch):
+    config = {
+        "models": {
+            "ritnet_fullclass_final": "models/ritnet-b16-fp32-uncertainty.onnx",
+            "ritnet_fullclass_final_external_data": "models/ritnet-b16-fp32-uncertainty.onnx.data",
+        }
+    }
+    allowed = sorted(git_gate.allowed_generated_model_paths(config))
+    status = "\n".join(f"?? {path}" for path in allowed) + "\n"
+    monkeypatch.setattr(git_gate.subprocess, "check_output", lambda *_, **__: status)
+    git_gate.require_clean_code_worktree(config)
+
+    dirty = status + " M runtime/nir-formal/run_ritnet_fullclass_extension.py\n"
+    monkeypatch.setattr(git_gate.subprocess, "check_output", lambda *_, **__: dirty)
+    with pytest.raises(RuntimeError, match="Unexpected status"):
+        git_gate.require_clean_code_worktree(config)
