@@ -204,7 +204,7 @@ def main() -> int:
     device = args.device or str(batch_cfg.get("device", "0"))
     precision = args.ritnet_precision or str(config["ritnet"].get("precision", "fp32"))
     ritnet_batch_size = args.ritnet_batch_size or int(config["ritnet"].get("batch_size", 16))
-    yolo_batch_size = int(config["yolo"].get("batch_size", 8))
+    yolo_batch_size = int(config.get("yolo", {}).get("batch_size", FIXED_YOLO_BATCH_SIZE))
     if precision != FIXED_RITNET_PRECISION:
         raise ValueError("AMD/DirectML RITnet precision is fixed at fp32")
     if ritnet_batch_size != FIXED_RITNET_BATCH_SIZE:

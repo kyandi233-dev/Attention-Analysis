@@ -37,4 +37,5 @@ jobs:
             tests/test_portable_nir_gpu_package.py
 
       - name: Run formal NIR runtime tests
+        if: always()
         run: python -m pytest runtime/nir-formal/tests -q
