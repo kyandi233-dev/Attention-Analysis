@@ -1,29 +1,25 @@
 # NIR Formal Runtime（AMD / DirectML）
 
-这是 `Attention-Analysis` 的 AMD 正式 NIR 运行包。基础 formal producer 已经完成历史 YOLO + RITnet 提取；当前补全的是 **最终 RITnet full-class 管线**。它不会重新运行 YOLO，而是严格复用历史正式 `eyes.csv` 中保存的 YOLO 眼睛框，从原始 NIR AVI 重建固定 1.6 宽高比 ROI，再运行冻结 RITnet。
+这是 `Attention-Analysis` 的 AMD 正式 NIR runtime。历史 formal producer 已经完成 YOLO 眼睛检测；当前最终 RITnet full-class 管线**严格复用历史 `eyes.csv` 的 YOLO bbox，不重跑 YOLO**，从原始 NIR AVI 重建固定 1.6 ROI 后执行 RITnet。
 
-最终目标：**每被试新增 full-class 输出 < 1 GiB**，保留后续统计、质量检查和敏感性分析需要的标量/小向量原子信息，不全量保存每只眼 400×640 标签图或四分类概率图。Issue #21 是当前收口清单；AMD `sub-031` 真机验收通过前，不启动全 cohort。
+当前正式核心：
+
+```text
+fullclass-final-core-v8-interface-safe-plain-csv
+EYE_METRICS_SCHEMA_VERSION = 6
+FRAME_COVERAGE_SCHEMA_VERSION = 2
+```
+
+最终目标：每被试新增 full-class 输出 ≤ 1 GiB；只保留后续科研分析、QC 与敏感性分析真正需要的 scalar/小型证据，不全量落盘 400×640 segmentation/probability map。
+
+详细科学与恢复契约见 `RITNET_FULLCLASS_EXTENSION.md`。
 
 ---
 
 ## 1. 每次打开新终端
 
-AMD 工作副本：
-
-```text
-D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-amd-DirectML
-```
-
-已有 Conda 环境：
-
-```text
-D:\CondaEnvs\nir-amd
-```
-
-PowerShell / VS Code Terminal：
-
 ```powershell
-cd "D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-amd-DirectML"
+cd "D:\AAAWORK\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-amd-DirectML"
 
 git switch amd-DirectML
 git pull --ff-only
@@ -33,307 +29,313 @@ conda activate "D:\CondaEnvs\nir-amd"
 cd runtime\nir-formal
 ```
 
-正式 full-class 入口要求**代码与配置没有未提交修改**。本机生成的两个最终模型文件可以不在 Git 中，它们由 SHA256 单独写入运行身份；除此之外的意外 Git 修改仍会被拒绝。不要为了通过检查使用 `git reset --hard`。
+正式 runner 强制 clean Git worktree。不要为了通过检查使用 `git reset --hard`；先确认本地修改来源。
 
 ---
 
-## 2. 当前最终 full-class 数据流
+## 2. 最终数据流
 
 ```text
 历史 formal completion / frames.csv / eyes.csv
-        ↓ 严格完整性验证
+        ↓ 严格验证
 历史 YOLO bbox + 原始 NIR AVI
         ↓ 不重跑 YOLO
-扩大上下文并构造固定 8:5（1.6）ROI
-        ↓ 超出原视频的位置只作为 RITnet 输入人工补边
-统一缩放到 640×400
+固定 1.6 ROI + 必要 replicate padding
         ↓
-RITnet FP32 / fixed batch=16 / DirectML
+640×400
         ↓
-硬四分类标签 + 临时四分类逐像素概率 + max probability + top1-top2 margin + entropy
+RITnet FP32 / fixed b16 / DirectML
         ↓
-只在真实原视频像素区域计算正式指标
+hard 4-class + 临时 class_probability
+        ↓ 只统计真实 source-backed pixels
+pupil-only geometry
++ four soft fractions
++ 3 ocular uncertainty means
++ padding/QC facts
         ↓
-逐眼标量/小向量 + frame coverage + temporal QC
+SQLite interruption checkpoint
         ↓
-固定时间点/异常帧综合 QC 图
+temporal facts + frame coverage
         ↓
-summary.json + manifest.json + completion.json + SHA256 + <1 GiB 硬门槛
+plain CSV + bounded QC
+        ↓
+summary + manifest + completion + ≤1 GiB
 ```
 
-人工补边可以影响神经网络看到的上下文，但**人工补出来的像素本身不进入正式面积、比例、几何、四分类软比例和不确定性统计**。模型若在人工补边里预测出瞳孔/虹膜/眼球，这些像素数和结构是否碰到真实画面边界只作为质量检查事实保存。
+人工 padding 可以作为网络输入上下文，但 padding 像素本身不进入正式 hard/soft/uncertainty 科学分母。
 
 ---
 
-## 3. 最终 RITnet ONNX：先准备冻结权重，再导出
+## 3. 当前正式科学输出
 
-旧 final uncertainty ONNX 如果输出 `soft_class_fraction [16,4]`，不能用于当前管线，因为它在模型内部对整张 640×400 ROI 提前平均，无法排除人工补边。
+保留：
 
-当前最终模型接口必须是：
+- hard background / sclera / iris / pupil count 与 fraction；
+- cheap `iris_outer` / `ocular` union count 与 fraction；
+- four-class soft fractions；
+- pupil connected components / fragmentation；
+- pupil ellipse / center / axes / area / diameter；
+- valid-source / padding QC；
+- ocular max-probability mean；
+- ocular top1-top2 margin mean；
+- ocular entropy mean；
+- temporal delta / jump QC；
+- historical YOLO provenance；
+- frame coverage；
+- bounded QC evidence。
+
+不再作为正式输出：
+
+```text
+iris ellipse
+iris_outer ellipse
+PIR / pupil-to-iris ratio
+OAR / ocular aperture ratio
+cohort percentile uncertainty
+cohort boundary-band uncertainty
+cohort low-probability threshold fields
+full hard-label store
+full probability-map store
+```
+
+iris 仍保留为四分类类别，但不再作为几何归一化标尺。
+
+---
+
+## 4. 当前 ONNX / runtime 输出
+
+正式 cohort 推理只请求：
 
 ```text
 labels              uint8   [16,400,640]
 class_probability   float32 [16,4,400,640]
-max_probability     float32 [16,400,640]
-top1_top2_margin    float32 [16,400,640]
-entropy             float32 [16,400,640]
 ```
 
-这些逐像素概率/不确定性图只存在于当前 batch 内存中，统计完成后释放，不逐眼写硬盘。
+三项 ocular uncertainty mean 从 `class_probability` 在 CPU 上直接派生。production fast path 不创建完整 max/margin/entropy map，也不计算 percentile/boundary/threshold 统计。
 
-### 3.1 获取并校验上游冻结权重
+完整多输出只用于模型 qualification / bounded sparse QC。
 
-AMD runtime 不把 PyTorch `best_model.pkl` 提交进仓库。需要重新生成 ONNX 时，先运行：
+### 重新导出模型（仅需要时）
 
 ```powershell
 python fetch_ritnet_upstream_weights.py
-```
 
-脚本只从固定的 RITnet 上游 commit：
-
-```text
-6431c57ce7bf0eda935fb6178b926ae9440b50bf
-```
-
-下载 `best_model.pkl`，并在写入本地前验证其 Git blob SHA-1 必须等于：
-
-```text
-f0864e6651f578525a9101c7ca787e23d2d201d7
-```
-
-验证通过后本地文件为：
-
-```text
-models/ritnet-best_model.pkl
-```
-
-该文件已被 `.gitignore` 排除，只是 ONNX 再生成输入，不是正式 full-class 输出。
-
-### 3.2 导出 batch-16 最终模型
-
-```powershell
 python export_ritnet_batch_variants.py `
   --final-uncertainty `
   --batches 16 `
   --force
+
+python validate_ritnet_fullclass_final_model.py --device 0
 ```
 
-期望生成：
+正式模型：
 
 ```text
 models/ritnet-b16-fp32-uncertainty.onnx
 models/ritnet-b16-fp32-uncertainty.onnx.data
 ```
 
-随后立即验证 DirectML 和输出合同：
-
-```powershell
-python validate_ritnet_fullclass_final_model.py --device 0
-```
-
-只有输出 `"status": "pass"`，且第一 provider 为 `DmlExecutionProvider`，才进入 `sub-031`。
-
 ---
 
-## 4. 先跑代码测试
+## 5. 代码测试
+
+AMD runtime 全套测试：
 
 ```powershell
 python -m pytest tests -q
 ```
 
-这里验证代码合同，包括：
+正式 CI 还会运行仓库基础 NIR tests。
 
-- 固定 1.6 ROI 与人工补边；
-- 真实原视频像素分析域；
-- hard-class / pupil / iris / ocular 指标；
-- 四分类软比例只在真实像素上计算；
-- whole / ocular / boundary 不确定性统计；
-- 同眼连续帧 temporal delta 与 rolling median/MAD 异常事实；
-- 完整帧时间线 coverage；
-- QC 固定/异常选样与空间预算；
-- `qc_index.csv` 与图片 SHA256；
-- `summary / manifest / completion` 完整性合同；
-- 最终用户入口不再路由到旧 label-store 实现。
+当前回归测试明确覆盖：
 
-PyTorch 只用于重新导出 ONNX；没有 PyTorch 的通用 CI 环境会跳过 exporter 专属测试，而不会把正式数值/runtime 测试一起跳过。AMD 本机在执行模型导出前仍必须具备导出脚本需要的 PyTorch 环境。
+- fixed 1.6 ROI / padding；
+- padding 不进入科学统计；
+- pupil-only geometry；
+- four soft fractions / three ocular means；
+- production checkpoint 不保存 QC-only null 字段；
+- temporal facts；
+- frame coverage；
+- rows-only bounded QC API；
+- plain CSV I/O；
+- complete checkpoint 不初始化 DirectML runtime；
+- complete checkpoint → CSV → coverage 的真实调用链；
+- v7 → v8 checkpoint migration；
+- completion/manifest/QC integrity。
 
-pytest 通过不等于正式验收；AMD DirectML 与真实 `sub-031` 仍必须实跑。
+测试通过不替代真实 AMD DirectML smoke，但它必须在实跑之前通过。
 
 ---
 
-## 5. `sub-031` 唯一验收入口
+## 6. 运行入口
 
-历史 formal 输出根沿用当前 AMD 数据目录，例如：
+历史 formal 输出根：
 
 ```text
 D:\_AttentionData\Beijing-NIR\amd-directml
 ```
 
-先只检查源选择：
+### 只检查历史 source 选择
 
 ```powershell
 python run_ritnet_fullclass_batch.py `
   --output "D:\_AttentionData\Beijing-NIR\amd-directml" `
-  --subjects "sub-031" `
+  --subjects "sub-034" `
   --device 0 `
   --dry-run
 ```
 
-确认历史 formal run 正确后运行：
+### 指定被试
 
 ```powershell
 python run_ritnet_fullclass_batch.py `
   --output "D:\_AttentionData\Beijing-NIR\amd-directml" `
-  --subjects "sub-031" `
+  --subjects "sub-034" `
   --device 0
 ```
 
-单被试也可直接运行：
+### 单个历史 formal run
 
 ```powershell
 python run_ritnet_fullclass_extension.py `
-  --run-dir "<sub-031 对应的历史 formal run 目录>" `
+  --run-dir "<对应历史 formal run 目录>" `
   --config config.yaml `
   --device 0
 ```
 
-不要再使用：
+不存在当前正式参数：
 
 ```text
 --chunk-rows
 --compression
 --postprocess-workers
 --validate-pupil
---force
 --allow-model-mismatch
 ```
 
-它们属于已经退出当前正式 full-class 路径的旧实现。
-
 ---
 
-## 6. 最终输出结构
-
-每个被试的新输出独立放置，不修改历史 formal 文件：
+## 7. 最终输出结构
 
 ```text
-ritnet-fullclass-final/
-└─ sub-031/
-   ├─ data/
-   │  ├─ eye_metrics.csv.gz
-   │  └─ frame_coverage.csv.gz
-   ├─ qc/
-   │  ├─ images/
-   │  │  └─ *.png
-   │  └─ qc_index.csv
-   ├─ summary.json
-   ├─ manifest.json
-   └─ completion.json
+D:\_AttentionData\Beijing-NIR\amd-directml\ritnet-fullclass-final\sub-XXX\
+├── data\
+│   ├── eye_metrics.csv
+│   └── frame_coverage.csv
+├── qc\
+│   ├── images\
+│   │   └── *.png
+│   ├── qc_index.csv
+│   └── qc_pixel_evidence.npz
+├── summary.json
+├── manifest.json
+└── completion.json
 ```
 
-中断恢复使用 SQLite checkpoint：
+只有 `completion.json` 严格验证通过才算完成。
+
+不再生成：
 
 ```text
-.ritnet-fullclass-work/sub-031.sqlite
+eye_metrics.csv.gz
+frame_coverage.csv.gz
 ```
 
-它是临时工作文件，不属于最终科研数据；最终完成与否只由新的严格 `completion.json` 校验决定。
+旧 `.csv.gz` 如果残留在未完成 subject 目录，会被 preflight 视为旧失败产物并阻止自动混用；应先人工确认并归档到 subject 目录之外，不自动删除。
 
 ---
 
-## 7. `eye_metrics.csv.gz` 保存什么
+## 8. SQLite checkpoint
 
-最终逐眼主表是固定版本 Schema，主要包括：
-
-- subject / frame / eye / phase / 时间；
-- 历史 YOLO bbox、置信度和 source status/reason；
-- 新固定 1.6 ROI 的请求范围、真实来源范围、四侧人工补边量和 resize 信息；
-- 背景、巩膜、虹膜、瞳孔、iris_outer、ocular 的 hard 像素数和比例；
-- 瞳孔与 iris_outer 轮廓、椭圆、轴长、面积、中心；
-- pupil-to-iris diameter / ellipse-area / contour-area ratio；
-- ocular aperture；
-- component fragmentation 与边界接触等原子质量事实；
-- 四类 soft fraction；
-- max probability、top1-top2 margin、entropy 在 whole / ocular / boundary 三个真实像素分析域中的分布摘要；
-- 相邻连续同眼帧 delta、瞳孔中心位移和 temporal jump/anomaly 事实。
-
-质量指标只用于后续筛选、敏感性分析和人工复核，**不会在提取阶段自动删除科研数据。**
-
----
-
-## 8. `frame_coverage.csv.gz` 为什么必须单独保存
-
-逐眼表只存在于历史 YOLO 找到眼睛的帧。为避免把“YOLO 没找到眼睛”误当成“视频里没有这一帧”，最终另保存完整帧时间线。
-
-每个历史 formal frame 都必须在 `frame_coverage.csv.gz` 中出现一次，并区分：
+临时恢复数据库：
 
 ```text
-historical video read failed
-yolo no eye
-single eye detected / success
-both eyes success
-final video decode failed
-RITnet no success
-source eye present but final result missing
+D:\_AttentionData\Beijing-NIR\amd-directml\.ritnet-fullclass-work\sub-XXX.sqlite
 ```
 
-固定时间 QC 锚点也从完整时间线产生，因此某帧即使 YOLO 两眼都没检测到，仍可被抽中查看原视频。
+它不是最终科研数据。
+
+完整 checkpoint 时：
+
+```text
+validate identity + source prefix
+→ SQLite rows
+→ temporal facts
+→ final CSV / coverage
+→ bounded QC
+→ completion
+```
+
+**不会初始化 DirectML，也不会重跑全量 RITnet。**
+
+`sub-034` 已有 80,479-row v7 checkpoint；v8 对该迁移有显式 fail-closed 检查。迁移前不会删除或重写 numeric rows。
 
 ---
 
-## 9. QC 与磁盘预算
+## 9. bounded QC
 
 当前配置：
 
 ```text
-qc_image_max_count = 200
-qc_artifact_budget_bytes = 268435456   # 256 MiB
-final_output_limit_bytes = 1073741824  # 1 GiB
+qc_interval_sec = 30
+qc_anomaly_max_per_reason = 5
+qc_image_max_count = 80
+qc_pixel_evidence_max_eyes = 16
+qc_artifact_budget_bytes = 268435456
+final_output_limit_bytes = 1073741824
 ```
 
-QC 一帧只保存一张综合图：
+QC composite 仅画 pupil ellipse，不画 iris ellipse；overlay alpha 约 0.25。
 
-```text
-原视频整帧（历史 YOLO 框 + 新 ROI 真实范围）
-+ 左眼 RITnet 四分类叠加 / ellipse / 关键指标
-+ 右眼 RITnet 四分类叠加 / ellipse / 关键指标
-```
+QC 对少量选中帧执行 bounded RITnet，这是为了生成可复核 evidence，不是重新跑 cohort：
 
-固定时间点优先；异常帧按 phase/reason 均匀抽样。同一帧多个异常合并为一张图。`qc_index.csv` 记录选择原因、对应眼睛、coverage status、SHA256 和文件大小。
-
-异常图达到空间预算后可以停止扩张；**固定时间锚点不能为了节省空间静默丢弃**。固定锚点本身超预算时，运行直接失败并要求重新审查配置。
+- composite 主要 labels-only；
+- sparse pixel evidence 最多 16 eyes；
+- NPZ 不额外压缩；
+- PNG 使用低压缩级别；
+- QC 直接使用 numeric core 内存 rows，不重新 parse 整个 final CSV。
 
 ---
 
-## 10. 最终完成判定
+## 10. completion / integrity
 
-存在 `completion.json` 不等于自动完成。再次运行时程序会重新验证：
+发布 `completion.json` 前必须验证：
 
-1. `summary.json` 与 `manifest.json` SHA256；
-2. `eye_metrics.csv.gz` 固定表头、Schema 版本、subject 和行数；
-3. `frame_coverage.csv.gz` 固定表头、Schema 版本、subject 和行数；
-4. `qc_index.csv` 固定表头；
-5. 每张 QC 图片存在、大小一致、SHA256 一致；
-6. manifest 中核心 artifact SHA256/大小一致；
-7. manifest 的 work identity 与当前 Git commit / config / RITnet 模型 / source identity 完全一致；
-8. 整个被试最终目录实际大小不超过 1 GiB。
+1. plain eye CSV exact schema / subject / schema version / row count；
+2. plain frame CSV exact schema / subject / schema version / row count；
+3. QC index / images / sparse pixel evidence；
+4. required artifact SHA256 与 size；
+5. source selection / work identity；
+6. 总目录大小 ≤1 GiB。
 
-只有全部通过才允许严格 skip。已有 completion 损坏、属于旧 Git/模型/配置，或者只有部分 QC/metadata 而没有有效 completion 时，程序会停止，不会自动删除或覆盖证据。
+`finalize_subject()` 做一次完整预发布 integrity pass。runner 不在刚完成后立即再把 8 万行表完整扫描第二遍；之后再次 strict-skip / validate 时仍会执行完整 validator。
 
 ---
 
-## 11. `sub-031` 最终人工验收
+## 11. 性能边界
 
-扩展到 cohort 前至少确认：
+当前必要 CPU 工作：
 
-- pytest 全通过；
-- `validate_ritnet_fullclass_final_model.py` 在 AMD 上通过，主 provider 为 DirectML；
-- `sub-031` 运行到有效 completion；
-- `eye_metrics` 行数与历史 source eye rows 一致；
-- `frame_coverage` 行数与历史 `frames.csv` 一致；
-- 最终目录实际大小 `< 1 GiB`；
-- 抽看清晰、一般、模糊、闭眼、半闭眼、反光、眼镜、画面边缘、YOLO 漏检、单眼、分割碎裂、temporal jump 等 QC；
-- 人工补边中的预测没有进入正式 hard/soft/uncertainty 指标；
-- 关闭后重新运行同一命令能通过严格完整性检查并跳过，而不是再次推理。
+- 视频 decode / ROI / preprocess；
+- pupil hard metrics / geometry；
+- four soft fractions；
+- three ocular uncertainty means；
+- SQLite checkpoint；
+- temporal facts；
+- frame coverage；
+- bounded QC；
+- final integrity pass。
 
-这些证据回填 Issue #21 后，才进入剩余 AMD subjects 的正式 full-class 批处理。
+已经删除的重复或无用工作：
+
+- final CSV gzip；
+- sparse NPZ compression；
+-高 PNG compression；
+- cohort percentile/boundary/threshold calculations；
+-对应 SQLite null placeholders；
+- complete-checkpoint DirectML initialization；
+- QC 前完整 CSV readback；
+- completion 后立即第二次全表 validation；
+- dead gzip helper code。
+
+`summary_workers=2` 与单 producer 用于将必要 CPU 工作与 DirectML 重叠；实测当前瓶颈是 DirectML，不是 summary，所以不要为了“CPU 看起来更少”把有效 overlap 拆掉。
