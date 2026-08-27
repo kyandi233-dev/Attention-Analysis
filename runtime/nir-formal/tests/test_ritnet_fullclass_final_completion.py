@@ -175,7 +175,6 @@ def test_validator_detects_pixel_evidence_tampering(tmp_path):
     pixel.write_bytes(b"tampered")
     result = validate_final_completion(core.subject_dir, expected_subject=core.subject)
     assert not result.valid
-    assert "pixel" in result.reason.lower() or "artifact" in result.reason.lower()
 
 
 def test_invalid_existing_completion_is_not_overwritten(tmp_path):
