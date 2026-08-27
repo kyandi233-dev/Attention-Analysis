@@ -36,7 +36,6 @@ REQUIRED_SOURCE_EYE_FIELDS = frozenset(
         "bbox_y1",
         "bbox_x2",
         "bbox_y2",
-        "yolo_batch_size",
     }
 )
 
@@ -85,7 +84,7 @@ def load_source_eye_rows(path: Path, subject: str) -> tuple[tuple[str, ...], tup
         fields = tuple(reader.fieldnames or ())
         missing = REQUIRED_SOURCE_EYE_FIELDS - set(fields)
         if missing:
-            raise ValueError(f"eyes.csv missing final-source columns: {sorted(missing)}")
+            raise ValueError(f"eyes.csv missing required source columns: {sorted(missing)}")
         rows = tuple(dict(row) for row in reader)
     if not rows:
         raise ValueError(f"eyes.csv contains no source eye rows: {path}")
@@ -212,9 +211,9 @@ def _load_source_context_cached(run_dir: Path, config_path: Path) -> SourceForma
 
     Final full-class analysis reuses the historical YOLO bbox rows as data. It
     must not retroactively reject a valid historical run merely because old
-    completion markers did not record later provenance fields such as YOLO batch
-    size or YOLO model SHA256. Those fields are recorded when available and left
-    explicitly absent when unavailable.
+    completion markers or eyes tables did not record later provenance fields.
+    Those fields are recorded when available and left explicitly absent when
+    unavailable.
     """
     validation = validate_completion(run_dir)
     if not validation.valid or not validation.marker:
@@ -250,6 +249,7 @@ def _load_source_context_cached(run_dir: Path, config_path: Path) -> SourceForma
         "source_yolo_model_sha256_recorded": source_yolo_model_sha256 is not None,
         "source_yolo_batch_size": source_yolo_batch,
         "source_yolo_batch_size_recorded": source_yolo_batch is not None,
+        "source_eyes_yolo_batch_size_column_recorded": "yolo_batch_size" in eye_fields,
         "source_focuswave_release": completion.get("focuswave_release"),
         "source_expected_frames": completion.get("expected_frames"),
         "source_phases": completion.get("phases"),
