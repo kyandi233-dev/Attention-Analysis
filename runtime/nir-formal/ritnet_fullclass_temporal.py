@@ -1,10 +1,8 @@
-"""Deterministic temporal QC facts for final RITnet eye metrics.
+"""Deterministic temporal QC facts for the lean final RITnet eye metrics.
 
 Only truly consecutive frames of the same eye within the same phase/segment are
 compared. Missing-eye gaps, phase/segment boundaries and RITnet failures reset
-the delta chain. Robust anomaly evidence uses a rolling median/MAD baseline from
-previous consecutive deltas only, so the current jump cannot contaminate the
-baseline that judges it. Temporal anomalies are QC facts and never delete rows.
+the delta chain. Robust anomaly evidence uses previous consecutive deltas only.
 """
 from __future__ import annotations
 
@@ -20,15 +18,12 @@ TEMPORAL_ANOMALY_THRESHOLD = 6.0
 TEMPORAL_ANOMALY_MIN_SAMPLES = 8
 TEMPORAL_ANOMALY_WINDOW = 120
 TEMPORAL_JUMP_SCORE_CAP = 1_000_000.0
-TEMPORAL_QC_VERSION = "consecutive-eye-rolling-mad-v2-thr6-min8-w120-cap1e6"
+TEMPORAL_QC_VERSION = "consecutive-eye-rolling-mad-v3-pupil-only"
 ALLOWED_EYES = frozenset({"frame_left", "frame_right"})
 
 DELTA_SPECS = (
     ("hard_pupil_fraction", "delta_hard_pupil_fraction"),
-    ("hard_iris_outer_fraction", "delta_hard_iris_outer_fraction"),
     ("hard_ocular_fraction", "delta_hard_ocular_fraction"),
-    ("pupil_to_iris_diameter_ratio", "delta_pupil_to_iris_diameter_ratio"),
-    ("ocular_aperture_ratio_median", "delta_ocular_aperture_ratio_median"),
     ("ocular_max_probability_mean", "delta_ocular_max_probability_mean"),
     ("ocular_top1_top2_margin_mean", "delta_ocular_top1_top2_margin_mean"),
     ("ocular_entropy_mean", "delta_ocular_entropy_mean"),
@@ -97,14 +92,10 @@ def _robust_z(value: float, history: deque[float]) -> float | None:
     tolerance = max(1e-12, 1e-9 * max(1.0, abs(center)))
     if mad <= tolerance:
         return 0.0 if distance <= tolerance else TEMPORAL_JUMP_SCORE_CAP
-    score = float(ROBUST_Z_SCALE * distance / mad)
-    return min(score, TEMPORAL_JUMP_SCORE_CAP)
+    return min(float(ROBUST_Z_SCALE * distance / mad), TEMPORAL_JUMP_SCORE_CAP)
 
 
-def _jump_score(
-    temporal: Mapping[str, Any],
-    history: Mapping[str, deque[float]],
-) -> float | None:
+def _jump_score(temporal: Mapping[str, Any], history: Mapping[str, deque[float]]) -> float | None:
     scores: list[float] = []
     for field in ROBUST_DELTA_FIELDS:
         value = _finite_float(temporal.get(field))
@@ -116,10 +107,7 @@ def _jump_score(
     return max(scores) if scores else None
 
 
-def _append_history(
-    temporal: Mapping[str, Any],
-    history: Mapping[str, deque[float]],
-) -> None:
+def _append_history(temporal: Mapping[str, Any], history: Mapping[str, deque[float]]) -> None:
     for field in ROBUST_DELTA_FIELDS:
         value = _finite_float(temporal.get(field))
         if value is not None:
@@ -127,14 +115,10 @@ def _append_history(
 
 
 def _new_history() -> dict[str, deque[float]]:
-    return {
-        field: deque(maxlen=TEMPORAL_ANOMALY_WINDOW)
-        for field in ROBUST_DELTA_FIELDS
-    }
+    return {field: deque(maxlen=TEMPORAL_ANOMALY_WINDOW) for field in ROBUST_DELTA_FIELDS}
 
 
 def iter_temporal_facts(rows: Iterable[Mapping[str, Any]]) -> Iterator[dict[str, Any]]:
-    """Stream copies of rows with gap-safe deltas and robust jump evidence."""
     previous_by_eye: dict[str, dict[str, Any]] = {}
     history_by_group: dict[tuple[str, int, str], dict[str, deque[float]]] = {}
 
@@ -215,5 +199,4 @@ def iter_temporal_facts(rows: Iterable[Mapping[str, Any]]) -> Iterator[dict[str,
 
 
 def add_temporal_facts(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """List helper for tests and small callers."""
     return list(iter_temporal_facts(rows))
