@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import csv
-import gzip
 import hashlib
 import io
 
@@ -23,8 +22,8 @@ from ritnet_fullclass_qc_producer import (
 from ritnet_fullclass_roi import fixed_aspect_roi_geometry
 
 
-def write_csv_gz(path, fieldnames, rows):
-    with gzip.open(path, "wt", encoding="utf-8", newline="") as handle:
+def write_csv(path, fieldnames, rows):
+    with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
@@ -87,10 +86,10 @@ def coverage(frame=10, *, fixed=True, status="yolo_no_eye"):
 
 def test_producer_saves_fixed_yolo_miss_without_needing_ritnet(monkeypatch, tmp_path):
     monkeypatch.setattr(producer.cv2, "VideoCapture", FakeCapture)
-    coverage_path = tmp_path / "coverage.csv.gz"
-    eyes_path = tmp_path / "eyes.csv.gz"
-    write_csv_gz(coverage_path, list(coverage().keys()), [coverage()])
-    write_csv_gz(eyes_path, ["phase", "phase_segment", "frame_idx", "eye"], [])
+    coverage_path = tmp_path / "coverage.csv"
+    eyes_path = tmp_path / "eyes.csv"
+    write_csv(coverage_path, list(coverage().keys()), [coverage()])
+    write_csv(eyes_path, ["phase", "phase_segment", "frame_idx", "eye"], [])
 
     subject_dir = tmp_path / "ritnet-fullclass-final" / "sub-031"
     artifacts = produce_qc_artifacts(
@@ -129,11 +128,11 @@ def test_producer_saves_fixed_yolo_miss_without_needing_ritnet(monkeypatch, tmp_
 
 def test_nonfixed_anomaly_is_skipped_when_byte_budget_is_too_small(monkeypatch, tmp_path):
     monkeypatch.setattr(producer.cv2, "VideoCapture", FakeCapture)
-    coverage_path = tmp_path / "coverage.csv.gz"
-    eyes_path = tmp_path / "eyes.csv.gz"
+    coverage_path = tmp_path / "coverage.csv"
+    eyes_path = tmp_path / "eyes.csv"
     row = coverage(fixed=False, status="yolo_no_eye")
-    write_csv_gz(coverage_path, list(row.keys()), [row])
-    write_csv_gz(eyes_path, ["phase", "phase_segment", "frame_idx", "eye"], [])
+    write_csv(coverage_path, list(row.keys()), [row])
+    write_csv(eyes_path, ["phase", "phase_segment", "frame_idx", "eye"], [])
 
     subject_dir = tmp_path / "out" / "sub-031"
     artifacts = produce_qc_artifacts(
@@ -152,11 +151,11 @@ def test_nonfixed_anomaly_is_skipped_when_byte_budget_is_too_small(monkeypatch, 
 
 def test_fixed_anchor_budget_overflow_fails_before_publishing_files(monkeypatch, tmp_path):
     monkeypatch.setattr(producer.cv2, "VideoCapture", FakeCapture)
-    coverage_path = tmp_path / "coverage.csv.gz"
-    eyes_path = tmp_path / "eyes.csv.gz"
+    coverage_path = tmp_path / "coverage.csv"
+    eyes_path = tmp_path / "eyes.csv"
     row = coverage(fixed=True, status="yolo_no_eye")
-    write_csv_gz(coverage_path, list(row.keys()), [row])
-    write_csv_gz(eyes_path, ["phase", "phase_segment", "frame_idx", "eye"], [])
+    write_csv(coverage_path, list(row.keys()), [row])
+    write_csv(eyes_path, ["phase", "phase_segment", "frame_idx", "eye"], [])
     subject_dir = tmp_path / "out" / "sub-031"
 
     with pytest.raises(RuntimeError, match="mandatory fixed QC"):
@@ -257,7 +256,7 @@ def test_pixel_evidence_selection_prioritizes_anomaly_eyes():
     assert selected[("block1", 1, 20, "frame_right")] == ("temporal_jump",)
 
 
-def test_pixel_evidence_npz_is_pickle_free_and_compact_typed():
+def test_pixel_evidence_npz_is_pickle_free_and_typed_without_compression_requirement():
     records = [
         {
             "phase": "block1",
