@@ -14,7 +14,7 @@ import cv2
 import numpy as np
 
 from ritnet_fullclass_final_runtime import FIXED_BATCH_SIZE, RitnetFullClassFinalRuntime
-from ritnet_fullclass_io import iter_csv_gz
+from ritnet_fullclass_io import iter_csv
 from ritnet_fullclass_qc import (
     QC_SELECTION_VERSION,
     QCSelection,
@@ -186,7 +186,7 @@ def _prepare_eye_overlays(
     config: Mapping[str, Any],
     runtime: RitnetFullClassFinalRuntime,
 ) -> dict[str, np.ndarray]:
-    """Small-call helper retained for tests; production QC batches across frames."""
+    """Small-call helper retained for focused QC geometry tests."""
     prepared = _prepare_eye_rois(frame=frame, eye_rows=eye_rows, config=config)
     if not prepared:
         return {}
@@ -319,7 +319,7 @@ def _encode_pixel_evidence(
     labels: np.ndarray,
     entropy: np.ndarray,
 ) -> bytes:
-    """Encode pickle-free sparse hard-label/entropy evidence as compressed NPZ."""
+    """Encode pickle-free sparse hard-label/entropy evidence as plain NPZ."""
     count = len(records)
     labels = np.asarray(labels)
     entropy = np.asarray(entropy)
@@ -344,7 +344,7 @@ def _encode_pixel_evidence(
         raise ValueError("pixel evidence contains an eye with no source-backed pixels")
 
     buffer = io.BytesIO()
-    np.savez_compressed(
+    np.savez(
         buffer,
         version=np.asarray(QC_PIXEL_EVIDENCE_VERSION),
         subject=np.asarray(subject),
@@ -429,8 +429,8 @@ def produce_qc_artifacts(
     if roi_cfg["padding_mode"] != PADDING_MODE_REPLICATE:
         raise ValueError("final QC reproduction requires replicate artificial padding")
 
-    coverage_rows = list(iter_csv_gz(frame_coverage_path))
-    eye_rows = list(iter_csv_gz(eye_metrics_path))
+    coverage_rows = list(iter_csv(frame_coverage_path))
+    eye_rows = list(iter_csv(eye_metrics_path))
     selections = build_qc_selections(
         frame_coverage_rows=coverage_rows,
         eye_metric_rows=eye_rows,
@@ -574,7 +574,7 @@ def produce_qc_artifacts(
                 success, encoded = cv2.imencode(
                     ".png",
                     composite,
-                    [cv2.IMWRITE_PNG_COMPRESSION, 6],
+                    [cv2.IMWRITE_PNG_COMPRESSION, 1],
                 )
                 if not success:
                     raise RuntimeError(f"failed to encode QC composite: {selection.key}")
