@@ -36,7 +36,6 @@ REQUIRED_SOURCE_EYE_FIELDS = frozenset(
         "bbox_y1",
         "bbox_x2",
         "bbox_y2",
-        "yolo_batch_size",
     }
 )
 

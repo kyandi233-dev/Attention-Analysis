@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
+import csv
 
 import pytest
 
@@ -108,7 +109,6 @@ def test_source_context_preserves_missing_legacy_yolo_batch(tmp_path, monkeypatc
         "focuswave_release": "v3.1.3",
         "phases": ["baseline2"],
         "expected_frames": 2,
-        "yolo_model_sha256": "yolo",
     }
     monkeypatch.setattr(
         source_loader,
@@ -133,3 +133,39 @@ def test_source_context_preserves_missing_legacy_yolo_batch(tmp_path, monkeypatc
     assert context.source_identity["source_yolo_model_sha256"] is None
     assert context.source_identity["source_yolo_model_sha256_recorded"] is False
     source_loader._load_source_context_cached.cache_clear()
+
+
+def test_legacy_source_eye_rows_allow_missing_yolo_batch_column(tmp_path):
+    path = tmp_path / "eyes.csv"
+    fields = ["subject", *sorted(source_loader.REQUIRED_SOURCE_EYE_FIELDS)]
+    row = {field: "" for field in fields}
+    row.update(
+        {
+            "subject": "sub-031",
+            "phase": "baseline",
+            "phase_segment": "1",
+            "frame_idx": "1",
+            "video_time_ms": "33",
+            "unix_ms": "1000",
+            "phase_time_ms": "33",
+            "eye": "frame_left",
+            "source": "yolo",
+            "redetect_reason": "anchor",
+            "frame_status": "ok",
+            "status": "ok",
+            "anchor_yolo_confidence": "0.9",
+            "bbox_x1": "10",
+            "bbox_y1": "10",
+            "bbox_x2": "100",
+            "bbox_y2": "100",
+        }
+    )
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        writer.writerow(row)
+
+    loaded_fields, rows = source_loader.load_source_eye_rows(path, "sub-031")
+
+    assert "yolo_batch_size" not in loaded_fields
+    assert len(rows) == 1
