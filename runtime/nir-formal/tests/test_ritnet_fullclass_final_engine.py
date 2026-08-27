@@ -5,10 +5,11 @@ import numpy as np
 import pytest
 
 from ritnet_fullclass_final_engine import (
-    _complete_batch,
+    PreparedBatch,
     _final_roi_config,
     _group_remaining_rows,
     _source_base_row,
+    _summarize_outputs,
 )
 
 
@@ -52,19 +53,15 @@ def class_probability(count):
     return probability
 
 
-class FakeRuntime:
-    def __init__(self, labels):
-        self.labels = np.asarray(labels, dtype=np.uint8)
-
-    def infer_batch(self, rois):
-        count = len(rois)
-        return {
-            "labels": np.stack([self.labels] * count),
-            "class_probability": class_probability(count),
-            "max_probability": np.full((count, 400, 640), 0.50, dtype=np.float32),
-            "top1_top2_margin": np.full((count, 400, 640), 0.20, dtype=np.float32),
-            "entropy": np.full((count, 400, 640), 1.142120, dtype=np.float32),
-        }, {"valid_batch_size": count}
+def outputs_for(labels):
+    count = labels.shape[0]
+    return {
+        "labels": labels,
+        "class_probability": class_probability(count),
+        "max_probability": np.full((count, 400, 640), 0.50, dtype=np.float32),
+        "top1_top2_margin": np.full((count, 400, 640), 0.20, dtype=np.float32),
+        "entropy": np.full((count, 400, 640), 1.142120, dtype=np.float32),
+    }
 
 
 def final_roi_config(*, historical_horizontal=9.0, historical_vertical=9.0):
@@ -86,6 +83,21 @@ def final_roi_config(*, historical_horizontal=9.0, historical_vertical=9.0):
             }
         },
     }
+
+
+def prepared(base, valid):
+    return PreparedBatch(
+        items=[{
+            "ordinal": 0,
+            "base": base,
+            "roi": np.zeros((100, 160), dtype=np.uint8),
+            "valid_source_mask": valid,
+        }],
+        successful_indices=(0,),
+        tensor=None,
+        valid_batch_size=1,
+        timing={},
+    )
 
 
 def test_source_base_row_keeps_only_final_source_provenance():
@@ -134,22 +146,14 @@ def test_group_remaining_rows_preserves_source_ordinal_groups():
     assert groups[2][0] == 12
 
 
-def test_complete_batch_keeps_four_classes_and_pupil_only_geometry():
+def test_production_summary_keeps_four_classes_and_pupil_only_geometry():
     labels = synthetic_labels()
     valid = np.ones((400, 640), dtype=bool)
     base = _source_base_row("sub-031", source(10, "frame_left"))
-    items = [{
-        "ordinal": 0,
-        "base": base,
-        "roi": np.zeros((100, 160), dtype=np.uint8),
-        "valid_source_mask": valid,
-    }]
 
-    completed = _complete_batch(
-        items=items,
-        runtime=FakeRuntime(labels),
-        boundary_band_px=5,
-        low_max_probability_threshold=None,
+    completed, _timing = _summarize_outputs(
+        prepared=prepared(base, valid),
+        outputs=outputs_for(labels[None, ...]),
     )
     row = completed[0][1]
     assert row["ritnet_status"] == "success"
@@ -168,24 +172,16 @@ def test_complete_batch_keeps_four_classes_and_pupil_only_geometry():
     assert row["soft_pupil_fraction"] == pytest.approx(0.05)
 
 
-def test_complete_batch_excludes_padding_from_scientific_hard_counts():
+def test_production_summary_excludes_padding_from_scientific_hard_counts():
     labels = np.zeros((400, 640), dtype=np.uint8)
     labels[:, :80] = 3
     valid = np.ones((400, 640), dtype=bool)
     valid[:, :80] = False
     base = _source_base_row("sub-031", source(10, "frame_left"))
-    items = [{
-        "ordinal": 0,
-        "base": base,
-        "roi": np.zeros((100, 160), dtype=np.uint8),
-        "valid_source_mask": valid,
-    }]
 
-    completed = _complete_batch(
-        items=items,
-        runtime=FakeRuntime(labels),
-        boundary_band_px=5,
-        low_max_probability_threshold=None,
+    completed, _timing = _summarize_outputs(
+        prepared=prepared(base, valid),
+        outputs=outputs_for(labels[None, ...]),
     )
     row = completed[0][1]
     assert row["analysis_valid_pixel_count"] == 400 * 560
