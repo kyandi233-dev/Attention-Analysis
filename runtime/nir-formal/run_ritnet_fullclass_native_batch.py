@@ -1,9 +1,9 @@
 """Internal batch selection/dispatch for the canonical final full-class workflow.
 
-Historical formal sources are accepted only after strict completion validation.
-For each subject this runner selects one unambiguous source and dispatches the
-canonical ``run_ritnet_fullclass_extension.py`` final <=1 GiB pipeline. Legacy
-label-chunk/compression controls are intentionally absent.
+Historical formal sources are accepted after strict completion validation. Final
+full-class analysis reuses the historical YOLO bbox table exactly as produced; it
+does not retroactively require old runs to match today's YOLO batch/model metadata.
+Legacy label-chunk/compression controls are intentionally absent.
 """
 from __future__ import annotations
 
@@ -56,12 +56,6 @@ def discover_source_runs(
     output_root: Path,
     requested_subjects: list[str] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
-    """Validate only source runs that can actually be selected.
-
-    A subject-filtered invocation must not rescan every historical formal run in
-    the output root. This matters because strict completion validation reads the
-    historical frame/eye tables in full.
-    """
     grouped: dict[str, list[dict[str, Any]]] = {}
     if requested_subjects:
         run_dirs = sorted(
@@ -104,75 +98,34 @@ def _same_source_identity(left: dict[str, Any], right: dict[str, Any]) -> bool:
     return left["formal_identity"] == right["formal_identity"] and left["eyes_sha256"] == right["eyes_sha256"]
 
 
-def _select_unambiguous_pool(
-    pool: list[dict[str, Any]],
-    *,
-    all_candidates: list[dict[str, Any]],
-    unique_reason: str,
-    duplicate_reason: str,
-) -> tuple[dict[str, Any], list[Path], str]:
-    if len(pool) == 1:
-        selected = pool[0]
-        alternatives = [item["run_dir"] for item in all_candidates if item is not selected]
-        return selected, alternatives, unique_reason
+def select_run(candidates: list[dict[str, Any]]) -> tuple[dict[str, Any], list[Path], str]:
+    """Select the validated historical source without retroactive YOLO gates."""
+    if not candidates:
+        raise RuntimeError("select_run requires at least one validated source candidate")
+    if len(candidates) == 1:
+        return candidates[0], [], "unique_validated_historical_formal_source"
 
-    reference = pool[0]
-    if not all(_same_source_identity(reference, item) for item in pool[1:]):
+    reference = candidates[0]
+    if not all(_same_source_identity(reference, item) for item in candidates[1:]):
         details = [
             {
                 "run_dir": str(item["run_dir"]),
                 "run_id": item["marker"].get("run_id"),
                 "eyes_sha256": item["eyes_sha256"],
                 "yolo_batch_size": item["marker"].get("yolo_batch_size"),
+                "yolo_model_sha256": item["marker"].get("yolo_model_sha256"),
             }
-            for item in pool
+            for item in candidates
         ]
         raise RuntimeError(
-            "Ambiguous validated formal sources for one subject; refusing silent selection: "
+            "Ambiguous validated historical formal sources for one subject; refusing silent selection: "
             + json.dumps(details, ensure_ascii=False, sort_keys=True)
         )
-    pool_sorted = sorted(pool, key=lambda item: str(item["run_dir"]).lower())
-    selected = pool_sorted[0]
-    alternatives = [item["run_dir"] for item in all_candidates if item is not selected]
-    return selected, alternatives, duplicate_reason
 
-
-def select_run(
-    candidates: list[dict[str, Any]],
-    *,
-    expected_yolo_batch_size: int,
-) -> tuple[dict[str, Any], list[Path], str]:
-    if not candidates:
-        raise RuntimeError("select_run requires at least one validated source candidate")
-
-    matching = [
-        item
-        for item in candidates
-        if item["marker"].get("yolo_batch_size") is not None
-        and int(item["marker"]["yolo_batch_size"]) == int(expected_yolo_batch_size)
-    ]
-    if matching:
-        return _select_unambiguous_pool(
-            matching,
-            all_candidates=candidates,
-            unique_reason="unique_validated_source_matching_configured_yolo_batch_size",
-            duplicate_reason="equivalent_duplicate_sources_same_formal_identity_and_eyes_sha256",
-        )
-
-    legacy_missing = [item for item in candidates if item["marker"].get("yolo_batch_size") is None]
-    if legacy_missing:
-        return _select_unambiguous_pool(
-            legacy_missing,
-            all_candidates=candidates,
-            unique_reason="unique_validated_legacy_source_yolo_batch_size_not_recorded",
-            duplicate_reason="equivalent_duplicate_legacy_sources_yolo_batch_size_not_recorded",
-        )
-
-    available = sorted({item["marker"].get("yolo_batch_size") for item in candidates}, key=str)
-    raise RuntimeError(
-        "No validated formal source matches configured production yolo.batch_size="
-        f"{expected_yolo_batch_size}; available={available}"
-    )
+    candidates_sorted = sorted(candidates, key=lambda item: str(item["run_dir"]).lower())
+    selected = candidates_sorted[0]
+    alternatives = [item["run_dir"] for item in candidates_sorted[1:]]
+    return selected, alternatives, "equivalent_duplicate_historical_sources_same_identity_and_eyes_sha256"
 
 
 def parse_subjects(text: str | None) -> list[str] | None:
@@ -217,13 +170,9 @@ def main() -> int:
     if not subjects:
         raise RuntimeError("No strictly validated formal source runs selected")
 
-    expected_yolo_batch_size = int(config.get("yolo", {}).get("batch_size", 8))
     selections = []
     for subject in subjects:
-        selected, alternatives, selection_reason = select_run(
-            grouped[subject],
-            expected_yolo_batch_size=expected_yolo_batch_size,
-        )
+        selected, alternatives, selection_reason = select_run(grouped[subject])
         marker = selected["marker"]
         selections.append(
             {
@@ -232,6 +181,8 @@ def main() -> int:
                 "source_run_id": marker.get("run_id"),
                 "source_yolo_batch_size": marker.get("yolo_batch_size"),
                 "source_yolo_batch_size_recorded": marker.get("yolo_batch_size") is not None,
+                "source_yolo_model_sha256": marker.get("yolo_model_sha256"),
+                "source_yolo_model_sha256_recorded": bool(marker.get("yolo_model_sha256")),
                 "source_eyes_sha256": selected["eyes_sha256"],
                 "source_validation": selected["validation_reason"],
                 "selection_reason": selection_reason,
@@ -242,9 +193,9 @@ def main() -> int:
     preview = {
         "fullclass_version": FULLCLASS_VERSION,
         "selected_count": len(selections),
-        "configured_source_yolo_batch_size": expected_yolo_batch_size,
         "source_completion_contract_enforced": True,
-        "legacy_missing_yolo_batch_size_allowed_with_explicit_provenance": True,
+        "historical_yolo_boxes_reused_as_recorded": True,
+        "retroactive_yolo_batch_or_model_gate_enforced": False,
         "source_ambiguity_mtime_selection_allowed": False,
         "source_video_content_sha256_frozen_by_child": True,
         "legacy_label_chunk_storage_enabled": False,
@@ -278,6 +229,8 @@ def main() -> int:
                 "source_run_id": item["source_run_id"],
                 "source_yolo_batch_size": item["source_yolo_batch_size"],
                 "source_yolo_batch_size_recorded": item["source_yolo_batch_size_recorded"],
+                "source_yolo_model_sha256": item["source_yolo_model_sha256"],
+                "source_yolo_model_sha256_recorded": item["source_yolo_model_sha256_recorded"],
                 "source_eyes_sha256": item["source_eyes_sha256"],
                 "selection_reason": item["selection_reason"],
                 "alternatives": item["alternatives"],
