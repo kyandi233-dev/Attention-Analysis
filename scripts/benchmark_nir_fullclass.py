@@ -204,6 +204,8 @@ def main() -> int:
         runtime = RitnetFullClassFinalRuntime(model, device="0")
         result = measure(runtime, rois, batch)
         result["input_frames"] = frame_count
+        if result.get("status") == "ok":
+            result["frames_per_sec"] = frame_count / float(result["measurement_wall_sec"])
         results.append(result)
     print(json.dumps({"subject": args.run_dir.name.split("_formal", 1)[0], "source_run_dir": str(args.run_dir.resolve()), "video": video, "input_eyes": len(rois), "input_frames": frame_count, "results": results}, ensure_ascii=False, indent=2))
     return 0
