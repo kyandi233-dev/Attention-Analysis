@@ -25,7 +25,7 @@
 
 | 任务 | AMD Conda 环境 | 主要入口 | 当前状态 |
 |---|---|---|---|
-| NIR 正式 YOLO + RITnet / RITnet full-class | `D:\CondaEnvs\nir-amd` | `runtime/nir-formal/` | 正式 runtime 已冻结；当前 full-class 从 `sub-032` 继续 |
+| NIR 正式 YOLO + RITnet / RITnet full-class | `D:\CondaEnvs\nir-amd` | `runtime/nir-formal/` | 历史 formal runtime 已完成；full-class 已收敛为唯一 640×400 完整证据版，先做 `sub-031` 验收再扩 cohort |
 | Behavior 正式 SART BB | `D:\CondaEnvs\attention-behavior` | `scripts/sart_formal_analysis.py` | 当前正式 v3.1.3 BB |
 | NIR × Behavior 对齐 | `D:\CondaEnvs\attention-behavior` | `scripts/nir_behavior_alignment.py` | schema 2 已建立；当前仍保留 prototype safety gate |
 | RGB Motion / Pose / sampling / QC | `D:\CondaEnvs\attention-rgb` | `scripts/rgb_analysis.py` | 科学层已进入主线；full-video formal 尚未整体冻结 |
@@ -305,9 +305,13 @@ D:\_AttentionData\Beijing-RGB\_test\face-directml\models\pyfeat
 conda activate "D:\CondaEnvs\nir-amd"
 cd "D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-amd-DirectML\runtime\nir-formal"
 
-python run_pipeline.py check-env
+git status --short --branch
+git pull --ff-only
 python -m pytest tests -q
+python run_pipeline.py check-env
 ```
+
+正式 full-class 入口会额外要求 Git working tree 干净；这是为了让 manifest 中记录的 commit 能完整代表实际执行代码。
 
 ## 6.2 完整 formal runtime dry-run
 
@@ -316,47 +320,50 @@ python run_pipeline.py discover --formal-only
 python run_formal_batch.py --dry-run
 ```
 
-已有历史正式结果，不应无原因重新跑完整 YOLO + RITnet。
+已有历史 formal 结果，不应无原因重新跑完整 YOLO + RITnet。当前 full-class 复用已保存的 `frame_idx + ROI`，从原视频重新裁 ROI 并运行 RITnet；**不重跑 YOLO，也不覆盖既有 `eyes.csv`**。
 
-## 6.3 当前 RITnet full-class：从 sub-032 继续
+## 6.3 当前唯一正式 RITnet full-class
 
-```powershell
-$subjects = Get-ChildItem "D:\_AttentionData\Beijing-NIR\amd-directml" -Directory |
-  ForEach-Object {
-    if ($_.Name -match '^(sub-(\d{3}))_formal_') {
-      [PSCustomObject]@{ Subject=$matches[1]; Number=[int]$matches[2] }
-    }
-  } |
-  Where-Object { $_.Number -ge 32 } |
-  Sort-Object Number |
-  Select-Object -ExpandProperty Subject -Unique
+当前不再使用旧 fast/320×160 full-class 路径，也不再按“sub-032 继续旧结果”的逻辑执行。完整版本必须先在 AMD 本机 `sub-031` 验收，因为现在新增了全量 400×640 hard-label evidence store、概率 checkpoint、严格 resume 和完整哈希链。
 
-$subjectArg = $subjects -join ","
-$subjectArg
-```
-
-先 dry-run：
+先 dry-run 检查选择：
 
 ```powershell
 python run_ritnet_fullclass_batch.py `
   --output "D:\_AttentionData\Beijing-NIR\amd-directml" `
-  --subjects "$subjectArg" `
+  --subjects "sub-031" `
   --device 0 `
-  --postprocess-workers 4 `
+  --chunk-rows 128 `
   --dry-run
 ```
 
-确认后：
+再只跑 `sub-031`：
 
 ```powershell
 python run_ritnet_fullclass_batch.py `
   --output "D:\_AttentionData\Beijing-NIR\amd-directml" `
-  --subjects "$subjectArg" `
+  --subjects "sub-031" `
   --device 0 `
-  --postprocess-workers 4
+  --chunk-rows 128
 ```
 
-该 extension 复用既有 `frame_idx + ROI`，**不重跑 YOLO、不覆盖旧 `eyes.csv`**。
+验收至少检查：
+
+```text
+DirectML provider 正确
+processed_rows == expected_rows == stored_label_rows
+400×640 uint8 labels 全量存在且值域仅 0/1/2/3
+label_index 与最终 CSV frame/eye/ordinal 完全一致
+chunk / index / manifest / qc_index SHA256 全部通过
+store_manifest.status == complete
+重开 finalized store 不改变 store_manifest SHA256
+抽样 QC 可读且 pupil/iris/ocular 语义合理
+磁盘占用、压缩率与吞吐可接受
+```
+
+`chunk_rows=128` 只影响存储打包，不改变科学数值；在 `sub-031` 实测后再冻结正式 cohort 参数。通过验收后，再由本机 discovery 结果生成当前 AMD cohort 的 subject list并批量执行，不要把历史旧 full-class 的“已跑/未跑”状态当成新完整证据版的完成状态。
+
+正式入口会自动计算 source-video 内容 SHA256，禁止 `--allow-model-mismatch`，也不再接受旧版 `--postprocess-workers` / `--validate-pupil` 参数。
 
 ---
 
@@ -535,11 +542,12 @@ Codex 不应只汇报“命令跑完了”。至少检查：
 2. summary / manifest / completion 是否存在；
 3. processed rows / expected rows；
 4. GPU provider 是否为目标 provider；
-5. Face/Motion/Pose coverage / missing / multi-face / gaps；
-6. QC 图片/视频是否可读且肉眼正常；
-7. 输出是否在仓库外正确目录；
-8. `git status --short --branch` 是否仍然干净；
-9. 把关键 JSON/CSV summary 或日志片段反馈给网页版 ChatGPT，再决定下一步。
+5. NIR full-class 还要检查 stored_label_rows、label-store verification、CSV↔index key match、最终 artifact SHA256；
+6. Face/Motion/Pose coverage / missing / multi-face / gaps；
+7. QC 图片/视频是否可读且肉眼正常；
+8. 输出是否在仓库外正确目录；
+9. `git status --short --branch` 是否仍然干净；
+10. 把关键 JSON/CSV summary 或日志片段反馈给网页版 ChatGPT，再决定下一步。
 
 ---
 
@@ -577,8 +585,11 @@ git status --short --branch
 git pull --ff-only
 conda activate "D:\CondaEnvs\nir-amd"
 cd runtime\nir-formal
+python -m pytest tests -q
 python run_pipeline.py check-env
 ```
+
+当前 full-class 的唯一正式命令见第 6.3 节；不要再使用旧 fast 参数。
 
 ## Behavior
 
@@ -623,7 +634,7 @@ conda activate "D:\CondaEnvs\attention-face-directml"
 |---|---|
 | AMD NIR 安装与正式运行 | `runtime/nir-formal/INSTALL.md` |
 | NIR 故障恢复 | `runtime/nir-formal/RUNBOOK.md` |
-| RITnet full-class | `runtime/nir-formal/RITNET_FULLCLASS_EXTENSION.md` |
+| RITnet full-class 唯一完整方法 | `runtime/nir-formal/RITNET_FULLCLASS_EXTENSION.md` |
 | Behavior | `docs/030-behavior/` |
 | NIR × Behavior | `docs/030-behavior/035-NIR与正式SART行为数据对齐分析方法.md` |
 | RGB | `docs/040-rgb/` |
@@ -637,7 +648,8 @@ conda activate "D:\CondaEnvs\attention-face-directml"
 
 # 15. 当前边界
 
-- NIR 历史正式全量已完成；当前做 post-hoc full-class extension。
+- NIR 历史 formal 全量已经存在；当前 RITnet full-class 只认 640×400 完整证据版，旧 full-class 结果是历史 provenance，不是当前正式完成状态。
+- 完整 full-class 在 AMD `sub-031` 的 DirectML、磁盘、压缩率、恢复和 QC 验收完成前，不应宣称 AMD cohort 已正式完成。
 - Behavior 当前正式口径为 FocusWave v3.1.3、两个 B block。
 - NIR-Behavior schema 2 已建立，但仍有 prototype safety gate。
 - RGB Face backend / 15 Hz / AMD DirectML first-tier optimization 已验证。
