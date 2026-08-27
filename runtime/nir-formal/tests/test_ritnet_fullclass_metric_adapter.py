@@ -14,20 +14,21 @@ def synthetic_labels():
     return labels
 
 
-def test_adapter_exposes_final_hard_metrics_without_historical_probability_fields():
+def test_adapter_keeps_four_classes_but_only_pupil_geometry():
     result = summarize_final_hard_metrics(synthetic_labels())
     assert result["hard_background_pixels"] > 0
     assert result["hard_sclera_pixels"] > 0
     assert result["hard_iris_pixels"] > 0
     assert result["hard_pupil_pixels"] > 0
+    assert result["hard_iris_outer_pixels"] == result["hard_iris_pixels"] + result["hard_pupil_pixels"]
     assert result["pupil_fit_valid"] is True
-    assert result["iris_outer_fit_valid"] is True
-    assert 0 < result["pupil_to_iris_diameter_ratio"] < 1
-    assert result["pupil_center_in_iris_outer"] is True
+    assert result["pupil_geom_mean_diameter"] > 0
+    assert "iris_outer_fit_valid" not in result
+    assert "pupil_to_iris_diameter_ratio" not in result
+    assert "pupil_center_in_iris_outer" not in result
+    assert "ocular_aperture_ratio_median" not in result
     assert result["analysis_valid_pixel_count"] == 400 * 640
     assert result["analysis_valid_pixel_fraction"] == 1.0
-    assert "native_pupil_probability_available" not in result
-    assert "source_pupil_confidence" not in result
 
 
 def test_hard_class_fractions_cover_exactly_one_full_label_plane():
@@ -68,7 +69,7 @@ def test_structure_touching_internal_valid_boundary_is_flagged():
     assert result["ocular_touches_valid_domain_edge"] is True
 
 
-def test_padding_overlap_is_reported_without_changing_observed_geometry_domain():
+def test_padding_overlap_is_reported_without_changing_pupil_geometry_domain():
     labels = synthetic_labels()
     labels[180:220, :40] = 3
     valid = np.ones((400, 640), dtype=bool)
