@@ -2,7 +2,12 @@ from __future__ import annotations
 
 import pytest
 
-from ritnet_fullclass_temporal import add_temporal_facts
+from ritnet_fullclass_temporal import (
+    TEMPORAL_ANOMALY_THRESHOLD,
+    TEMPORAL_JUMP_SCORE_CAP,
+    TEMPORAL_QC_VERSION,
+    add_temporal_facts,
+)
 
 
 def row(frame, eye="frame_left", phase="block1", segment=1, status="success", value=0.2):
@@ -27,6 +32,10 @@ def row(frame, eye="frame_left", phase="block1", segment=1, status="success", va
     }
 
 
+def stable_rows(start=10, stop=20):
+    return [row(frame, value=0.20 + 0.01 * (frame - start)) for frame in range(start, stop)]
+
+
 def test_consecutive_same_eye_gets_delta():
     output = add_temporal_facts([row(10, value=0.20), row(11, value=0.25)])
     assert output[0]["temporal_reset_reason"] == "first_observation"
@@ -35,7 +44,9 @@ def test_consecutive_same_eye_gets_delta():
     assert output[1]["temporal_frame_gap"] == 1
     assert output[1]["delta_hard_pupil_fraction"] == pytest.approx(0.05)
     assert output[1]["delta_pupil_center_distance_px"] == pytest.approx(1.0)
+    assert output[1]["temporal_jump_score"] is None
     assert output[1]["temporal_anomaly"] is None
+    assert output[1]["temporal_qc_version"] == TEMPORAL_QC_VERSION
 
 
 def test_missing_eye_frame_resets_instead_of_fake_one_frame_jump():
@@ -43,12 +54,15 @@ def test_missing_eye_frame_resets_instead_of_fake_one_frame_jump():
     assert output[1]["temporal_frame_gap"] == 2
     assert output[1]["temporal_reset_reason"] == "nonconsecutive_frame_gap"
     assert output[1]["delta_hard_pupil_fraction"] is None
+    assert output[1]["temporal_jump_score"] is None
+    assert output[1]["temporal_anomaly"] is None
 
 
 def test_phase_boundary_resets_even_when_frame_is_consecutive():
     output = add_temporal_facts([row(10, phase="practice"), row(11, phase="block1")])
     assert output[1]["temporal_reset_reason"] == "phase_or_segment_boundary"
     assert output[1]["delta_hard_pupil_fraction"] is None
+    assert output[1]["temporal_jump_score"] is None
 
 
 def test_left_and_right_histories_are_independent():
@@ -71,6 +85,38 @@ def test_failed_ritnet_row_breaks_temporal_chain():
     assert output[1]["temporal_reset_reason"] == "ritnet_not_success"
     assert output[2]["temporal_reset_reason"] == "ritnet_not_success"
     assert output[2]["delta_hard_pupil_fraction"] is None
+    assert output[2]["temporal_jump_score"] is None
+
+
+def test_rolling_mad_marks_stable_delta_as_non_anomalous_after_baseline_warmup():
+    output = add_temporal_facts(stable_rows())
+    last = output[-1]
+    assert last["temporal_reset_reason"] is None
+    assert last["temporal_jump_score"] == pytest.approx(0.0)
+    assert last["temporal_anomaly"] is False
+
+
+def test_rolling_mad_marks_large_jump_without_deleting_row():
+    rows = stable_rows()
+    rows.append(row(20, value=0.80))
+    output = add_temporal_facts(rows)
+    jump = output[-1]
+    assert jump["frame_idx"] == 20
+    assert jump["ritnet_status"] == "success"
+    assert jump["temporal_reset_reason"] is None
+    assert jump["temporal_jump_score"] == pytest.approx(TEMPORAL_JUMP_SCORE_CAP)
+    assert jump["temporal_jump_score"] >= TEMPORAL_ANOMALY_THRESHOLD
+    assert jump["temporal_anomaly"] is True
+
+
+def test_gap_clears_robust_history_before_large_value():
+    rows = stable_rows()
+    rows.append(row(21, value=0.90))
+    output = add_temporal_facts(rows)
+    after_gap = output[-1]
+    assert after_gap["temporal_reset_reason"] == "nonconsecutive_frame_gap"
+    assert after_gap["temporal_jump_score"] is None
+    assert after_gap["temporal_anomaly"] is None
 
 
 def test_reordered_same_eye_is_rejected():

@@ -1,17 +1,25 @@
-"""Deterministic first-order temporal QC facts for final RITnet eye metrics.
+"""Deterministic temporal QC facts for final RITnet eye metrics.
 
 Only truly consecutive frames of the same eye within the same phase/segment are
-compared. Missing-eye gaps and phase boundaries reset the delta chain so a
-multi-frame gap cannot masquerade as a one-frame segmentation jump. Robust
-anomaly thresholds are intentionally left for sub-031 qualification.
+compared. Missing-eye gaps, phase/segment boundaries and RITnet failures reset
+the delta chain. Robust anomaly evidence uses a rolling median/MAD baseline from
+previous consecutive deltas only, so the current jump cannot contaminate the
+baseline that judges it. Temporal anomalies are QC facts and never delete rows.
 """
 from __future__ import annotations
 
+from collections import deque
 from math import hypot, isfinite
+from statistics import median
 from typing import Any, Iterable, Iterator, Mapping
 
 
-TEMPORAL_QC_VERSION = "consecutive-eye-delta-v1"
+ROBUST_Z_SCALE = 0.6744897501960817
+TEMPORAL_ANOMALY_THRESHOLD = 6.0
+TEMPORAL_ANOMALY_MIN_SAMPLES = 8
+TEMPORAL_ANOMALY_WINDOW = 120
+TEMPORAL_JUMP_SCORE_CAP = 1_000_000.0
+TEMPORAL_QC_VERSION = "consecutive-eye-rolling-mad-v2-thr6-min8-w120-cap1e6"
 ALLOWED_EYES = frozenset({"frame_left", "frame_right"})
 
 DELTA_SPECS = (
@@ -23,6 +31,11 @@ DELTA_SPECS = (
     ("ocular_max_probability_mean", "delta_ocular_max_probability_mean"),
     ("ocular_top1_top2_margin_mean", "delta_ocular_top1_top2_margin_mean"),
     ("ocular_entropy_mean", "delta_ocular_entropy_mean"),
+)
+
+ROBUST_DELTA_FIELDS = (
+    *(target for _, target in DELTA_SPECS),
+    "delta_pupil_center_distance_px",
 )
 
 TEMPORAL_OUTPUT_FIELDS = (
@@ -73,9 +86,56 @@ def _success(row: Mapping[str, Any]) -> bool:
     return str(row.get("ritnet_status") or "").strip().lower() == "success"
 
 
+def _robust_z(value: float, history: deque[float]) -> float | None:
+    if len(history) < TEMPORAL_ANOMALY_MIN_SAMPLES:
+        return None
+    center = float(median(history))
+    deviations = [abs(item - center) for item in history]
+    mad = float(median(deviations))
+    distance = abs(float(value) - center)
+    tolerance = max(1e-12, 1e-9 * max(1.0, abs(center)))
+    if mad <= tolerance:
+        return 0.0 if distance <= tolerance else TEMPORAL_JUMP_SCORE_CAP
+    score = float(ROBUST_Z_SCALE * distance / mad)
+    return min(score, TEMPORAL_JUMP_SCORE_CAP)
+
+
+def _jump_score(
+    temporal: Mapping[str, Any],
+    history: Mapping[str, deque[float]],
+) -> float | None:
+    scores: list[float] = []
+    for field in ROBUST_DELTA_FIELDS:
+        value = _finite_float(temporal.get(field))
+        if value is None:
+            continue
+        score = _robust_z(abs(value), history[field])
+        if score is not None:
+            scores.append(score)
+    return max(scores) if scores else None
+
+
+def _append_history(
+    temporal: Mapping[str, Any],
+    history: Mapping[str, deque[float]],
+) -> None:
+    for field in ROBUST_DELTA_FIELDS:
+        value = _finite_float(temporal.get(field))
+        if value is not None:
+            history[field].append(abs(value))
+
+
+def _new_history() -> dict[str, deque[float]]:
+    return {
+        field: deque(maxlen=TEMPORAL_ANOMALY_WINDOW)
+        for field in ROBUST_DELTA_FIELDS
+    }
+
+
 def iter_temporal_facts(rows: Iterable[Mapping[str, Any]]) -> Iterator[dict[str, Any]]:
-    """Stream copies of rows with deterministic temporal fields added."""
+    """Stream copies of rows with gap-safe deltas and robust jump evidence."""
     previous_by_eye: dict[str, dict[str, Any]] = {}
+    history_by_group: dict[tuple[str, int, str], dict[str, deque[float]]] = {}
 
     for source in rows:
         row = dict(source)
@@ -86,6 +146,8 @@ def iter_temporal_facts(rows: Iterable[Mapping[str, Any]]) -> Iterator[dict[str,
         frame_idx = _int(row.get("frame_idx"), "frame_idx")
         phase = str(row.get("phase") or "")
         segment = _int(row.get("phase_segment"), "phase_segment")
+        group_key = (phase, segment, eye)
+        history = history_by_group.setdefault(group_key, _new_history())
 
         previous = previous_by_eye.get(eye)
         if previous is None:
@@ -133,8 +195,19 @@ def iter_temporal_facts(rows: Iterable[Mapping[str, Any]]) -> Iterator[dict[str,
                     temporal["delta_pupil_center_y"] = dy
                     temporal["delta_pupil_center_distance_px"] = float(hypot(dx, dy))
 
-        temporal["temporal_jump_score"] = None
-        temporal["temporal_anomaly"] = None
+        if temporal["temporal_reset_reason"] is not None:
+            history_by_group[group_key] = _new_history()
+            history = history_by_group[group_key]
+            temporal["temporal_jump_score"] = None
+            temporal["temporal_anomaly"] = None
+        else:
+            score = _jump_score(temporal, history)
+            temporal["temporal_jump_score"] = score
+            temporal["temporal_anomaly"] = (
+                None if score is None else bool(score >= TEMPORAL_ANOMALY_THRESHOLD)
+            )
+            _append_history(temporal, history)
+
         row.update(temporal)
         previous_by_eye[eye] = row
         yield row
