@@ -63,8 +63,10 @@ fullclass:
   qc_interval_sec: 30
   qc_boundary_band_px: 5
   low_max_probability_threshold: null
-  qc_anomaly_max_per_reason: 20
-  qc_image_max_count: 200
+  # Keep fixed timeline anchors, but bound anomaly examples to the same lean
+  # human-reviewable QC policy as AMD without changing CUDA inference semantics.
+  qc_anomaly_max_per_reason: 5
+  qc_image_max_count: 80
   qc_pixel_evidence_max_eyes: 16
   qc_artifact_budget_bytes: 268435456
   final_output_limit_bytes: 1073741824
@@ -72,7 +74,7 @@ fullclass:
   # Throughput-only scheduling. These settings do not change ROI, RITnet outputs,
   # metrics, QC thresholds or the persisted scientific schema. Source decode/ROI/
   # preprocessing overlaps CUDA inference, while two CPU workers reduce prior
-  # batches. Pending five-output batches stay bounded to control host RAM usage.
+  # batches. Pending cohort-output batches stay bounded to control host RAM usage.
   summary_workers: 2
   max_pending_summaries: 2
   checkpoint_rows: 128
