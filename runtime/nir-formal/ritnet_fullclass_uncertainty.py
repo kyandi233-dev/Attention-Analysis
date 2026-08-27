@@ -101,28 +101,42 @@ def boundary_band_mask(
     band_px = int(band_px)
     if band_px < 0:
         raise ValueError("boundary band must be non-negative")
-    valid = (
-        np.ones(labels.shape, dtype=bool)
-        if valid_source_mask is None
-        else _validate_valid_source_mask(valid_source_mask)
-    )
 
     boundary = np.zeros(labels.shape, dtype=np.uint8)
-    horizontal = (labels[:, 1:] != labels[:, :-1]) & valid[:, 1:] & valid[:, :-1]
-    boundary[:, 1:] |= horizontal
-    boundary[:, :-1] |= horizontal
-    vertical = (labels[1:, :] != labels[:-1, :]) & valid[1:, :] & valid[:-1, :]
-    boundary[1:, :] |= vertical
-    boundary[:-1, :] |= vertical
+    if valid_source_mask is None:
+        horizontal = labels[:, 1:] != labels[:, :-1]
+        vertical = labels[1:, :] != labels[:-1, :]
+        boundary[:, 1:] |= horizontal
+        boundary[:, :-1] |= horizontal
+        boundary[1:, :] |= vertical
+        boundary[:-1, :] |= vertical
+        valid = None
+    else:
+        valid = _validate_valid_source_mask(valid_source_mask)
+        horizontal = (labels[:, 1:] != labels[:, :-1]) & valid[:, 1:] & valid[:, :-1]
+        boundary[:, 1:] |= horizontal
+        boundary[:, :-1] |= horizontal
+        vertical = (labels[1:, :] != labels[:-1, :]) & valid[1:, :] & valid[:-1, :]
+        boundary[1:, :] |= vertical
+        boundary[:-1, :] |= vertical
+
     if band_px > 0 and boundary.any():
         kernel_size = 2 * band_px + 1
         kernel = np.ones((kernel_size, kernel_size), dtype=np.uint8)
         boundary = cv2.dilate(boundary, kernel, iterations=1)
-    return boundary.astype(bool) & valid
+    result = boundary.astype(bool)
+    return result if valid is None else result & valid
 
 
-def distribution_summary(values: np.ndarray, mask: np.ndarray) -> dict[str, float | None]:
-    selected = np.asarray(values)[np.asarray(mask, dtype=bool)]
+def distribution_summary(
+    values: np.ndarray,
+    mask: np.ndarray | None,
+) -> dict[str, float | None]:
+    array = np.asarray(values)
+    if mask is None:
+        selected = array.reshape(-1)
+    else:
+        selected = array[np.asarray(mask, dtype=bool)]
     if selected.size == 0:
         return {suffix: None for suffix in STAT_SUFFIXES}
     selected = selected.astype(np.float64, copy=False)
@@ -162,22 +176,31 @@ def summarize_uncertainty(
     top1_top2_margin = _validate_map("top1_top2_margin", top1_top2_margin, lower=0.0, upper=1.0)
     entropy = _validate_map("entropy", entropy, lower=0.0, upper=log(4.0))
 
-    valid_count = int(valid.sum())
-    soft = np.asarray(
-        [float(np.mean(probabilities[class_id][valid])) for class_id in CLASS_IDS],
-        dtype=np.float64,
-    )
+    full_source_domain = bool(valid.all())
+    valid_count = valid.size if full_source_domain else int(valid.sum())
+    if full_source_domain:
+        # Avoid four boolean-index copies when every output pixel is backed by
+        # the original AVI. NumPy keeps the same float32 mean semantics here.
+        soft = probabilities.mean(axis=(1, 2))
+    else:
+        soft = np.asarray(
+            [float(np.mean(probabilities[class_id][valid])) for class_id in CLASS_IDS],
+            dtype=np.float64,
+        )
     if not np.isclose(float(soft.sum()), 1.0, rtol=0.0, atol=1e-5):
         raise AssertionError(f"source-valid soft class fractions do not sum to 1: {soft.sum()}")
 
-    domains = {
-        "whole": valid,
-        "ocular": (labels != 0) & valid,
-        "boundary": boundary_band_mask(
-            labels,
-            boundary_band_px,
-            valid_source_mask=valid,
-        ),
+    whole_domain = None if full_source_domain else valid
+    ocular_domain = (labels != 0) if full_source_domain else ((labels != 0) & valid)
+    boundary_domain = boundary_band_mask(
+        labels,
+        boundary_band_px,
+        valid_source_mask=None if full_source_domain else valid,
+    )
+    domains: dict[str, np.ndarray | None] = {
+        "whole": whole_domain,
+        "ocular": ocular_domain,
+        "boundary": boundary_domain,
     }
     metrics = {
         "max_probability": max_probability,
@@ -194,8 +217,8 @@ def summarize_uncertainty(
         "soft_sclera_fraction": float(soft[1]),
         "soft_iris_fraction": float(soft[2]),
         "soft_pupil_fraction": float(soft[3]),
-        "uncertainty_ocular_pixel_count": int(domains["ocular"].sum()),
-        "uncertainty_boundary_pixel_count": int(domains["boundary"].sum()),
+        "uncertainty_ocular_pixel_count": int(ocular_domain.sum()),
+        "uncertainty_boundary_pixel_count": int(boundary_domain.sum()),
     }
     if valid_count <= 0:
         raise AssertionError("validated source domain unexpectedly has no pixels")
@@ -217,8 +240,13 @@ def summarize_uncertainty(
             raise ValueError("low max-probability threshold must be in [0,1]")
         result["low_max_probability_threshold"] = threshold
         for domain_name, mask in domains.items():
-            count = int(mask.sum())
-            result[f"{domain_name}_low_max_probability_fraction"] = (
-                float(np.mean(max_probability[mask] < threshold)) if count else None
-            )
+            if mask is None:
+                result[f"{domain_name}_low_max_probability_fraction"] = float(
+                    np.mean(max_probability < threshold)
+                )
+            else:
+                count = int(mask.sum())
+                result[f"{domain_name}_low_max_probability_fraction"] = (
+                    float(np.mean(max_probability[mask] < threshold)) if count else None
+                )
     return result
