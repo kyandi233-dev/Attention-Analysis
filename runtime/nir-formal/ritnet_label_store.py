@@ -4,6 +4,11 @@ The committed NPZ chunks are the source of truth. CSV metadata can be rebuilt
 from those chunks after an interrupted metadata commit. Reopening an already
 finalized, unchanged store is read-only: it must not rewrite the store manifest
 or change any completion hash.
+
+This store belongs to the historical full-label implementation. The current
+<=1 GiB final pipeline does not persist these chunks, but the implementation is
+kept internally consistent for provenance/replay and for its shared SHA256
+helper.
 """
 from __future__ import annotations
 
@@ -20,6 +25,7 @@ from typing import Any, Iterator
 import numpy as np
 
 from ritnet_native_metrics import NATIVE_LABEL_SHAPE, validate_native_labels
+
 
 LABEL_STORE_SCHEMA_VERSION = 2
 DEFAULT_CHUNK_ROWS = 128
@@ -147,7 +153,7 @@ class RitnetLabelStore:
         self.store_manifest_path = self.root / "store_manifest.json"
         self.identity = identity
         self.identity_digest = canonical_digest(identity)
-        self.eye_mapping = {str(k): int(v) for k, v in eye_mapping.items()}
+        self.eye_mapping = {str(key): int(value) for key, value in eye_mapping.items()}
         if not self.eye_mapping or len(set(self.eye_mapping.values())) != len(self.eye_mapping):
             raise ValueError("eye_mapping must be non-empty with unique codes")
         if any(code < 0 or code > 255 for code in self.eye_mapping.values()):
@@ -170,50 +176,61 @@ class RitnetLabelStore:
     def next_row_ordinal(self) -> int:
         return self.stored_rows
 
+    def _expected_manifest_contract(self) -> dict[str, Any]:
+        return {
+            "schema_version": LABEL_STORE_SCHEMA_VERSION,
+            "identity_digest": self.identity_digest,
+            "chunk_rows": self.chunk_rows,
+            "compression": self.compression,
+            "shape": list(NATIVE_LABEL_SHAPE),
+            "dtype": "uint8",
+            "class_mapping": {
+                "0": "background",
+                "1": "sclera",
+                "2": "iris",
+                "3": "pupil",
+            },
+            "eye_mapping": self.eye_mapping,
+            "probability_stat_names": list(PROBABILITY_STAT_NAMES),
+        }
+
     def _open_or_create(self) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
         self.chunks_dir.mkdir(parents=True, exist_ok=True)
         if self.store_manifest_path.exists():
             manifest = _read_json(self.store_manifest_path)
-            expected = {
-                "schema_version": LABEL_STORE_SCHEMA_VERSION,
-                "identity_digest": self.identity_digest,
-                "chunk_rows": self.chunk_rows,
-                "compression": self.compression,
-                "shape": list(NATIVE_LABEL_SHAPE),
-                "dtype": "uint8",
-                "class_mapping": {
-                    "0": "background", "1": "sclera", "2": "iris", "3": "pupil"
-                },
-                "eye_mapping": self.eye_mapping,
-                "probability_stat_names": list(PROBABILITY_STAT_NAMES),
-            }
-            for key, value in expected.items():
+            for key, value in self._expected_manifest_contract().items():
                 if manifest.get(key) != value:
                     raise RuntimeError(
                         f"Label-store resume identity mismatch for {key}: "
                         f"stored={manifest.get(key)!r}, current={value!r}"
                     )
+
             self.index_rows = self._read_index_csv(self.index_path)
             self.chunk_rows_meta = self._read_chunk_manifest_csv(self.chunk_manifest_path)
             repaired = self._repair_metadata_from_committed_chunks()
+
+            # If an NPZ was committed but the metadata transaction was interrupted,
+            # repair rewrites the two CSVs. Their old SHA256 values in the top-level
+            # manifest are then necessarily stale. Publish a new RUNNING manifest
+            # before verification; otherwise verify() compares repaired CSVs against
+            # hashes that describe the pre-repair state and falsely rejects recovery.
+            if repaired:
+                self._write_store_manifest(status="running")
+
             report = self.verify()
             if not report.valid:
                 raise RuntimeError(
                     "Existing label store failed verification: " + "; ".join(report.errors)
                 )
-            if repaired:
-                # A committed chunk existed beyond the last metadata commit. The old
-                # top-level completion is no longer valid until the caller finalizes again.
-                self._write_store_manifest(status="running")
             return
 
-        unexpected = [p for p in self.root.iterdir() if p.name != "chunks"]
+        unexpected = [path for path in self.root.iterdir() if path.name != "chunks"]
         unexpected += list(self.chunks_dir.iterdir())
         if unexpected:
             raise RuntimeError(
                 "Label-store directory contains artifacts but no store_manifest.json: "
-                + ", ".join(str(p) for p in unexpected[:5])
+                + ", ".join(str(path) for path in unexpected[:5])
             )
         _atomic_csv(self.index_path, [], self.INDEX_FIELDS)
         _atomic_csv(self.chunk_manifest_path, [], self.CHUNK_MANIFEST_FIELDS)
@@ -223,7 +240,11 @@ class RitnetLabelStore:
 
     @classmethod
     def _read_typed_csv(
-        cls, path: Path, *, fieldnames: list[str], int_fields: set[str]
+        cls,
+        path: Path,
+        *,
+        fieldnames: list[str],
+        int_fields: set[str],
     ) -> list[dict[str, Any]]:
         if not path.is_file():
             raise RuntimeError(f"Missing label-store artifact: {path}")
@@ -255,7 +276,9 @@ class RitnetLabelStore:
     @classmethod
     def _read_index_csv(cls, path: Path) -> list[dict[str, Any]]:
         return cls._read_typed_csv(
-            path, fieldnames=cls.INDEX_FIELDS, int_fields=cls._INDEX_INT_FIELDS
+            path,
+            fieldnames=cls.INDEX_FIELDS,
+            int_fields=cls._INDEX_INT_FIELDS,
         )
 
     @classmethod
@@ -272,7 +295,7 @@ class RitnetLabelStore:
         files = sorted(self.chunks_dir.glob("chunk-*.npz"))
         canonical_meta: list[dict[str, Any]] = []
         canonical_index: list[dict[str, Any]] = []
-        reverse_eye = {v: k for k, v in self.eye_mapping.items()}
+        reverse_eye = {value: key for key, value in self.eye_mapping.items()}
         next_ordinal = 0
 
         for expected_chunk_id, path in enumerate(files):
@@ -284,13 +307,17 @@ class RitnetLabelStore:
                 raise RuntimeError(
                     f"Committed chunk sequence has a gap: expected {expected_chunk_id}, got {file_chunk_id}"
                 )
+
             with np.load(path, allow_pickle=False) as payload:
+                if "labels" not in payload.files:
+                    raise RuntimeError(f"Committed chunk lacks labels: {path}")
                 n = int(payload["labels"].shape[0])
-                self._validate_chunk_file(
-                    path,
-                    expected_chunk_rows=n,
-                    expected_first_ordinal=next_ordinal,
-                )
+            self._validate_chunk_file(
+                path,
+                expected_chunk_rows=n,
+                expected_first_ordinal=next_ordinal,
+            )
+            with np.load(path, allow_pickle=False) as payload:
                 ordinals = payload["row_ordinal"]
                 frames = payload["frame_idx"]
                 eye_codes = payload["eye_code"]
@@ -309,6 +336,7 @@ class RitnetLabelStore:
                             "chunk_file": str(path.relative_to(self.root)).replace("\\", "/"),
                         }
                     )
+
             actual_sha = sha256_file(path)
             old = known.get(expected_chunk_id)
             if old is not None and old["sha256"] != actual_sha:
@@ -333,7 +361,9 @@ class RitnetLabelStore:
         if changed:
             _atomic_csv(self.index_path, canonical_index, self.INDEX_FIELDS)
             _atomic_csv(
-                self.chunk_manifest_path, canonical_meta, self.CHUNK_MANIFEST_FIELDS
+                self.chunk_manifest_path,
+                canonical_meta,
+                self.CHUNK_MANIFEST_FIELDS,
             )
             self.index_rows = canonical_index
             self.chunk_rows_meta = canonical_meta
@@ -341,20 +371,10 @@ class RitnetLabelStore:
 
     def _write_store_manifest(self, *, status: str, expected_rows: int | None = None) -> None:
         payload = {
-            "schema_version": LABEL_STORE_SCHEMA_VERSION,
+            **self._expected_manifest_contract(),
             "status": status,
             "identity": self.identity,
-            "identity_digest": self.identity_digest,
             "format": "chunked_npz",
-            "compression": self.compression,
-            "chunk_rows": self.chunk_rows,
-            "shape": list(NATIVE_LABEL_SHAPE),
-            "dtype": "uint8",
-            "class_mapping": {
-                "0": "background", "1": "sclera", "2": "iris", "3": "pupil"
-            },
-            "eye_mapping": self.eye_mapping,
-            "probability_stat_names": list(PROBABILITY_STAT_NAMES),
             "probability_summary_note": (
                 "Per-row class-3 probability summaries are checkpointed with each chunk; "
                 "full probability maps are not stored."
@@ -369,6 +389,20 @@ class RitnetLabelStore:
             "chunk_manifest_sha256": sha256_file(self.chunk_manifest_path),
         }
         _atomic_json(self.store_manifest_path, payload)
+
+    @staticmethod
+    def _validate_probability_stats(
+        available: np.ndarray,
+        stats: np.ndarray,
+    ) -> None:
+        if np.isinf(stats).any():
+            raise ValueError("pupil_probability_stats must not contain +/-inf")
+        for index in range(len(available)):
+            finite = np.isfinite(stats[index])
+            if not bool(available[index]) and finite.any():
+                raise ValueError("unavailable probability row must contain only NaN stats")
+            if bool(available[index]) and finite.any() and not finite.all():
+                raise ValueError("available probability stats must be either all finite or all NaN")
 
     def append_chunk(
         self,
@@ -388,8 +422,8 @@ class RitnetLabelStore:
         n = int(labels.shape[0])
         if n <= 0 or n > self.chunk_rows:
             raise ValueError(f"chunk row count must be 1..{self.chunk_rows}; got {n}")
-        for i in range(n):
-            validate_native_labels(labels[i])
+        for index in range(n):
+            validate_native_labels(labels[index])
 
         ordinals = np.asarray(row_ordinal, dtype=np.int64)
         frames = np.asarray(frame_idx, dtype=np.int64)
@@ -403,17 +437,12 @@ class RitnetLabelStore:
             raise ValueError("eye must contain N values")
         if not np.isin(available, (0, 1)).all():
             raise ValueError("pupil_probability_available values must be 0 or 1")
-        if np.isinf(stats).any():
-            raise ValueError("pupil_probability_stats must not contain +/-inf")
-        for i in range(n):
-            finite = np.isfinite(stats[i])
-            if not bool(available[i]) and finite.any():
-                raise ValueError("unavailable probability row must contain only NaN stats")
-            if bool(available[i]) and finite.any() and not finite.all():
-                raise ValueError("available probability stats must be either all finite or all NaN")
+        self._validate_probability_stats(available, stats)
 
         expected_ordinals = np.arange(
-            self.next_row_ordinal, self.next_row_ordinal + n, dtype=np.int64
+            self.next_row_ordinal,
+            self.next_row_ordinal + n,
+            dtype=np.int64,
         )
         if not np.array_equal(ordinals, expected_ordinals):
             raise ValueError(
@@ -422,7 +451,8 @@ class RitnetLabelStore:
             )
         try:
             eye_codes = np.asarray(
-                [self.eye_mapping[str(value)] for value in eye], dtype=np.uint8
+                [self.eye_mapping[str(value)] for value in eye],
+                dtype=np.uint8,
             )
         except KeyError as exc:
             raise ValueError(
@@ -487,7 +517,9 @@ class RitnetLabelStore:
         new_chunk_meta = list(self.chunk_rows_meta) + [chunk_meta]
         _atomic_csv(self.index_path, new_index_rows, self.INDEX_FIELDS)
         _atomic_csv(
-            self.chunk_manifest_path, new_chunk_meta, self.CHUNK_MANIFEST_FIELDS
+            self.chunk_manifest_path,
+            new_chunk_meta,
+            self.CHUNK_MANIFEST_FIELDS,
         )
         self.index_rows = new_index_rows
         self.chunk_rows_meta = new_chunk_meta
@@ -503,8 +535,12 @@ class RitnetLabelStore:
     ) -> int:
         with np.load(path, allow_pickle=False) as payload:
             required = {
-                "labels", "row_ordinal", "frame_idx", "eye_code",
-                "pupil_probability_available", "pupil_probability_stats",
+                "labels",
+                "row_ordinal",
+                "frame_idx",
+                "eye_code",
+                "pupil_probability_available",
+                "pupil_probability_stats",
             }
             if set(payload.files) != required:
                 raise ValueError(f"chunk keys mismatch: {sorted(payload.files)}")
@@ -529,39 +565,49 @@ class RitnetLabelStore:
                 raise ValueError("invalid pupil_probability_available array")
             if stats.shape != (n, len(PROBABILITY_STAT_NAMES)) or stats.dtype != np.float32:
                 raise ValueError("invalid pupil_probability_stats array")
-            if np.isinf(stats).any():
-                raise ValueError("pupil_probability_stats contains infinity")
+            self._validate_probability_stats(available, stats)
             if expected_first_ordinal is not None:
                 expected = np.arange(
-                    expected_first_ordinal, expected_first_ordinal + n, dtype=np.int64
+                    expected_first_ordinal,
+                    expected_first_ordinal + n,
+                    dtype=np.int64,
                 )
                 if not np.array_equal(ordinals, expected):
                     raise ValueError("chunk row ordinals are not contiguous")
-            for i in range(n):
-                validate_native_labels(labels[i])
-                finite = np.isfinite(stats[i])
-                if not bool(available[i]) and finite.any():
-                    raise ValueError("unavailable probability row has finite stats")
-                if bool(available[i]) and finite.any() and not finite.all():
-                    raise ValueError("probability stats are partially missing")
+            for index in range(n):
+                validate_native_labels(labels[index])
             return n
 
     def verify(self, expected_rows: int | None = None) -> LabelStoreVerification:
         errors: list[str] = []
-        shape_ok = dtype_ok = domain_ok = hashes_ok = index_unique_ok = index_match_ok = True
+        shape_ok = True
+        dtype_ok = True
+        domain_ok = True
+        hashes_ok = True
+        index_unique_ok = True
+        index_match_ok = True
         stored = 0
         try:
             index_rows = self._read_index_csv(self.index_path)
             chunk_meta = self._read_chunk_manifest_csv(self.chunk_manifest_path)
         except Exception as exc:
             return LabelStoreVerification(
-                False, 0, 0, False, False, False, False, False, False, (str(exc),)
+                False,
+                0,
+                0,
+                False,
+                False,
+                False,
+                False,
+                False,
+                False,
+                (str(exc),),
             )
 
         ordinals_seen: list[int] = []
         keys_seen: set[tuple[int, str]] = set()
         expected_index_rows: list[tuple[int, int, str, int, int, str]] = []
-        reverse_eye = {v: k for k, v in self.eye_mapping.items()}
+        reverse_eye = {value: key for key, value in self.eye_mapping.items()}
 
         for expected_chunk_id, meta in enumerate(chunk_meta):
             try:
@@ -573,18 +619,29 @@ class RitnetLabelStore:
                     raise ValueError(f"unexpected chunk path: {meta['chunk_file']}")
                 path = self.root / meta["chunk_file"]
                 if not path.is_file():
-                    raise FileNotFoundError(path)
-                if int(meta["size_bytes"]) != int(path.stat().st_size):
-                    raise ValueError(f"chunk size mismatch: {path}")
-                if sha256_file(path) != meta["sha256"]:
                     hashes_ok = False
-                    raise ValueError(f"chunk hash mismatch: {path}")
+                    raise FileNotFoundError(path)
+
+                actual_size = int(path.stat().st_size)
+                actual_sha = sha256_file(path)
+                if actual_size != int(meta["size_bytes"]):
+                    hashes_ok = False
+                    errors.append(f"chunk size mismatch: {path}")
+                if actual_sha != meta["sha256"]:
+                    hashes_ok = False
+                    errors.append(f"chunk hash mismatch: {path}")
+                if actual_size != int(meta["size_bytes"]) or actual_sha != meta["sha256"]:
+                    # Do not parse an integrity-failed NPZ as trusted metadata.
+                    continue
+
                 first = int(meta["first_row_ordinal"])
                 rows = int(meta["row_count"])
                 if int(meta["last_row_ordinal"]) != first + rows - 1:
                     raise ValueError(f"chunk ordinal range mismatch: {path}")
                 self._validate_chunk_file(
-                    path, expected_chunk_rows=rows, expected_first_ordinal=first
+                    path,
+                    expected_chunk_rows=rows,
+                    expected_first_ordinal=first,
                 )
                 with np.load(path, allow_pickle=False) as payload:
                     labels = payload["labels"]
@@ -592,7 +649,7 @@ class RitnetLabelStore:
                         shape_ok = False
                     if labels.dtype != np.uint8:
                         dtype_ok = False
-                    if not np.isin(np.unique(labels), (0, 1, 2, 3)).all():
+                    if labels.size and int(labels.max()) > 3:
                         domain_ok = False
                     ordinals = payload["row_ordinal"]
                     frames = payload["frame_idx"]
@@ -603,8 +660,12 @@ class RitnetLabelStore:
                             raise ValueError(f"unknown eye_code={int(codes[offset])}")
                         expected_index_rows.append(
                             (
-                                int(ordinals[offset]), int(frames[offset]), eye_text,
-                                chunk_id, offset, expected_rel,
+                                int(ordinals[offset]),
+                                int(frames[offset]),
+                                eye_text,
+                                chunk_id,
+                                offset,
+                                expected_rel,
                             )
                         )
                 stored += rows
@@ -628,9 +689,7 @@ class RitnetLabelStore:
                 if self.eye_mapping.get(eye_text) != int(row["eye_code"]):
                     index_match_ok = False
                     errors.append(f"eye mapping mismatch at row {ordinal}")
-                expected = (
-                    ordinal, frame, eye_text, chunk_id, offset, chunk_file
-                )
+                expected = (ordinal, frame, eye_text, chunk_id, offset, chunk_file)
                 if ordinal >= len(expected_index_rows) or expected_index_rows[ordinal] != expected:
                     index_match_ok = False
                     errors.append(f"index/chunk mismatch at row {ordinal}")
@@ -660,16 +719,29 @@ class RitnetLabelStore:
             errors.append(f"store_manifest verification failed: {exc}")
 
         valid = bool(
-            not errors and shape_ok and dtype_ok and domain_ok and hashes_ok
-            and index_unique_ok and index_match_ok
+            not errors
+            and shape_ok
+            and dtype_ok
+            and domain_ok
+            and hashes_ok
+            and index_unique_ok
+            and index_match_ok
         )
         return LabelStoreVerification(
-            valid, stored, len(chunk_meta), shape_ok, dtype_ok, domain_ok,
-            index_unique_ok, hashes_ok, index_match_ok, tuple(errors)
+            valid,
+            stored,
+            len(chunk_meta),
+            shape_ok,
+            dtype_ok,
+            domain_ok,
+            index_unique_ok,
+            hashes_ok,
+            index_match_ok,
+            tuple(errors),
         )
 
     def iter_rows(self) -> Iterator[dict[str, Any]]:
-        reverse_eye = {v: k for k, v in self.eye_mapping.items()}
+        reverse_eye = {value: key for key, value in self.eye_mapping.items()}
         for meta in self.chunk_rows_meta:
             chunk_id = int(meta["chunk_id"])
             path = self.root / str(meta["chunk_file"])
