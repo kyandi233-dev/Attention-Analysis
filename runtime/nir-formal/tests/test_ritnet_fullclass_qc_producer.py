@@ -160,12 +160,16 @@ def test_fixed_anchor_budget_overflow_fails_before_publishing_files(monkeypatch,
 
 
 class FakeRuntime:
-    def infer_batch(self, rois):
+    def __init__(self):
+        self.labels_only_calls = 0
+
+    def infer_labels_batch(self, rois):
+        self.labels_only_calls += 1
         labels = np.zeros((len(rois), 400, 640), dtype=np.uint8)
         labels[:, 100:300, 100:540] = 1
         labels[:, 150:250, 220:420] = 2
         labels[:, 180:220, 290:350] = 3
-        return {"labels": labels}, {"valid_batch_size": len(rois)}
+        return labels, {"valid_batch_size": len(rois), "output_contract": "labels-only-qc"}
 
 
 def metric_row():
@@ -192,13 +196,15 @@ def metric_row():
 def test_sparse_qc_rerun_must_reproduce_saved_roi_geometry_exactly():
     frame = np.full((100, 160, 3), 90, dtype=np.uint8)
     row = metric_row()
+    runtime = FakeRuntime()
     overlays = _prepare_eye_overlays(
         frame=frame,
         eye_rows={"frame_left": row},
         config=config(),
-        runtime=FakeRuntime(),
+        runtime=runtime,
     )
     assert overlays["frame_left"].shape == (400, 640, 3)
+    assert runtime.labels_only_calls == 1
 
     bad = dict(row)
     bad["roi_requested_x1"] = int(bad["roi_requested_x1"]) + 1
@@ -207,5 +213,5 @@ def test_sparse_qc_rerun_must_reproduce_saved_roi_geometry_exactly():
             frame=frame,
             eye_rows={"frame_left": bad},
             config=config(),
-            runtime=FakeRuntime(),
+            runtime=runtime,
         )
