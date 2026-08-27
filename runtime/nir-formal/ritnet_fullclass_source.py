@@ -217,11 +217,27 @@ def _load_source_context_cached(run_dir: Path, config_path: Path) -> SourceForma
     subject = normalize_subject(completion.get("subject") or run_dir.name.split("_formal_", 1)[0])
 
     configured_yolo_batch = int(config.get("yolo", {}).get("batch_size", 8))
-    source_yolo_batch = int(completion.get("yolo_batch_size", -1))
-    if source_yolo_batch != configured_yolo_batch:
-        raise RuntimeError(
-            f"source formal YOLO batch {source_yolo_batch} != configured production batch {configured_yolo_batch}"
-        )
+    raw_source_yolo_batch = completion.get("yolo_batch_size")
+    source_yolo_batch: int | None
+    source_yolo_batch_recorded = not (
+        raw_source_yolo_batch is None or str(raw_source_yolo_batch).strip() == ""
+    )
+    if source_yolo_batch_recorded:
+        try:
+            source_yolo_batch = int(raw_source_yolo_batch)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"source formal YOLO batch is invalid: {raw_source_yolo_batch!r}"
+            ) from exc
+        if source_yolo_batch != configured_yolo_batch:
+            raise RuntimeError(
+                f"source formal YOLO batch {source_yolo_batch} != configured production batch {configured_yolo_batch}"
+            )
+    else:
+        # Legacy completion markers did not persist this field.  Keep the
+        # absence explicit in provenance; eyes.csv still carries its row-level
+        # source batch field when available.
+        source_yolo_batch = None
     if not completion.get("yolo_model_sha256"):
         raise RuntimeError("source completion lacks yolo_model_sha256")
 
@@ -245,6 +261,7 @@ def _load_source_context_cached(run_dir: Path, config_path: Path) -> SourceForma
         "source_video_sha256": video_resolution["content_sha256"],
         "source_yolo_model_sha256": completion.get("yolo_model_sha256"),
         "source_yolo_batch_size": source_yolo_batch,
+        "source_yolo_batch_size_recorded": source_yolo_batch_recorded,
         "source_focuswave_release": completion.get("focuswave_release"),
         "source_expected_frames": completion.get("expected_frames"),
         "source_phases": completion.get("phases"),
