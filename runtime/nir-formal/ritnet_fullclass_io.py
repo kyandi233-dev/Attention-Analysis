@@ -70,17 +70,25 @@ def csv_fieldnames(path: Path) -> tuple[str, ...]:
         return tuple(reader.fieldnames or ())
 
 
-# Legacy read-only helpers are retained solely so older completed .csv.gz
-# artifacts remain inspectable. No current formal writer produces gzip CSV.
+# Legacy read-only helpers remain so older .csv.gz outputs stay inspectable and
+# so stale callers fail safely during the transition. When handed a current
+# plain .csv path they delegate to the plain reader and perform no decompression.
 def iter_csv_gz(path: Path) -> Iterator[dict[str, str]]:
-    with gzip.open(Path(path), "rt", encoding="utf-8", newline="") as handle:
+    path = Path(path)
+    if path.suffix.lower() != ".gz":
+        yield from iter_csv(path)
+        return
+    with gzip.open(path, "rt", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         for row in reader:
             yield dict(row)
 
 
 def csv_gz_fieldnames(path: Path) -> tuple[str, ...]:
-    with gzip.open(Path(path), "rt", encoding="utf-8", newline="") as handle:
+    path = Path(path)
+    if path.suffix.lower() != ".gz":
+        return csv_fieldnames(path)
+    with gzip.open(path, "rt", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         return tuple(reader.fieldnames or ())
 
