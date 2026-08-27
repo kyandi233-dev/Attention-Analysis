@@ -61,6 +61,7 @@ PIXEL_EVIDENCE_KEYS = frozenset(
         "reasons",
     }
 )
+COMPLETION_PROVENANCE_ONLY_IDENTITY_KEYS = frozenset({"git_commit", "git_branch"})
 
 
 @dataclass(frozen=True)
@@ -76,6 +77,27 @@ def _load_json(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"expected JSON object: {path}")
     return value
+
+
+def completion_work_identity_compatible(
+    stored_identity: Mapping[str, Any],
+    current_identity: Mapping[str, Any],
+) -> bool:
+    """Allow final-output skip across provenance-only Git movement.
+
+    Final outputs remain bound to the exact config/model/source/core/schema
+    contract that produced them. A later documentation or orchestration commit
+    on the same branch must not invalidate an otherwise identical completed
+    subject solely because the repository SHA changed.
+    """
+    stored = dict(stored_identity)
+    current = dict(current_identity)
+    if not stored or not current:
+        return False
+    for key in COMPLETION_PROVENANCE_ONLY_IDENTITY_KEYS:
+        stored.pop(key, None)
+        current.pop(key, None)
+    return stored == current
 
 
 def _json_bytes(payload: Mapping[str, Any]) -> bytes:
@@ -471,9 +493,6 @@ def finalize_subject(
             "refusing to overwrite incomplete output automatically"
         )
 
-    # Full CSV/QC integrity is checked before any completion metadata is written.
-    # The canonical runner therefore does not need to reread the large tables
-    # immediately after finalize_subject returns.
     eye_count, frame_count, qc_count, pixel_count = _prevalidate_artifacts(core, qc)
 
     summary = build_summary(core=core, qc=qc, output_limit_bytes=limit)
@@ -502,9 +521,6 @@ def finalize_subject(
         ).hexdigest(),
     }
 
-    # At this point subject_dir contains only data/QC. Predict the exact final
-    # size before publishing summary/manifest/completion so an over-limit run
-    # does not leave metadata blockers behind.
     base_bytes = directory_size(subject_dir)
     metadata_base = base_bytes + len(summary_bytes) + len(manifest_bytes)
     completion["total_output_bytes"] = metadata_base + _json_size(completion)
@@ -524,8 +540,6 @@ def finalize_subject(
     atomic_write_json(manifest_path, manifest)
     atomic_write_json(completion_path, completion)
 
-    # Cheap post-write envelope checks only. Large tables were already fully
-    # validated before the marker was published.
     if sha256_file(summary_path) != completion["summary_sha256"]:
         raise RuntimeError("summary.json changed during atomic completion write")
     if sha256_file(manifest_path) != completion["manifest_sha256"]:
