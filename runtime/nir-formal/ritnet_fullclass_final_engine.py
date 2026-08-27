@@ -17,7 +17,7 @@ from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import Any, Iterator, Mapping, Sequence
 
 import cv2
 import numpy as np
@@ -25,7 +25,7 @@ import numpy as np
 from ritnet_fullclass_contract import CLASS_MAPPING
 from ritnet_fullclass_coverage import build_fixed_qc_anchor_keys, build_frame_coverage
 from ritnet_fullclass_final_runtime import RitnetFullClassFinalRuntime
-from ritnet_fullclass_io import atomic_write_csv_gz
+from ritnet_fullclass_io import atomic_write_csv
 from ritnet_fullclass_metric_adapter import summarize_final_hard_metrics
 from ritnet_fullclass_roi import (
     PADDING_MODE_REPLICATE,
@@ -58,7 +58,7 @@ from ritnet_label_store import sha256_file
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
-CORE_VERSION = "fullclass-final-core-v7-pupil-only-lean-schema"
+CORE_VERSION = "fullclass-final-core-v8-interface-safe-plain-csv"
 VIDEO_SEEK_GAP_THRESHOLD = 64
 DEFAULT_CHECKPOINT_ROWS = 128
 DEFAULT_PROGRESS_EVERY_BATCHES = 100
@@ -194,7 +194,10 @@ def _failed_prepared_item(
     }
 
 
-def _group_remaining_rows(rows: list[Mapping[str, Any]], start_ordinal: int):
+def _group_remaining_rows(
+    rows: Sequence[Mapping[str, Any]],
+    start_ordinal: int,
+) -> Iterator[tuple[int, list[tuple[int, Mapping[str, Any]]]]]:
     current_frame: int | None = None
     group: list[tuple[int, Mapping[str, Any]]] = []
     for ordinal in range(start_ordinal, len(rows)):
@@ -216,7 +219,7 @@ def _iter_prepared_items(
     context: SourceFormalContext,
     start_ordinal: int,
 ) -> Iterator[dict[str, Any]]:
-    rows = context.eyes_rows
+    rows = context.eye_rows
     roi_cfg = _final_roi_config(context.config)
     cap = cv2.VideoCapture(str(context.video))
     if not cap.isOpened():
@@ -367,8 +370,6 @@ def _summarize_outputs(
     *,
     prepared: PreparedBatch,
     outputs: dict[str, Any] | None,
-    boundary_band_px: int,
-    low_max_probability_threshold: float | None,
 ) -> tuple[list[tuple[int, dict[str, Any]]], dict[str, float]]:
     summary_started = time.perf_counter()
     hard_ms = 0.0
@@ -402,8 +403,8 @@ def _summarize_outputs(
                 max_probability=outputs["max_probability"][output_index],
                 top1_top2_margin=outputs["top1_top2_margin"][output_index],
                 entropy=outputs["entropy"][output_index],
-                boundary_band_px=boundary_band_px,
-                low_max_probability_threshold=low_max_probability_threshold,
+                boundary_band_px=0,
+                low_max_probability_threshold=None,
                 inputs_validated=True,
             )
             uncertainty_ms += (time.perf_counter() - started) * 1000.0
@@ -432,6 +433,7 @@ def _complete_batch(
     boundary_band_px: int,
     low_max_probability_threshold: float | None,
 ) -> list[tuple[int, dict[str, Any]]]:
+    """Synchronous compatibility helper retained for focused metric tests."""
     successful_indices = [index for index, item in enumerate(items) if item["roi"] is not None]
     inferred: dict[int, dict[str, Any]] = {}
     if successful_indices:
@@ -480,7 +482,6 @@ def _work_identity(
     ritnet_external_data: Path,
 ) -> dict[str, Any]:
     git_commit, git_branch = git_identity()
-    full_cfg = context.config.get("fullclass", {})
     roi_cfg = _final_roi_config(context.config)
     return {
         "core_version": CORE_VERSION,
@@ -504,14 +505,6 @@ def _work_identity(
         "temporal_qc_version": TEMPORAL_QC_VERSION,
         "eye_metrics_schema_version": EYE_METRICS_SCHEMA_VERSION,
         "frame_coverage_schema_version": FRAME_COVERAGE_SCHEMA_VERSION,
-        "qc_boundary_band_px": int(full_cfg.get("qc_boundary_band_px", 5)),
-        "low_max_probability_threshold": full_cfg.get("low_max_probability_threshold"),
-        "pipeline_overlap_enabled": True,
-        "checkpoint_rows": int(full_cfg.get("checkpoint_rows", DEFAULT_CHECKPOINT_ROWS)),
-        "summary_workers": int(full_cfg.get("summary_workers", DEFAULT_SUMMARY_WORKERS)),
-        "max_pending_summaries": int(
-            full_cfg.get("max_pending_summaries", DEFAULT_MAX_PENDING_SUMMARIES)
-        ),
     }
 
 
@@ -575,8 +568,8 @@ def run_numeric_core(
     subject_dir = context.run_dir.parent / output_dirname / context.subject
     data_dir = subject_dir / "data"
     data_dir.mkdir(parents=True, exist_ok=True)
-    eye_metrics_path = data_dir / "eye_metrics.csv.gz"
-    frame_coverage_path = data_dir / "frame_coverage.csv.gz"
+    eye_metrics_path = data_dir / "eye_metrics.csv"
+    frame_coverage_path = data_dir / "frame_coverage.csv"
 
     ritnet_model = resolve_package_path(config["models"]["ritnet_fullclass_final"]).resolve()
     ritnet_external = resolve_package_path(config["models"]["ritnet_fullclass_final_external_data"]).resolve()
@@ -594,21 +587,19 @@ def run_numeric_core(
     )
     work_root = context.run_dir.parent / ".ritnet-fullclass-work"
     workstore_path = work_root / f"{context.subject}.sqlite"
-    runtime = RitnetFullClassFinalRuntime(ritnet_model, device=device)
-    boundary_band_px = int(final_cfg.get("qc_boundary_band_px", 5))
-    threshold_value = final_cfg.get("low_max_probability_threshold")
-    threshold = None if threshold_value is None else float(threshold_value)
 
     checkpoint_rows = int(final_cfg.get("checkpoint_rows", DEFAULT_CHECKPOINT_ROWS))
     progress_every = int(final_cfg.get("progress_every_batches", DEFAULT_PROGRESS_EVERY_BATCHES))
-    if checkpoint_rows < runtime.FIXED_BATCH_SIZE:
-        raise ValueError(f"fullclass.checkpoint_rows must be >= {runtime.FIXED_BATCH_SIZE}")
-    if progress_every <= 0:
-        raise ValueError("fullclass.progress_every_batches must be positive")
     summary_workers = int(final_cfg.get("summary_workers", DEFAULT_SUMMARY_WORKERS))
     max_pending_summaries = int(
         final_cfg.get("max_pending_summaries", DEFAULT_MAX_PENDING_SUMMARIES)
     )
+    if checkpoint_rows < RitnetFullClassFinalRuntime.FIXED_BATCH_SIZE:
+        raise ValueError(
+            f"fullclass.checkpoint_rows must be >= {RitnetFullClassFinalRuntime.FIXED_BATCH_SIZE}"
+        )
+    if progress_every <= 0:
+        raise ValueError("fullclass.progress_every_batches must be positive")
     if summary_workers <= 0:
         raise ValueError("fullclass.summary_workers must be positive")
     if max_pending_summaries <= 0:
@@ -617,10 +608,13 @@ def run_numeric_core(
         raise ValueError("fullclass.max_pending_summaries must be >= summary_workers")
 
     with FullClassWorkStore(workstore_path, identity=identity) as store:
-        start_ordinal = store.validate_prefix(context.eyes_rows)
-        if start_ordinal == len(context.eyes_rows):
+        start_ordinal = store.validate_prefix(context.eye_rows)
+        if start_ordinal == len(context.eye_rows):
+            # Recovery/finalization from a complete checkpoint must not load the
+            # DirectML session or allocate VRAM again.
             numeric_rows = list(iter_temporal_facts(store.iter_rows()))
         else:
+            runtime = RitnetFullClassFinalRuntime(ritnet_model, device=device)
             wall_started = time.perf_counter()
             timing_total: dict[str, float] = {}
             item_iterator = _iter_prepared_items(context, start_ordinal)
@@ -629,8 +623,12 @@ def run_numeric_core(
             batch_count = 0
             processed_session = 0
 
-            with ThreadPoolExecutor(max_workers=1, thread_name_prefix="ritnet-producer") as producer_pool, ThreadPoolExecutor(
-                max_workers=summary_workers, thread_name_prefix="ritnet-summary"
+            with ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix="ritnet-producer",
+            ) as producer_pool, ThreadPoolExecutor(
+                max_workers=summary_workers,
+                thread_name_prefix="ritnet-summary",
             ) as summary_pool:
                 next_future: Future = producer_pool.submit(
                     _next_prepared_batch,
@@ -661,8 +659,6 @@ def run_numeric_core(
                         _summarize_outputs,
                         prepared=prepared,
                         outputs=outputs,
-                        boundary_band_px=boundary_band_px,
-                        low_max_probability_threshold=threshold,
                     )
                     pending.append((future, len(prepared.items)))
                     batch_count += 1
@@ -683,7 +679,7 @@ def run_numeric_core(
                             subject=context.subject,
                             start_ordinal=start_ordinal,
                             processed_session=processed_session,
-                            total_rows=len(context.eyes_rows),
+                            total_rows=len(context.eye_rows),
                             batch_count=batch_count,
                             wall_started=wall_started,
                             timing_total=timing_total,
@@ -706,7 +702,7 @@ def run_numeric_core(
                     subject=context.subject,
                     start_ordinal=start_ordinal,
                     processed_session=processed_session,
-                    total_rows=len(context.eyes_rows),
+                    total_rows=len(context.eye_rows),
                     batch_count=batch_count,
                     wall_started=wall_started,
                     timing_total=timing_total,
@@ -714,32 +710,43 @@ def run_numeric_core(
 
             numeric_rows = list(iter_temporal_facts(store.iter_rows()))
 
-        if len(numeric_rows) != len(context.eyes_rows):
+        if len(numeric_rows) != len(context.eye_rows):
             raise RuntimeError(
-                f"final eye row count mismatch: {len(numeric_rows)} != {len(context.eyes_rows)}"
+                f"final eye row count mismatch: {len(numeric_rows)} != {len(context.eye_rows)}"
             )
 
-        atomic_write_csv_gz(
+        eye_count = atomic_write_csv(
             eye_metrics_path,
-            EYE_METRIC_FIELDS,
             (project_row(row, EYE_METRIC_FIELDS) for row in numeric_rows),
+            EYE_METRIC_FIELDS,
         )
+        if eye_count != len(numeric_rows):
+            raise RuntimeError(
+                f"eye_metrics write count mismatch: {eye_count} != {len(numeric_rows)}"
+            )
 
-    fixed_anchor_keys = build_fixed_qc_anchor_keys(
-        context.frames_rows,
-        interval_sec=float(final_cfg.get("qc_interval_sec", 30.0)),
+    fixed_anchor_keys = frozenset(
+        build_fixed_qc_anchor_keys(
+            context.frame_rows,
+            interval_sec=float(final_cfg.get("qc_interval_sec", 30.0)),
+        )
     )
     coverage_rows = build_frame_coverage(
         subject=context.subject,
-        frames_rows=context.frames_rows,
-        eye_metric_rows=numeric_rows,
-        fixed_anchor_keys=fixed_anchor_keys,
+        source_frames=context.frame_rows,
+        source_eye_rows=context.eye_rows,
+        final_eye_rows=numeric_rows,
+        fixed_anchor_keys=set(fixed_anchor_keys),
     )
-    atomic_write_csv_gz(
+    frame_count = atomic_write_csv(
         frame_coverage_path,
-        FRAME_COVERAGE_FIELDS,
         (project_row(row, FRAME_COVERAGE_FIELDS) for row in coverage_rows),
+        FRAME_COVERAGE_FIELDS,
     )
+    if frame_count != len(coverage_rows):
+        raise RuntimeError(
+            f"frame_coverage write count mismatch: {frame_count} != {len(coverage_rows)}"
+        )
 
     return CoreArtifacts(
         subject=context.subject,
