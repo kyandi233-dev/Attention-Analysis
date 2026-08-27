@@ -85,21 +85,32 @@ def test_summarize_outputs_preserves_failed_rows_and_scientific_metrics_without_
     )
 
     assert [ordinal for ordinal, _ in completed] == [0, 1]
-    assert completed[0][1]["ritnet_status"] == "success"
-    assert completed[0][1]["hard_pupil_pixels"] > 0
-    assert completed[0][1]["soft_background_fraction"] == pytest.approx(0.50)
-    assert completed[0][1]["soft_sclera_fraction"] == pytest.approx(0.30)
-    assert completed[0][1]["soft_iris_fraction"] == pytest.approx(0.15)
-    assert completed[0][1]["soft_pupil_fraction"] == pytest.approx(0.05)
-    assert completed[0][1]["ocular_max_probability_mean"] == pytest.approx(0.9)
-    assert completed[0][1]["ocular_top1_top2_margin_mean"] == pytest.approx(0.7)
-    assert completed[0][1]["ocular_entropy_mean"] == pytest.approx(0.3)
-    # Production cohort rows intentionally do not compute sparse-QC-only
-    # whole/boundary distributions or threshold fractions.
-    assert "whole_max_probability_mean" not in completed[0][1]
-    assert "boundary_entropy_p95" not in completed[0][1]
-    assert completed[0][1].get("uncertainty_boundary_band_px") in (None, "")
-    assert completed[0][1].get("low_max_probability_threshold") in (None, "")
+    row = completed[0][1]
+    assert row["ritnet_status"] == "success"
+    assert row["hard_pupil_pixels"] > 0
+    assert row["soft_background_fraction"] == pytest.approx(0.50)
+    assert row["soft_sclera_fraction"] == pytest.approx(0.30)
+    assert row["soft_iris_fraction"] == pytest.approx(0.15)
+    assert row["soft_pupil_fraction"] == pytest.approx(0.05)
+    assert row["ocular_max_probability_mean"] == pytest.approx(0.9)
+    assert row["ocular_top1_top2_margin_mean"] == pytest.approx(0.7)
+    assert row["ocular_entropy_mean"] == pytest.approx(0.3)
+
+    # Cohort checkpoint payloads must contain only the lean production
+    # uncertainty contract. Sparse-QC-only distributions/threshold fields are
+    # absent rather than serialized as thousands of repeated null values.
+    for dead in (
+        "uncertainty_boundary_band_px",
+        "uncertainty_boundary_pixel_count",
+        "whole_max_probability_mean",
+        "boundary_entropy_p95",
+        "low_max_probability_threshold",
+        "whole_low_max_probability_fraction",
+        "ocular_low_max_probability_fraction",
+        "boundary_low_max_probability_fraction",
+    ):
+        assert dead not in row
+
     assert completed[1][1]["ritnet_status"] == "failed"
     assert completed[1][1]["ritnet_failure_reason"] == "roi_invalid:test"
     assert timing["hard_metric_ms"] >= 0.0
