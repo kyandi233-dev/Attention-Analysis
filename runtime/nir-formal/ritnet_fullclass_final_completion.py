@@ -82,6 +82,35 @@ def _json_size(payload: Mapping[str, Any]) -> int:
     return len(text.encode("utf-8"))
 
 
+def _normalize_source_selection(
+    core: CoreArtifacts,
+    source_selection: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    if source_selection is None:
+        value: dict[str, Any] = {
+            "reason": "direct_single_subject_run",
+            "selected_run_dir": str(core.source_context.run_dir),
+            "alternatives": [],
+        }
+    else:
+        value = dict(source_selection)
+    reason = str(value.get("reason") or "").strip()
+    selected = str(value.get("selected_run_dir") or "").strip()
+    alternatives_raw = value.get("alternatives", [])
+    if not reason:
+        raise ValueError("source selection provenance requires a non-empty reason")
+    if not selected:
+        raise ValueError("source selection provenance requires selected_run_dir")
+    if not isinstance(alternatives_raw, (list, tuple)):
+        raise ValueError("source selection alternatives must be a list")
+    alternatives = [str(item) for item in alternatives_raw]
+    return {
+        "reason": reason,
+        "selected_run_dir": selected,
+        "alternatives": alternatives,
+    }
+
+
 def _count_and_validate_csv_gz(
     path: Path,
     *,
@@ -236,7 +265,12 @@ def build_summary(
     }
 
 
-def build_manifest(*, core: CoreArtifacts, qc: QCArtifacts) -> dict[str, Any]:
+def build_manifest(
+    *,
+    core: CoreArtifacts,
+    qc: QCArtifacts,
+    source_selection: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     subject_dir = core.subject_dir
     artifacts = {
         relative: _artifact_record(subject_dir, relative)
@@ -247,6 +281,7 @@ def build_manifest(*, core: CoreArtifacts, qc: QCArtifacts) -> dict[str, Any]:
         "subject": core.subject,
         "source_identity": dict(core.source_context.source_identity),
         "source_video_resolution": dict(core.source_context.video_resolution),
+        "source_selection": _normalize_source_selection(core, source_selection),
         "work_identity": dict(core.work_identity),
         "artifacts": artifacts,
         "qc": {
@@ -307,6 +342,16 @@ def validate_final_completion(
             raise ValueError("manifest work_identity must be an object")
         if expected_work_identity is not None and work_identity != dict(expected_work_identity):
             raise ValueError("manifest work_identity does not match requested run identity")
+        source_selection = manifest.get("source_selection")
+        if not isinstance(source_selection, dict):
+            raise ValueError("manifest source_selection must be an object")
+        if not str(source_selection.get("reason") or "").strip():
+            raise ValueError("manifest source_selection has no reason")
+        if not str(source_selection.get("selected_run_dir") or "").strip():
+            raise ValueError("manifest source_selection has no selected_run_dir")
+        alternatives = source_selection.get("alternatives")
+        if not isinstance(alternatives, list) or any(not isinstance(item, str) for item in alternatives):
+            raise ValueError("manifest source_selection alternatives must be a string list")
 
         eye_path = subject_dir / "data" / "eye_metrics.csv.gz"
         coverage_path = subject_dir / "data" / "frame_coverage.csv.gz"
@@ -366,6 +411,7 @@ def finalize_subject(
     core: CoreArtifacts,
     qc: QCArtifacts,
     output_limit_bytes: int,
+    source_selection: Mapping[str, Any] | None = None,
 ) -> Path:
     subject_dir = Path(core.subject_dir)
     limit = int(output_limit_bytes)
@@ -386,7 +432,7 @@ def finalize_subject(
         )
 
     summary = build_summary(core=core, qc=qc, output_limit_bytes=limit)
-    manifest = build_manifest(core=core, qc=qc)
+    manifest = build_manifest(core=core, qc=qc, source_selection=source_selection)
     summary_path = subject_dir / SUMMARY_NAME
     manifest_path = subject_dir / MANIFEST_NAME
     if summary_path.exists() or manifest_path.exists():
