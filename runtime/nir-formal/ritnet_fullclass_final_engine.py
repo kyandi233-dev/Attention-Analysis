@@ -1,13 +1,13 @@
 """Numeric core of the final <=1 GiB RITnet full-class workflow.
 
 This module produces fixed-schema numeric artifacts using historical YOLO boxes +
-original AVI, exact 1.6 padded ROIs, the final five-output RITnet adapter, compact
-online uncertainty summaries and gap-safe temporal facts.
+original AVI, exact 1.6 padded ROIs, the final RITnet adapter, four-class
+segmentation, pupil-only geometry, compact online uncertainty summaries and
+gap-safe temporal facts.
 
-The production loop is deliberately pipelined: source decode/ROI/preprocessing of
-batch N+1 overlaps DirectML inference of batch N, while CPU metric reduction of
-batch N-1 overlaps both. This changes scheduling only; scientific inputs, model
-outputs, metrics and persisted schema remain unchanged.
+The production loop is pipelined: source decode/ROI/preprocessing of batch N+1
+overlaps DirectML inference of batch N, while CPU metric reduction of batch N-1
+overlaps both.
 """
 from __future__ import annotations
 
@@ -58,15 +58,13 @@ from ritnet_label_store import sha256_file
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
-CORE_VERSION = "fullclass-final-core-v6-overlapped-pipeline"
+CORE_VERSION = "fullclass-final-core-v7-pupil-only-lean-schema"
 VIDEO_SEEK_GAP_THRESHOLD = 64
 DEFAULT_CHECKPOINT_ROWS = 128
 DEFAULT_PROGRESS_EVERY_BATCHES = 100
 DEFAULT_SUMMARY_WORKERS = 2
 DEFAULT_MAX_PENDING_SUMMARIES = 2
 
-# Most formal eye ROIs are completely inside the AVI. Reusing one immutable
-# full-valid mask avoids allocating/zeroing a new 400x640 bool array per eye.
 FULL_SOURCE_VALID_MASK = np.ones((TARGET_HEIGHT, TARGET_WIDTH), dtype=bool)
 FULL_SOURCE_VALID_MASK.setflags(write=False)
 
@@ -136,88 +134,45 @@ def _source_base_row(subject: str, source: Mapping[str, Any]) -> dict[str, Any]:
         "source_frame_status": str(source.get("frame_status") or ""),
         "source_eye_status": str(source.get("status") or ""),
         "source_redetect_reason": str(source.get("redetect_reason") or ""),
-        "source_yolo_batch_size": _int(source.get("yolo_batch_size") or 0),
-        "yolo_confidence": float(source["anchor_yolo_confidence"]),
-        "yolo_bbox_x1": float(source["bbox_x1"]),
-        "yolo_bbox_y1": float(source["bbox_y1"]),
-        "yolo_bbox_x2": float(source["bbox_x2"]),
-        "yolo_bbox_y2": float(source["bbox_y2"]),
-        "ritnet_status": None,
-        "ritnet_failure_reason": None,
+        "source_yolo_batch_size": _int(source["yolo_batch_size"])
+        if source.get("yolo_batch_size") not in (None, "")
+        else None,
+        "yolo_confidence": _float_or_none(source.get("anchor_yolo_confidence")),
+        "yolo_bbox_x1": _float_or_none(source.get("bbox_x1")),
+        "yolo_bbox_y1": _float_or_none(source.get("bbox_y1")),
+        "yolo_bbox_x2": _float_or_none(source.get("bbox_x2")),
+        "yolo_bbox_y2": _float_or_none(source.get("bbox_y2")),
     }
 
 
 def _final_roi_config(config: Mapping[str, Any]) -> dict[str, Any]:
-    fullclass = config.get("fullclass")
-    if not isinstance(fullclass, Mapping):
+    full = config.get("fullclass")
+    if not isinstance(full, Mapping):
         raise ValueError("config.fullclass must be a mapping")
-    roi = fullclass.get("roi")
+    roi = full.get("roi")
     if not isinstance(roi, Mapping):
         raise ValueError("config.fullclass.roi must be a mapping")
-
-    required = {
-        "target_width",
-        "target_height",
-        "aspect_ratio",
-        "expand_horizontal_each_side",
-        "expand_vertical_each_side",
-        "padding_mode",
+    expected = {
+        "target_width": TARGET_WIDTH,
+        "target_height": TARGET_HEIGHT,
+        "aspect_ratio": TARGET_ASPECT_RATIO,
+        "padding_mode": PADDING_MODE_REPLICATE,
     }
-    missing = sorted(required - set(roi))
-    if missing:
-        raise ValueError(f"config.fullclass.roi missing required keys: {missing}")
-
-    target_width = int(roi["target_width"])
-    target_height = int(roi["target_height"])
-    aspect_ratio = float(roi["aspect_ratio"])
-    horizontal = float(roi["expand_horizontal_each_side"])
-    vertical = float(roi["expand_vertical_each_side"])
-    padding_mode = str(roi["padding_mode"])
-
-    if (target_width, target_height) != (TARGET_WIDTH, TARGET_HEIGHT):
-        raise ValueError(
-            "final RITnet ROI target must remain 640x400; got "
-            f"{target_width}x{target_height}"
-        )
-    if abs(aspect_ratio - TARGET_ASPECT_RATIO) > 1e-12:
-        raise ValueError(
-            f"final RITnet ROI aspect must remain {TARGET_ASPECT_RATIO}; got {aspect_ratio}"
-        )
-    if horizontal < 0 or vertical < 0:
-        raise ValueError("final ROI expansion fractions must be non-negative")
-    if padding_mode != PADDING_MODE_REPLICATE:
-        raise ValueError(
-            f"final ROI padding mode must remain {PADDING_MODE_REPLICATE!r}; got {padding_mode!r}"
-        )
-
+    for key, value in expected.items():
+        actual = roi.get(key)
+        if isinstance(value, float):
+            if not np.isclose(float(actual), value, rtol=0.0, atol=1e-12):
+                raise ValueError(f"fullclass.roi.{key} must be {value}, got {actual}")
+        elif actual != value:
+            raise ValueError(f"fullclass.roi.{key} must be {value!r}, got {actual!r}")
     return {
-        "target_width": target_width,
-        "target_height": target_height,
-        "aspect_ratio": aspect_ratio,
-        "expand_horizontal_each_side": horizontal,
-        "expand_vertical_each_side": vertical,
-        "padding_mode": padding_mode,
+        "target_width": TARGET_WIDTH,
+        "target_height": TARGET_HEIGHT,
+        "aspect_ratio": TARGET_ASPECT_RATIO,
+        "expand_horizontal_each_side": float(roi["expand_horizontal_each_side"]),
+        "expand_vertical_each_side": float(roi["expand_vertical_each_side"]),
+        "padding_mode": PADDING_MODE_REPLICATE,
     }
-
-
-def _group_remaining_rows(
-    rows: tuple[dict[str, str], ...],
-    start_ordinal: int,
-) -> Iterator[tuple[int, list[tuple[int, dict[str, str]]]]]:
-    current_frame: int | None = None
-    group: list[tuple[int, dict[str, str]]] = []
-    for ordinal in range(start_ordinal, len(rows)):
-        row = rows[ordinal]
-        frame = _int(row["frame_idx"])
-        if current_frame is None:
-            current_frame = frame
-        if frame != current_frame:
-            yield current_frame, group
-            current_frame = frame
-            group = []
-        group.append((ordinal, row))
-    if current_frame is not None and group:
-        yield current_frame, group
 
 
 def _failed_prepared_item(
@@ -229,9 +184,9 @@ def _failed_prepared_item(
 ) -> dict[str, Any]:
     base = _source_base_row(context.subject, source)
     base["ritnet_status"] = "failed"
-    base["ritnet_failure_reason"] = str(reason)
+    base["ritnet_failure_reason"] = reason
     return {
-        "ordinal": int(ordinal),
+        "ordinal": ordinal,
         "source": source,
         "base": base,
         "roi": None,
@@ -239,14 +194,29 @@ def _failed_prepared_item(
     }
 
 
-def _prepared_items(
-    *,
+def _group_remaining_rows(rows: list[Mapping[str, Any]], start_ordinal: int):
+    current_frame: int | None = None
+    group: list[tuple[int, Mapping[str, Any]]] = []
+    for ordinal in range(start_ordinal, len(rows)):
+        source = rows[ordinal]
+        frame_idx = _int(source["frame_idx"])
+        if current_frame is None:
+            current_frame = frame_idx
+        if frame_idx != current_frame:
+            yield current_frame, group
+            current_frame = frame_idx
+            group = []
+        group.append((ordinal, source))
+    if group:
+        assert current_frame is not None
+        yield current_frame, group
+
+
+def _iter_prepared_items(
     context: SourceFormalContext,
     start_ordinal: int,
 ) -> Iterator[dict[str, Any]]:
-    rows = context.eye_rows
-    if start_ordinal >= len(rows):
-        return
+    rows = context.eyes_rows
     roi_cfg = _final_roi_config(context.config)
     cap = cv2.VideoCapture(str(context.video))
     if not cap.isOpened():
@@ -358,7 +328,6 @@ def _next_prepared_batch(
     item_iterator: Iterator[dict[str, Any]],
     runtime: RitnetFullClassFinalRuntime,
 ) -> PreparedBatch | None:
-    """Decode/crop and preprocess one fixed-b16 batch on the producer thread."""
     stage_started = time.perf_counter()
     items: list[dict[str, Any]] = []
     for _ in range(runtime.FIXED_BATCH_SIZE):
@@ -401,7 +370,6 @@ def _summarize_outputs(
     boundary_band_px: int,
     low_max_probability_threshold: float | None,
 ) -> tuple[list[tuple[int, dict[str, Any]]], dict[str, float]]:
-    """Reduce one already-inferred batch on a CPU worker while GPU advances."""
     summary_started = time.perf_counter()
     hard_ms = 0.0
     uncertainty_ms = 0.0
@@ -464,7 +432,6 @@ def _complete_batch(
     boundary_band_px: int,
     low_max_probability_threshold: float | None,
 ) -> list[tuple[int, dict[str, Any]]]:
-    """Synchronous compatibility wrapper retained for focused unit tests."""
     successful_indices = [index for index, item in enumerate(items) if item["roi"] is not None]
     inferred: dict[int, dict[str, Any]] = {}
     if successful_indices:
@@ -650,141 +617,129 @@ def run_numeric_core(
         raise ValueError("fullclass.max_pending_summaries must be >= summary_workers")
 
     with FullClassWorkStore(workstore_path, identity=identity) as store:
-        start_ordinal = store.validate_prefix(context.eye_rows)
-        total_rows = len(context.eye_rows)
-        item_iterator = _prepared_items(context=context, start_ordinal=start_ordinal)
-        checkpoint_buffer: list[tuple[int, dict[str, Any]]] = []
-        timing_total: dict[str, float] = {}
-        processed_session = 0
-        batch_count = 0
-        wall_started = time.perf_counter()
-        pending_summaries: deque[Future] = deque()
+        start_ordinal = store.validate_prefix(context.eyes_rows)
+        if start_ordinal == len(context.eyes_rows):
+            numeric_rows = list(iter_temporal_facts(store.iter_rows()))
+        else:
+            wall_started = time.perf_counter()
+            timing_total: dict[str, float] = {}
+            item_iterator = _iter_prepared_items(context, start_ordinal)
+            pending: deque[tuple[Future, int]] = deque()
+            checkpoint_buffer: list[tuple[int, dict[str, Any]]] = []
+            batch_count = 0
+            processed_session = 0
 
-        def collect_summary(future: Future) -> None:
-            nonlocal processed_session
-            rows, timing = future.result()
-            checkpoint_buffer.extend(rows)
-            processed_session += len(rows)
-            _accumulate_timing(timing_total, timing)
-            if len(checkpoint_buffer) >= checkpoint_rows:
-                sqlite_ms = _flush_checkpoint(store, checkpoint_buffer)
-                timing_total["sqlite_ms"] = timing_total.get("sqlite_ms", 0.0) + sqlite_ms
-
-        try:
-            with ThreadPoolExecutor(max_workers=1, thread_name_prefix="nir-prep") as prep_pool, ThreadPoolExecutor(
-                max_workers=summary_workers, thread_name_prefix="nir-summary"
+            with ThreadPoolExecutor(max_workers=1, thread_name_prefix="ritnet-producer") as producer_pool, ThreadPoolExecutor(
+                max_workers=summary_workers, thread_name_prefix="ritnet-summary"
             ) as summary_pool:
-                next_prepared = prep_pool.submit(
+                next_future: Future = producer_pool.submit(
                     _next_prepared_batch,
                     item_iterator=item_iterator,
                     runtime=runtime,
                 )
 
                 while True:
-                    prepared = next_prepared.result()
+                    prepared = next_future.result()
                     if prepared is None:
                         break
-                    batch_count += 1
-                    _accumulate_timing(timing_total, prepared.timing)
-
-                    # Prepare N+1 while DirectML runs N.
-                    next_prepared = prep_pool.submit(
+                    next_future = producer_pool.submit(
                         _next_prepared_batch,
                         item_iterator=item_iterator,
                         runtime=runtime,
                     )
+                    _accumulate_timing(timing_total, prepared.timing)
 
                     outputs = None
-                    infer_timing: dict[str, Any] = {}
                     if prepared.successful_indices:
-                        if prepared.tensor is None:
-                            raise RuntimeError(
-                                "prepared batch has successful items but no inference tensor"
-                            )
                         outputs, infer_timing = runtime.infer_prepared(
                             prepared.tensor,
                             prepared.valid_batch_size,
                         )
                         _accumulate_timing(timing_total, infer_timing)
 
-                    # CPU summaries run independently from DirectML. Keep only a
-                    # small bounded number of large five-output batches resident
-                    # in host RAM, and always collect them in source order.
-                    pending_summaries.append(
-                        summary_pool.submit(
-                            _summarize_outputs,
-                            prepared=prepared,
-                            outputs=outputs,
-                            boundary_band_px=boundary_band_px,
-                            low_max_probability_threshold=threshold,
-                        )
+                    future = summary_pool.submit(
+                        _summarize_outputs,
+                        prepared=prepared,
+                        outputs=outputs,
+                        boundary_band_px=boundary_band_px,
+                        low_max_probability_threshold=threshold,
                     )
-                    if len(pending_summaries) >= max_pending_summaries:
-                        collect_summary(pending_summaries.popleft())
+                    pending.append((future, len(prepared.items)))
+                    batch_count += 1
+
+                    while len(pending) >= max_pending_summaries:
+                        oldest, count = pending.popleft()
+                        completed, summary_timing = oldest.result()
+                        _accumulate_timing(timing_total, summary_timing)
+                        checkpoint_buffer.extend(completed)
+                        processed_session += count
+                        if len(checkpoint_buffer) >= checkpoint_rows:
+                            timing_total["sqlite_ms"] = timing_total.get("sqlite_ms", 0.0) + _flush_checkpoint(
+                                store, checkpoint_buffer
+                            )
 
                     if batch_count % progress_every == 0:
-                        while pending_summaries and pending_summaries[0].done():
-                            collect_summary(pending_summaries.popleft())
                         _report_progress(
                             subject=context.subject,
                             start_ordinal=start_ordinal,
                             processed_session=processed_session,
-                            total_rows=total_rows,
+                            total_rows=len(context.eyes_rows),
                             batch_count=batch_count,
                             wall_started=wall_started,
                             timing_total=timing_total,
                         )
 
-                while pending_summaries:
-                    collect_summary(pending_summaries.popleft())
+                while pending:
+                    future, count = pending.popleft()
+                    completed, summary_timing = future.result()
+                    _accumulate_timing(timing_total, summary_timing)
+                    checkpoint_buffer.extend(completed)
+                    processed_session += count
+                    if len(checkpoint_buffer) >= checkpoint_rows:
+                        timing_total["sqlite_ms"] = timing_total.get("sqlite_ms", 0.0) + _flush_checkpoint(
+                            store, checkpoint_buffer
+                        )
+                timing_total["sqlite_ms"] = timing_total.get("sqlite_ms", 0.0) + _flush_checkpoint(
+                    store, checkpoint_buffer
+                )
+                _report_progress(
+                    subject=context.subject,
+                    start_ordinal=start_ordinal,
+                    processed_session=processed_session,
+                    total_rows=len(context.eyes_rows),
+                    batch_count=batch_count,
+                    wall_started=wall_started,
+                    timing_total=timing_total,
+                )
 
-                sqlite_ms = _flush_checkpoint(store, checkpoint_buffer)
-                timing_total["sqlite_ms"] = timing_total.get("sqlite_ms", 0.0) + sqlite_ms
-        finally:
-            close = getattr(item_iterator, "close", None)
-            if callable(close):
-                close()
+            numeric_rows = list(iter_temporal_facts(store.iter_rows()))
 
-        _report_progress(
-            subject=context.subject,
-            start_ordinal=start_ordinal,
-            processed_session=processed_session,
-            total_rows=total_rows,
-            batch_count=batch_count,
-            wall_started=wall_started,
-            timing_total=timing_total,
-        )
+        if len(numeric_rows) != len(context.eyes_rows):
+            raise RuntimeError(
+                f"final eye row count mismatch: {len(numeric_rows)} != {len(context.eyes_rows)}"
+            )
 
-        stored_rows = store.validate_prefix(context.eye_rows)
-        if stored_rows != len(context.eye_rows):
-            raise RuntimeError(f"numeric workstore incomplete: {stored_rows}/{len(context.eye_rows)}")
-
-        eye_count = atomic_write_csv_gz(
+        atomic_write_csv_gz(
             eye_metrics_path,
-            (project_row(row, EYE_METRIC_FIELDS) for row in iter_temporal_facts(store.iter_rows())),
             EYE_METRIC_FIELDS,
+            (project_row(row, EYE_METRIC_FIELDS) for row in numeric_rows),
         )
-        if eye_count != len(context.eye_rows):
-            raise RuntimeError(f"eye_metrics row count mismatch: {eye_count}/{len(context.eye_rows)}")
 
-        fixed_anchors = build_fixed_qc_anchor_keys(
-            context.frame_rows,
-            interval_sec=float(final_cfg.get("qc_interval_sec", 30)),
-        )
-        coverage_rows = build_frame_coverage(
-            subject=context.subject,
-            source_frames=context.frame_rows,
-            source_eye_rows=context.eye_rows,
-            final_eye_rows=store.iter_rows(),
-            fixed_anchor_keys=fixed_anchors,
-        )
-        frame_count = atomic_write_csv_gz(
-            frame_coverage_path,
-            coverage_rows,
-            FRAME_COVERAGE_FIELDS,
-        )
-        if frame_count != len(context.frame_rows):
-            raise RuntimeError(f"frame coverage row count mismatch: {frame_count}/{len(context.frame_rows)}")
+    fixed_anchor_keys = build_fixed_qc_anchor_keys(
+        context.frames_rows,
+        interval_sec=float(final_cfg.get("qc_interval_sec", 30.0)),
+    )
+    coverage_rows = build_frame_coverage(
+        subject=context.subject,
+        frames_rows=context.frames_rows,
+        eye_metric_rows=numeric_rows,
+        fixed_anchor_keys=fixed_anchor_keys,
+    )
+    atomic_write_csv_gz(
+        frame_coverage_path,
+        FRAME_COVERAGE_FIELDS,
+        (project_row(row, FRAME_COVERAGE_FIELDS) for row in coverage_rows),
+    )
 
     return CoreArtifacts(
         subject=context.subject,
@@ -792,9 +747,9 @@ def run_numeric_core(
         eye_metrics=eye_metrics_path,
         frame_coverage=frame_coverage_path,
         workstore=workstore_path,
-        eye_row_count=eye_count,
-        frame_row_count=frame_count,
-        fixed_anchor_keys=frozenset(fixed_anchors),
+        eye_row_count=len(numeric_rows),
+        frame_row_count=len(coverage_rows),
+        fixed_anchor_keys=fixed_anchor_keys,
         source_context=context,
         work_identity=identity,
     )
