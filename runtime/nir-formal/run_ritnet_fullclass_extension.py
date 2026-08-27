@@ -22,6 +22,7 @@ from ritnet_fullclass_final_engine import (
     run_numeric_core,
 )
 from ritnet_fullclass_git import require_clean_code_worktree
+from ritnet_fullclass_io import iter_csv
 from ritnet_fullclass_qc_producer import QC_PIXEL_EVIDENCE_NAME, produce_qc_artifacts
 from ritnet_fullclass_source import load_source_context
 
@@ -149,13 +150,27 @@ def main() -> int:
     if core.work_identity != expected_identity:
         raise RuntimeError("preflight and numeric-core work identities diverged")
 
+    # Transitional bridge while CoreArtifacts is being tightened to carry these
+    # already-materialized rows directly. QC itself is rows-only and has no file
+    # format dependency; this readback is removed in the next isolated perf step.
+    eye_metric_rows = list(iter_csv(core.eye_metrics))
+    frame_coverage_rows = list(iter_csv(core.frame_coverage))
+    if len(eye_metric_rows) != core.eye_row_count:
+        raise RuntimeError(
+            f"QC eye row readback mismatch: {len(eye_metric_rows)} != {core.eye_row_count}"
+        )
+    if len(frame_coverage_rows) != core.frame_row_count:
+        raise RuntimeError(
+            f"QC frame row readback mismatch: {len(frame_coverage_rows)} != {core.frame_row_count}"
+        )
+
     qc = produce_qc_artifacts(
         subject=core.subject,
         subject_dir=core.subject_dir,
         source_video=core.source_context.video,
         config=core.source_context.config,
-        eye_metrics_path=core.eye_metrics,
-        frame_coverage_path=core.frame_coverage,
+        eye_metric_rows=eye_metric_rows,
+        frame_coverage_rows=frame_coverage_rows,
         device=str(args.device),
     )
     final_cfg = core.source_context.config.get("fullclass", {})
