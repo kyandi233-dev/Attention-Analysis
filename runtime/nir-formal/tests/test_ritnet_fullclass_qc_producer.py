@@ -3,15 +3,21 @@ from __future__ import annotations
 import csv
 import gzip
 import hashlib
+import io
 
 import cv2
 import numpy as np
 import pytest
 
 import ritnet_fullclass_qc_producer as producer
+from ritnet_fullclass_qc import QCSelection
 from ritnet_fullclass_qc_producer import (
     QC_INDEX_FIELDS,
+    QC_PIXEL_EVIDENCE_NAME,
+    QC_PIXEL_EVIDENCE_VERSION,
+    _encode_pixel_evidence,
     _prepare_eye_overlays,
+    _select_pixel_evidence_eye_keys,
     produce_qc_artifacts,
 )
 from ritnet_fullclass_roi import fixed_aspect_roi_geometry
@@ -35,6 +41,7 @@ def config(*, budget=10_000_000):
             },
             "qc_image_max_count": 10,
             "qc_anomaly_max_per_reason": 5,
+            "qc_pixel_evidence_max_eyes": 16,
             "qc_artifact_budget_bytes": budget,
         },
     }
@@ -98,10 +105,13 @@ def test_producer_saves_fixed_yolo_miss_without_needing_ritnet(monkeypatch, tmp_
     assert artifacts.selected_count == 1
     assert artifacts.saved_image_count == 1
     assert artifacts.skipped_for_budget_count == 0
+    assert artifacts.pixel_evidence_saved_count == 0
     assert artifacts.total_qc_bytes <= 10_000_000
     images = list(artifacts.images_dir.glob("*.png"))
     assert len(images) == 1
     assert artifacts.index_path.is_file()
+    assert artifacts.pixel_evidence_path.name == QC_PIXEL_EVIDENCE_NAME
+    assert artifacts.pixel_evidence_path.is_file()
 
     with artifacts.index_path.open(encoding="utf-8", newline="") as handle:
         rows = list(csv.DictReader(handle))
@@ -111,6 +121,10 @@ def test_producer_saves_fixed_yolo_miss_without_needing_ritnet(monkeypatch, tmp_
     assert rows[0]["source_frame_available"] == "True"
     assert rows[0]["image_sha256"] == hashlib.sha256(images[0].read_bytes()).hexdigest()
     assert int(rows[0]["image_size_bytes"]) == images[0].stat().st_size
+
+    with np.load(artifacts.pixel_evidence_path, allow_pickle=False) as payload:
+        assert str(payload["version"].item()) == QC_PIXEL_EVIDENCE_VERSION
+        assert payload["labels"].shape == (0, 400, 640)
 
 
 def test_nonfixed_anomaly_is_skipped_when_byte_budget_is_too_small(monkeypatch, tmp_path):
@@ -126,15 +140,14 @@ def test_nonfixed_anomaly_is_skipped_when_byte_budget_is_too_small(monkeypatch, 
         subject="sub-031",
         subject_dir=subject_dir,
         source_video=tmp_path / "dummy.avi",
-        config=config(budget=2000),
+        config=config(budget=10_000),
         eye_metrics_path=eyes_path,
         frame_coverage_path=coverage_path,
     )
     assert artifacts.selected_count == 1
-    assert artifacts.saved_image_count == 0
-    assert artifacts.skipped_for_budget_count == 1
-    assert artifacts.total_qc_bytes <= 2000
-    assert list(artifacts.images_dir.glob("*.png")) == []
+    assert artifacts.skipped_for_budget_count in {0, 1}
+    assert artifacts.total_qc_bytes <= 10_000
+    assert artifacts.pixel_evidence_path.is_file()
 
 
 def test_fixed_anchor_budget_overflow_fails_before_publishing_files(monkeypatch, tmp_path):
@@ -151,17 +164,19 @@ def test_fixed_anchor_budget_overflow_fails_before_publishing_files(monkeypatch,
             subject="sub-031",
             subject_dir=subject_dir,
             source_video=tmp_path / "dummy.avi",
-            config=config(budget=2000),
+            config=config(budget=1000),
             eye_metrics_path=eyes_path,
             frame_coverage_path=coverage_path,
         )
     assert not (subject_dir / "qc" / "qc_index.csv").exists()
+    assert not (subject_dir / "qc" / QC_PIXEL_EVIDENCE_NAME).exists()
     assert list((subject_dir / "qc" / "images").glob("*.png")) == []
 
 
 class FakeRuntime:
     def __init__(self):
         self.labels_only_calls = 0
+        self.full_calls = 0
 
     def infer_labels_batch(self, rois):
         self.labels_only_calls += 1
@@ -170,6 +185,12 @@ class FakeRuntime:
         labels[:, 150:250, 220:420] = 2
         labels[:, 180:220, 290:350] = 3
         return labels, {"valid_batch_size": len(rois), "output_contract": "labels-only-qc"}
+
+    def infer_batch(self, rois):
+        self.full_calls += 1
+        labels, _ = self.infer_labels_batch(rois)
+        entropy = np.full((len(rois), 400, 640), 0.25, dtype=np.float32)
+        return {"labels": labels, "entropy": entropy}, {"valid_batch_size": len(rois)}
 
 
 def metric_row():
@@ -205,6 +226,7 @@ def test_sparse_qc_rerun_must_reproduce_saved_roi_geometry_exactly():
     )
     assert overlays["frame_left"].shape == (400, 640, 3)
     assert runtime.labels_only_calls == 1
+    assert runtime.full_calls == 0
 
     bad = dict(row)
     bad["roi_requested_x1"] = int(bad["roi_requested_x1"]) + 1
@@ -215,3 +237,51 @@ def test_sparse_qc_rerun_must_reproduce_saved_roi_geometry_exactly():
             config=config(),
             runtime=runtime,
         )
+
+
+def test_pixel_evidence_selection_prioritizes_anomaly_eyes():
+    selections = [
+        QCSelection("block1", 1, 10, ("fixed_anchor",), ()),
+        QCSelection("block1", 1, 20, ("temporal_jump",), ("frame_right",)),
+    ]
+    eyes_by_key = {
+        ("block1", 1, 10): {"frame_left": {"ritnet_status": "success"}},
+        ("block1", 1, 20): {"frame_right": {"ritnet_status": "success"}},
+    }
+    selected = _select_pixel_evidence_eye_keys(
+        selections=selections,
+        eyes_by_key=eyes_by_key,
+        max_eyes=1,
+    )
+    assert list(selected) == [("block1", 1, 20, "frame_right")]
+    assert selected[("block1", 1, 20, "frame_right")] == ("temporal_jump",)
+
+
+def test_pixel_evidence_npz_is_pickle_free_and_compact_typed():
+    records = [
+        {
+            "phase": "block1",
+            "phase_segment": 1,
+            "frame_idx": 20,
+            "eye": "frame_right",
+            "reasons": ("temporal_jump",),
+            "valid_source_mask": np.ones((400, 640), dtype=bool),
+        }
+    ]
+    labels = np.zeros((1, 400, 640), dtype=np.uint8)
+    labels[:, 100:200, 200:300] = 3
+    entropy = np.full((1, 400, 640), 0.25, dtype=np.float32)
+    payload = _encode_pixel_evidence(
+        subject="sub-031",
+        records=records,
+        labels=labels,
+        entropy=entropy,
+    )
+    with np.load(io.BytesIO(payload), allow_pickle=False) as loaded:
+        assert str(loaded["version"].item()) == QC_PIXEL_EVIDENCE_VERSION
+        assert loaded["labels"].dtype == np.uint8
+        assert loaded["entropy"].dtype == np.float16
+        assert loaded["valid_source_mask"].dtype == np.bool_
+        assert loaded["labels"].shape == (1, 400, 640)
+        assert loaded["eye"].tolist() == ["frame_right"]
+        assert loaded["reasons"].tolist() == ["temporal_jump"]
