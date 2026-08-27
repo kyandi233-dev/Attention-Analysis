@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 
-EYE_METRICS_SCHEMA_VERSION = 1
+EYE_METRICS_SCHEMA_VERSION = 2
 FRAME_COVERAGE_SCHEMA_VERSION = 1
 
 IDENTITY_FIELDS = (
@@ -37,6 +37,10 @@ SOURCE_YOLO_FIELDS = (
 )
 
 ROI_FIELDS = (
+    "roi_expanded_x1",
+    "roi_expanded_y1",
+    "roi_expanded_x2",
+    "roi_expanded_y2",
     "roi_requested_x1",
     "roi_requested_y1",
     "roi_requested_x2",
