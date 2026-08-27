@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Iterable
+import textwrap
 
 import numpy as np
 import pandas as pd
@@ -51,8 +52,10 @@ def _heatmap(
         _empty(ax, "No data")
         return
     image = ax.imshow(matrix.to_numpy(dtype=float), aspect="auto", vmin=vmin, vmax=vmax, cmap=cmap)
-    ax.set_xticks(np.arange(len(matrix.columns)), [str(x) for x in matrix.columns], rotation=45, ha="right")
-    ax.set_yticks(np.arange(len(matrix.index)), [str(x) for x in matrix.index])
+    x_labels = [str(x) for x in matrix.columns]
+    y_labels = [textwrap.fill(str(x).replace("_", " "), width=18, break_long_words=False) for x in matrix.index]
+    ax.set_xticks(np.arange(len(matrix.columns)), x_labels, rotation=45, ha="right")
+    ax.set_yticks(np.arange(len(matrix.index)), y_labels)
     if annotate and matrix.shape[0] <= 8 and matrix.shape[1] <= 8:
         for i in range(matrix.shape[0]):
             for j in range(matrix.shape[1]):
@@ -73,6 +76,8 @@ def _subject_block_box(
     value_col: str,
     order: list[str],
     ylabel: str,
+    tick_labels: list[str] | None = None,
+    tick_rotation: float = 22,
 ) -> None:
     if frame.empty or value_col not in frame.columns:
         _empty(ax, "No condition rows")
@@ -117,7 +122,13 @@ def _subject_block_box(
         handle = plt.Line2D([0], [0], color=color, linewidth=2)
         legend_handles.append(handle)
         legend_labels.append(f"Block {block_num}")
-    ax.set_xticks(np.arange(1, len(order) + 1), order, rotation=22, ha="right")
+    labels = tick_labels if tick_labels is not None else order
+    ax.set_xticks(
+        np.arange(1, len(order) + 1),
+        labels,
+        rotation=tick_rotation,
+        ha="right" if tick_rotation else "center",
+    )
     ax.set_ylabel(ylabel)
     if legend_handles:
         ax.legend(legend_handles, legend_labels, loc="best", ncol=2)
@@ -390,8 +401,17 @@ def figure03_trial_states(
     ]
     omission = trial_conditions[trial_conditions.get("omission_qc_type", pd.Series(index=trial_conditions.index, dtype=str)).astype(str).isin(omission_order)].copy()
     _subject_block_box(
-        axes[0, 1], omission, category_col="omission_qc_type", value_col="pir_median", order=omission_order, ylabel="Pre-trial centered PIR"
+        axes[0, 1], omission, category_col="omission_qc_type", value_col="pir_median", order=omission_order,
+        ylabel="Pre-trial centered PIR",
+        tick_labels=[
+            "clean",
+            "pre",
+            "carry",
+            "pre+carry",
+        ],
+        tick_rotation=0,
     )
+    axes[0, 1].set_xlim(0.5, 4.7)
     axes[0, 1].set_title("Omission motor-timing subtypes × Block")
     panel_label(axes[0, 1], "B")
 
@@ -550,7 +570,14 @@ def figure05_probe_states(
     return save_figure(fig, base, formats, raster_dpi=raster_dpi)
 
 
-def _binned_scatter(ax: plt.Axes, frame: pd.DataFrame, x_col: str, *, title: str) -> None:
+def _binned_scatter(
+    ax: plt.Axes,
+    frame: pd.DataFrame,
+    x_col: str,
+    *,
+    title: str,
+    legend_loc: str = "best",
+) -> None:
     if frame.empty or x_col not in frame.columns or "pir_median" not in frame.columns:
         _empty(ax, "Visual covariate unavailable")
         return
@@ -568,7 +595,7 @@ def _binned_scatter(ax: plt.Axes, frame: pd.DataFrame, x_col: str, *, title: str
     ax.set_xlabel(x_col.replace("current_", ""))
     ax.set_ylabel("Pre-trial centered PIR")
     ax.set_title(title)
-    ax.legend(loc="best")
+    ax.legend(loc=legend_loc, fontsize=6.5)
     _add_zero(ax)
     clean_axis(ax, grid_y=True)
 
@@ -614,7 +641,13 @@ def figure06_visual_controls(
 
     _binned_scatter(axes[0, 1], visual_trial, "current_central_rel_lum_mean", title="Current-stimulus luminance")
     panel_label(axes[0, 1], "B")
-    _binned_scatter(axes[1, 0], visual_trial, "current_central_rms_contrast", title="Current-stimulus contrast")
+    _binned_scatter(
+        axes[1, 0],
+        visual_trial,
+        "current_central_rms_contrast",
+        title="Current-stimulus contrast",
+        legend_loc="upper left",
+    )
     panel_label(axes[1, 0], "C")
 
     ax = axes[1, 1]
@@ -623,14 +656,35 @@ def figure06_visual_controls(
     else:
         df = visual_correlations.sort_values("spearman_rho_with_pir")
         ax.barh(np.arange(len(df)), df["spearman_rho_with_pir"], color="#777777", alpha=0.72)
-        ax.set_yticks(np.arange(len(df)), [str(x).replace("current_", "cur: ").replace("previous_", "prev: ") for x in df["covariate"]])
+        ax.set_yticks(
+            np.arange(len(df)),
+            [
+                (
+                    ("cur" if str(x).startswith("current_") else "prev")
+                    + ": "
+                    + ("fruit" if "fruit_" in str(x) else "central")
+                    + "\n"
+                    + (
+                        "visible area"
+                        if "visible_area" in str(x)
+                        else "contrast"
+                        if "rms_contrast" in str(x)
+                        else "delta luminance"
+                        if "delta_" in str(x) and "rel_lum" in str(x)
+                        else "luminance"
+                    )
+                )
+                for x in df["covariate"]
+            ],
+        )
+        ax.tick_params(axis="y", labelsize=5.5)
         ax.axvline(0, color="#777777", linestyle=":", linewidth=0.65)
         ax.set_xlabel("Spearman ρ with PIR (validation only)")
         clean_axis(ax, grid_y=False)
     ax.set_title("Current vs previous visual covariates")
     panel_label(ax, "D")
 
-    finalize_layout(fig, left=0.12, wspace=0.42, hspace=0.44)
+    finalize_layout(fig, left=0.16, wspace=0.42, hspace=0.44)
     return save_figure(fig, base, formats, raster_dpi=raster_dpi)
 
 
@@ -701,7 +755,15 @@ def figure07_individual_differences(
                 ax.boxplot([values], positions=[pos], widths=0.52, showfliers=False, manage_ticks=False)
                 rng = np.random.default_rng(500 + idx)
                 ax.scatter(pos + rng.normal(0, 0.035, len(values)), values, s=8, color="#666666", alpha=0.55, linewidths=0)
-        ax.set_xticks(np.arange(1, len(effects) + 1), effects, rotation=24, ha="right")
+        short_effects = [
+            textwrap.fill(
+                effect.replace("_minus_", " − ").replace("_", " "),
+                width=20,
+                break_long_words=False,
+            )
+            for effect in effects
+        ]
+        ax.set_xticks(np.arange(1, len(effects) + 1), short_effects, rotation=0, ha="center")
         ax.set_ylabel("Subject-level median contrast")
         _add_zero(ax)
         clean_axis(ax, grid_y=True)
@@ -739,7 +801,7 @@ def figure08_feature_structure(
 
     matrix = _corr_matrix(between_metrics, "metric_a", "metric_b", "r")
     _heatmap(axes[1, 0], matrix, vmin=-1, vmax=1, cmap="coolwarm", cbar_label="between-person r")
-    axes[1, 0].set_title("Between-person raw-PIR / behavior structure")
+    axes[1, 0].set_title("Between-person raw-PIR structure")
     panel_label(axes[1, 0], "C")
 
     ax = axes[1, 1]
@@ -761,7 +823,7 @@ def figure08_feature_structure(
     ax.set_title("Effect stability across prespecified windows")
     panel_label(ax, "D")
 
-    finalize_layout(fig, left=0.12, wspace=0.48, hspace=0.50)
+    finalize_layout(fig, left=0.20, bottom=0.15, wspace=0.50, hspace=0.50)
     return save_figure(fig, base, formats, raster_dpi=raster_dpi)
 
 
@@ -856,7 +918,7 @@ def figure09_quality_control(
     ax.set_title("Temporal discontinuity QC")
     panel_label(ax, "D")
 
-    finalize_layout(fig, left=0.12, wspace=0.44, hspace=0.48)
+    finalize_layout(fig, left=0.20, wspace=0.44, hspace=0.48)
     return save_figure(fig, base, formats, raster_dpi=raster_dpi)
 
 
@@ -872,7 +934,7 @@ def figure10_robustness(
     fig, axes = make_figure(width="full", height_cm=15.5, nrows=2, ncols=2)
     matrix = _corr_matrix(track_correlations, "track_a", "track_b", "correlation")
     _heatmap(axes[0, 0], matrix, vmin=-1, vmax=1, cmap="coolwarm", cbar_label="Pearson r", annotate=True)
-    axes[0, 0].set_title("Primary / strict / eye track agreement")
+    axes[0, 0].set_title("Six-track agreement")
     panel_label(axes[0, 0], "A")
 
     ax = axes[0, 1]
@@ -909,22 +971,58 @@ def figure10_robustness(
         df["estimate"] = _numeric(df["estimate"])
         df["se"] = _numeric(df["se"])
         df = df.dropna(subset=["estimate", "se"])
-        df = df[~df["term"].astype(str).str.contains("Intercept|Group Var", regex=True, na=False)].head(18)
+        df = df[~df["term"].astype(str).str.contains("Intercept|Group Var", regex=True, na=False)].head(12)
         if df.empty:
             _empty(ax, "No non-intercept coefficients")
         else:
-            labels = df["model"].astype(str) + " | " + df["term"].astype(str)
+            model_labels = {
+                "lmm_time_on_task_pir": "time-on-task LMM",
+                "lmm_go_rt_pir_within_between": "Go-RT LMM",
+                "gee_nogo_commission_pir": "commission GEE",
+                "gee_go_program_omission_pir": "program omission GEE",
+                "gee_go_clean_omission_sensitivity": "clean omission GEE",
+            }
+            term_labels = {
+                "C(block_num)[T.2]": "Block 2",
+                "pir_median_within": "PIR within",
+                "pir_median_between": "PIR between",
+                "time_z": "time",
+                "pir_median": "PIR",
+            }
+            labels = [
+                f"{model_labels.get(str(model), str(model).replace('_', ' '))}: "
+                f"{term_labels.get(str(term), str(term).replace('_', ' '))}"
+                for model, term in zip(df["model"], df["term"])
+            ]
+            labels = [
+                textwrap.fill(
+                    label,
+                    width=24,
+                    break_long_words=False,
+                )
+                for label in labels
+            ]
             y = np.arange(len(df))
             ax.errorbar(df["estimate"], y, xerr=1.96 * df["se"], fmt="o", markersize=2.8, color="#555555", ecolor="#888888", elinewidth=0.7, capsize=1.5)
             ax.set_yticks(y, labels)
+            ax.tick_params(axis="y", labelsize=5.5)
             ax.invert_yaxis()
             ax.axvline(0, color="#777777", linestyle=":", linewidth=0.65)
-            ax.set_xlabel("Validation-only coefficient ± 95% Wald CI")
+            ax.set_xscale("symlog", linthresh=1.0, linscale=1.0)
+            # Singular smoke-test fits can produce very wide, non-scientific
+            # confidence intervals. Keep them visible while using a sparse,
+            # deterministic set of readable symlog ticks.
+            smoke_ticks = np.array([-1e10, -1e6, -1e2, 0.0, 1e2, 1e6, 1e10])
+            smoke_tick_labels = ["−10¹⁰", "−10⁶", "−10²", "0", "10²", "10⁶", "10¹⁰"]
+            ax.set_xticks(smoke_ticks)
+            ax.set_xticklabels(smoke_tick_labels, fontsize=5.5)
+            ax.xaxis.get_offset_text().set_visible(False)
+            ax.set_xlabel("Validation-only coefficient ± 95% CI (symlog)", fontsize=7, labelpad=5)
             clean_axis(ax)
     ax.set_title("Model-interface smoke test")
     panel_label(ax, "D")
 
-    finalize_layout(fig, left=0.20, wspace=0.50, hspace=0.46)
+    finalize_layout(fig, left=0.28, bottom=0.15, wspace=0.50, hspace=0.46)
     return save_figure(fig, base, formats, raster_dpi=raster_dpi)
 
 
