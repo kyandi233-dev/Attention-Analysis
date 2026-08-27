@@ -37,17 +37,28 @@ def _resolve(base: Path, value: Any) -> Path:
     return path if path.is_absolute() else (base / path).resolve()
 
 
-def _read_key_rows(path: Path) -> list[tuple[int, int, str]]:
+def _read_key_rows(path: Path, expected_subject: str) -> list[tuple[int, int, str]]:
     with path.open(encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
-        required = {"native_label_row_ordinal", "frame_idx", "eye"}
+        required = {"subject", "native_label_row_ordinal", "frame_idx", "eye"}
         missing = required - set(reader.fieldnames or [])
         if missing:
-            raise ValueError(f"CSV missing key columns: {sorted(missing)}")
-        return [
-            (int(row["native_label_row_ordinal"]), int(float(row["frame_idx"])), str(row["eye"]))
-            for row in reader
-        ]
+            raise ValueError(f"CSV missing identity/key columns: {sorted(missing)}")
+        rows: list[tuple[int, int, str]] = []
+        for row_number, row in enumerate(reader, start=2):
+            subject = str(row.get("subject") or "").strip()
+            if subject != expected_subject:
+                raise ValueError(
+                    f"CSV subject mismatch at row {row_number}: {subject!r} != {expected_subject!r}"
+                )
+            rows.append(
+                (
+                    int(row["native_label_row_ordinal"]),
+                    int(float(row["frame_idx"])),
+                    str(row["eye"]),
+                )
+            )
+        return rows
 
 
 def _read_index_keys(path: Path) -> list[tuple[int, int, str]]:
@@ -93,6 +104,10 @@ def verify_native_completion(
     if not marker.get("artifact_hashes_verified_at_utc"):
         errors.append("artifact_hashes_verified_at_utc is missing")
 
+    marker_subject = str(marker.get("subject") or "").strip()
+    if not marker_subject:
+        errors.append("completion subject is missing")
+
     identity = marker.get("resume_identity")
     if not isinstance(identity, dict):
         errors.append("completion resume_identity is missing")
@@ -102,6 +117,8 @@ def verify_native_completion(
         errors.append("completion resume_identity_digest mismatch")
     if expected_identity is not None and identity != expected_identity:
         errors.append("completion resume identity differs from current run identity")
+    if identity.get("subject") != marker_subject:
+        errors.append("completion subject does not match resume_identity subject")
 
     try:
         expected_rows = int(marker.get("expected_rows", -1))
@@ -151,6 +168,13 @@ def verify_native_completion(
             )
             if marker.get("label_store_identity_digest") != store.identity_digest:
                 errors.append("label_store_identity_digest mismatch")
+            if store.identity.get("resume_identity_digest") != digest:
+                errors.append("label store is not linked to this completion resume identity")
+            if store.identity.get("subject") != marker_subject:
+                errors.append("label store subject does not match completion subject")
+            if store.identity.get("extension_version") != FULLCLASS_VERSION:
+                errors.append("label store fullclass version mismatch")
+
             report = store.verify(expected_rows=expected_rows)
             store_report_dict = report.as_dict()
             if not report.valid:
@@ -179,9 +203,9 @@ def verify_native_completion(
         if sha256_file(path) != expected_hash:
             errors.append(f"artifact hash mismatch: {path_key}")
 
-    if "output_csv" in resolved and "label_index" in resolved:
+    if "output_csv" in resolved and "label_index" in resolved and marker_subject:
         try:
-            csv_keys = _read_key_rows(resolved["output_csv"])
+            csv_keys = _read_key_rows(resolved["output_csv"], marker_subject)
             index_keys = _read_index_keys(resolved["label_index"])
             if len(csv_keys) != len(set(csv_keys)):
                 errors.append("output CSV keys are not unique")
@@ -190,7 +214,7 @@ def verify_native_completion(
             if len(csv_keys) != expected_rows:
                 errors.append(f"output CSV has {len(csv_keys)} rows, expected {expected_rows}")
         except Exception as exc:
-            errors.append(f"CSV/index key verification failed: {exc}")
+            errors.append(f"CSV/index identity verification failed: {exc}")
 
     required_true_flags = (
         "label_store_verified",
@@ -207,5 +231,5 @@ def verify_native_completion(
 
 
 # Canonical name for new callers. Keep the old function name only as a code-level
-# alias so partially written implementation modules do not become a second path.
+# alias so internal implementation imports resolve to the same single contract.
 verify_fullclass_completion = verify_native_completion
