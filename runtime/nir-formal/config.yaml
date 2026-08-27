@@ -69,6 +69,15 @@ fullclass:
   qc_artifact_budget_bytes: 268435456
   final_output_limit_bytes: 1073741824
 
+  # Throughput-only scheduling. These settings do not change ROI, RITnet outputs,
+  # metrics, QC thresholds or the persisted scientific schema. Source decode/ROI/
+  # preprocessing overlaps CUDA inference, while two CPU workers reduce prior
+  # batches. Pending five-output batches stay bounded to control host RAM usage.
+  summary_workers: 2
+  max_pending_summaries: 2
+  checkpoint_rows: 128
+  progress_every_batches: 100
+
 formal:
   focuswave_release: "v3.1.3"
   min_subject_number: 31
