@@ -22,13 +22,6 @@ from ritnet_fullclass_qc_producer import (
 from ritnet_fullclass_roi import fixed_aspect_roi_geometry
 
 
-def write_csv(path, fieldnames, rows):
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
-
-
 def config(*, budget=10_000_000):
     return {
         "models": {"ritnet_fullclass_final": "models/missing-test.onnx"},
@@ -86,10 +79,8 @@ def coverage(frame=10, *, fixed=True, status="yolo_no_eye"):
 
 def test_producer_saves_fixed_yolo_miss_without_needing_ritnet(monkeypatch, tmp_path):
     monkeypatch.setattr(producer.cv2, "VideoCapture", FakeCapture)
-    coverage_path = tmp_path / "coverage.csv"
-    eyes_path = tmp_path / "eyes.csv"
-    write_csv(coverage_path, list(coverage().keys()), [coverage()])
-    write_csv(eyes_path, ["phase", "phase_segment", "frame_idx", "eye"], [])
+    coverage_rows = [coverage()]
+    eye_rows = []
 
     subject_dir = tmp_path / "ritnet-fullclass-final" / "sub-031"
     artifacts = produce_qc_artifacts(
@@ -97,8 +88,8 @@ def test_producer_saves_fixed_yolo_miss_without_needing_ritnet(monkeypatch, tmp_
         subject_dir=subject_dir,
         source_video=tmp_path / "dummy.avi",
         config=config(),
-        eye_metrics_path=eyes_path,
-        frame_coverage_path=coverage_path,
+        eye_metric_rows=eye_rows,
+        frame_coverage_rows=coverage_rows,
     )
 
     assert artifacts.selected_count == 1
@@ -128,11 +119,7 @@ def test_producer_saves_fixed_yolo_miss_without_needing_ritnet(monkeypatch, tmp_
 
 def test_nonfixed_anomaly_is_skipped_when_byte_budget_is_too_small(monkeypatch, tmp_path):
     monkeypatch.setattr(producer.cv2, "VideoCapture", FakeCapture)
-    coverage_path = tmp_path / "coverage.csv"
-    eyes_path = tmp_path / "eyes.csv"
-    row = coverage(fixed=False, status="yolo_no_eye")
-    write_csv(coverage_path, list(row.keys()), [row])
-    write_csv(eyes_path, ["phase", "phase_segment", "frame_idx", "eye"], [])
+    coverage_rows = [coverage(fixed=False, status="yolo_no_eye")]
 
     subject_dir = tmp_path / "out" / "sub-031"
     artifacts = produce_qc_artifacts(
@@ -140,8 +127,8 @@ def test_nonfixed_anomaly_is_skipped_when_byte_budget_is_too_small(monkeypatch, 
         subject_dir=subject_dir,
         source_video=tmp_path / "dummy.avi",
         config=config(budget=10_000),
-        eye_metrics_path=eyes_path,
-        frame_coverage_path=coverage_path,
+        eye_metric_rows=[],
+        frame_coverage_rows=coverage_rows,
     )
     assert artifacts.selected_count == 1
     assert artifacts.skipped_for_budget_count in {0, 1}
@@ -151,11 +138,7 @@ def test_nonfixed_anomaly_is_skipped_when_byte_budget_is_too_small(monkeypatch, 
 
 def test_fixed_anchor_budget_overflow_fails_before_publishing_files(monkeypatch, tmp_path):
     monkeypatch.setattr(producer.cv2, "VideoCapture", FakeCapture)
-    coverage_path = tmp_path / "coverage.csv"
-    eyes_path = tmp_path / "eyes.csv"
-    row = coverage(fixed=True, status="yolo_no_eye")
-    write_csv(coverage_path, list(row.keys()), [row])
-    write_csv(eyes_path, ["phase", "phase_segment", "frame_idx", "eye"], [])
+    coverage_rows = [coverage(fixed=True, status="yolo_no_eye")]
     subject_dir = tmp_path / "out" / "sub-031"
 
     with pytest.raises(RuntimeError, match="mandatory fixed QC"):
@@ -164,8 +147,8 @@ def test_fixed_anchor_budget_overflow_fails_before_publishing_files(monkeypatch,
             subject_dir=subject_dir,
             source_video=tmp_path / "dummy.avi",
             config=config(budget=1000),
-            eye_metrics_path=eyes_path,
-            frame_coverage_path=coverage_path,
+            eye_metric_rows=[],
+            frame_coverage_rows=coverage_rows,
         )
     assert not (subject_dir / "qc" / "qc_index.csv").exists()
     assert not (subject_dir / "qc" / QC_PIXEL_EVIDENCE_NAME).exists()
