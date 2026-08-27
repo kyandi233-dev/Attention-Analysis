@@ -9,6 +9,7 @@ from ritnet_fullclass_roi import (
     TARGET_WIDTH,
     crop_fixed_aspect_gray,
     fixed_aspect_roi_geometry,
+    valid_source_analysis_mask,
 )
 
 
@@ -124,6 +125,54 @@ def test_crop_padding_returns_exact_geometry_and_replicates_edge():
     assert roi.dtype == np.uint8
     if geometry.pad_left:
         assert np.array_equal(roi[:, 0], roi[:, geometry.pad_left])
+
+
+def test_valid_source_mask_is_all_true_without_padding():
+    geometry = make_geometry((800.0, 400.0, 1000.0, 500.0))
+    mask = valid_source_analysis_mask(geometry)
+    assert mask.shape == (TARGET_HEIGHT, TARGET_WIDTH)
+    assert mask.dtype == np.bool_
+    assert mask.all()
+
+
+@pytest.mark.parametrize(
+    "bbox,invalid_edge",
+    [
+        ((0.0, 300.0, 60.0, 360.0), "left"),
+        ((1860.0, 300.0, 1920.0, 360.0), "right"),
+        ((800.0, 0.0, 860.0, 40.0), "top"),
+        ((800.0, 1040.0, 860.0, 1080.0), "bottom"),
+    ],
+)
+def test_valid_source_mask_excludes_each_padding_edge(bbox, invalid_edge):
+    geometry = make_geometry(bbox)
+    mask = valid_source_analysis_mask(geometry)
+    assert mask.any()
+    assert not mask.all()
+    if invalid_edge == "left":
+        assert not mask[:, 0].any()
+    elif invalid_edge == "right":
+        assert not mask[:, -1].any()
+    elif invalid_edge == "top":
+        assert not mask[0, :].any()
+    else:
+        assert not mask[-1, :].any()
+
+
+def test_valid_source_mask_corner_excludes_two_padding_edges():
+    geometry = make_geometry((0.0, 0.0, 70.0, 50.0))
+    mask = valid_source_analysis_mask(geometry)
+    assert not mask[:, 0].any()
+    assert not mask[0, :].any()
+    assert mask[-1, -1]
+
+
+def test_valid_source_mask_preserves_8_by_5_output_contract():
+    geometry = make_geometry((0.0, 300.0, 60.0, 360.0))
+    mask = valid_source_analysis_mask(geometry, output_width=320, output_height=200)
+    assert mask.shape == (200, 320)
+    with pytest.raises(ValueError):
+        valid_source_analysis_mask(geometry, output_width=640, output_height=401)
 
 
 def test_invalid_or_outside_bbox_is_rejected():
