@@ -13,6 +13,8 @@ from pathlib import Path
 
 from ritnet_fullclass_final_completion import (
     COMPLETION_NAME,
+    MANIFEST_NAME,
+    completion_work_identity_compatible,
     finalize_subject,
     validate_final_completion,
 )
@@ -78,33 +80,53 @@ def _expected_work_identity(context, config_path: Path) -> dict:
     )
 
 
+def _manifest_work_identity(subject_dir: Path) -> dict:
+    manifest_path = Path(subject_dir) / MANIFEST_NAME
+    with manifest_path.open(encoding="utf-8") as handle:
+        manifest = json.load(handle)
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("work_identity"), dict):
+        raise RuntimeError("validated completion manifest has no work_identity object")
+    return dict(manifest["work_identity"])
+
+
 def _strict_skip_or_preflight(context, config_path: Path) -> tuple[Path, dict]:
     subject_dir = _subject_dir(context)
     expected_identity = _expected_work_identity(context, config_path)
     completion = subject_dir / COMPLETION_NAME
     if completion.exists():
+        # First prove the completed artifact is internally intact under its own
+        # recorded provenance. Then compare the current requested contract while
+        # ignoring only Git SHA/branch. Config/model/source/core/schema drift is
+        # still a hard mismatch and cannot be silently skipped.
         validation = validate_final_completion(
             subject_dir,
             expected_subject=context.subject,
-            expected_work_identity=expected_identity,
         )
         if validation.valid:
-            print(
-                json.dumps(
-                    {
-                        "subject": context.subject,
-                        "status": "skipped_valid_completion",
-                        "subject_dir": str(subject_dir),
-                        "completion": str(completion),
-                    },
-                    ensure_ascii=False,
-                    indent=2,
+            stored_identity = _manifest_work_identity(subject_dir)
+            if completion_work_identity_compatible(stored_identity, expected_identity):
+                print(
+                    json.dumps(
+                        {
+                            "subject": context.subject,
+                            "status": "skipped_valid_completion",
+                            "subject_dir": str(subject_dir),
+                            "completion": str(completion),
+                            "git_provenance_drift_allowed": stored_identity.get("git_commit")
+                            != expected_identity.get("git_commit")
+                            or stored_identity.get("git_branch") != expected_identity.get("git_branch"),
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    )
                 )
+                return subject_dir, expected_identity
+            raise RuntimeError(
+                "existing final completion is internally valid but its non-Git run contract differs "
+                "from the current requested config/model/source/core/schema; refusing silent reuse"
             )
-            return subject_dir, expected_identity
         raise RuntimeError(
-            "existing final completion is invalid or belongs to a different run identity; "
-            "refusing automatic overwrite: " + validation.reason
+            "existing final completion is invalid; refusing automatic overwrite: " + validation.reason
         )
 
     blockers = [
@@ -172,10 +194,6 @@ def main() -> int:
         source_selection=source_selection,
     )
 
-    # finalize_subject already performs the one full artifact-integrity pass
-    # before publishing completion.json. Avoid immediately rereading the entire
-    # eye/frame tables a second time; future skip/validation calls still use the
-    # strict public validator.
     completion_payload = json.loads(completion.read_text(encoding="utf-8"))
 
     print(
