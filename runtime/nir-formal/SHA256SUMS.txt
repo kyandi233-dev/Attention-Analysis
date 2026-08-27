@@ -1,28 +1,21 @@
-07c13b1e403d56659d6daf609fc6de96a4bd289102a3463e4643f338e2a156e0  config.yaml
-89d88bd5ebbea37f3e20e6fdcad7cfd903915b90a44f9c307264919956b58a7c  directml_runtime.py
-ce81b4c3aa5a74fe8fbdc56a5eef06b9cd6f6eeadc4bca9ad5b4ae08748892f1  formal_completion.py
-f6f02d7eead63817dcc8d90630e4442eb04c225a566df9472c3dd67aa85b1fa8  INSTALL.md
-e38cc13b589c186e5a60bd09d826034ae3dcf772d7ddf6fd402f69adb5fdd898  models/nir-eye-yolo26n-best.onnx
-1933f44f483b350e17249a37b4a2ebe8b5e32f83fc8c1eb1a21c27e96477e621  models/ritnet-b16-fp32.onnx
-1be9bc249f18998d0d28a7d759aff385471fa06ae8bfc05061f31f897ba5cef6  models/ritnet-b16-fp32.onnx.data
-dd1bd9f93c0ebd0c22d7a043cafa3ea71346e9b5884e829bf0403bf0cc6d15cc  phase_windows.py
-a2655d18ff533fe156622294756c789c35bd0ff29f02706a8b1ce3d92f8b524b  README.md
-1012b50755f56d4db2cb4eed381af747da29a30d9295c51dccb9e1b8d2ade85d  RITNET_FULLCLASS_EXTENSION.md
-3e0f71fd1d1f52c5cc48e4267269e335996c493a01352271c24f6e32152d030d  requirements.txt
-81a57150de4c9474e0a0a0e9683117eaafcb2b64d907ab3eb423bb725edd8158  ritnet_fullclass_contract.py
-7777416c01e12a0d31e447cdd23649b96e181ba18ca4daa5556a8f738f4747f2  ritnet_fullclass_metrics.py
-bf97cc6377f2103797f251adca9ddee02249cc2947210c958270a14e7ab39bbf  ritnet_fullclass_qc.py
-5d3baaf25d2e15d00f4fbf8d1e46ea9910aef0a23f05e179592b1325433d0b46  ritnet_fullclass_runtime.py
-acd81fd2550f262d987d8d20c3d04b27f45c168b66a8f913157d1c2fb1f550b5  ritnet_runtime.py
-29c6ab6c0a06811ab83db2155c084b00a797facfa3ff0a74ddef92f6c9886672  ritnet/densenet.py
-e2da74eaf0c421d17aa2542e19a9adb2028ede6ff8d0a8caade5ed851d67557f  ritnet/License.md
-cdf674dfee3495097f599a750b5d1bead9fbbfc1c00f21a4b15f6737956d4ff0  ritnet/UPSTREAM.md
-385f82e977731590693520b419c739ac9b7c689d4c582026915ba8a71326e6f4  run_examples.ps1
-c4b573d73f754a2eef904934919445ee216f6a4da7ab6c40cb7fd13ad6e92bc1  run_ritnet_fullclass_batch.py
-eed3086223f51c16ef5f9b1c54a8333370fb6bcd4a5b586c7db2f99b2a079334  run_ritnet_fullclass_extension.py
-5ad7d5748043958098ffd07c261b541752e4c7d2efe234f871cdd961bb71d1ea  run_formal_batch.py
-db4d54703e825d641265dd2ff0d05398329e7d1e227a3f20748cac4822c90775  run_pipeline.py
-d88294def57a3021d27348a5a64857b4e5d36fa13d5700e1c0e321bc9afa9e34  tests/test_directml_runtime.py
-d8c562d3669e934134ecf2dc8ab080cd1a6839a9f03935fb8841900047c4f2eb  tests/test_formal_completion.py
-81c94a06fe370c7f08c66abbf63847067d4062c8121e4884284c1d293dc2c9a1  tests/test_ritnet_fullclass_metrics.py
-b4d1cf79db044d94a8d656f3f5d0a06c94318599d4d032a5b9234062d6514bac  tests/test_phase_windows.py
+# DEPRECATED STATIC SNAPSHOT — DO NOT USE AS CURRENT COMPLETION EVIDENCE
+#
+# This file used to mix mutable source/document hashes with frozen binary-asset
+# hashes. That design becomes stale whenever the runtime is repaired and is not
+# an adequate provenance contract for the current complete RITnet full-class
+# workflow.
+#
+# Current authoritative identities are:
+#   1. executed source code: exact Git commit + clean working tree;
+#   2. config: content SHA256 recorded in the per-run manifest/resume identity;
+#   3. RITnet ONNX: content SHA256 recorded in the per-run manifest/resume identity;
+#   4. RITnet external data (.onnx.data): independent content SHA256 recorded in
+#      the per-run manifest/resume identity;
+#   5. source eyes.csv and source video: content identity recorded per run;
+#   6. output CSV / label_index / chunk_manifest / store_manifest / summary /
+#      manifest / qc_index: SHA256 recorded and re-verified by completion.json.
+#
+# The canonical user entry points perform those checks at runtime. Do not copy
+# hashes from an older checkout into a new run. If a standalone static checksum
+# export is required for archival delivery, generate it from the exact frozen
+# Git commit and delivered binary files at packaging time.
