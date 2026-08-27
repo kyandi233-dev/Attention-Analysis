@@ -34,3 +34,9 @@
 
 全队列须由独立 PowerShell 终端启动，日志和 PID 位于输出根目录 `_runtime_logs`；不得绑定代理/Codex 进程，不得启动第二实例。启动前确认无有效 native batch/fullclass 进程和 `.run.lock`；已完成 sub-056 应由 valid completion 严格 skip。
 
+## 队列启动尝试与当前阻塞
+
+- 04:01 左右的 queue 工作树 `4d55514` 被 strict identity 拒绝 sub-056，已在 sub-057 前停止；日志 `native_batch_queue_20260828_040118.log`，PID 元数据已标记停止原因。
+- 随后从验收一致的 `a00dd08` 工作树启动独立 PowerShell（shell PID 39376），dry-run 71；sub-056 已确认 `skipped_valid_completion`。
+- sub-057 的历史 `.ritnet-fullclass-work\sub-057.sqlite` 与当前 identity 不同，queue 按 `continue_on_error` 继续到 sub-058；已在 sub-058 实际处理前停止。日志 `native_batch_queue_20260828_040500.log`，PID 元数据已标记 `stopped_before_sub058`。
+- 未产生新的 sub-057/sub-058 final 输出；旧 workstore 未删除。重启前需将 stale SQLite 做可恢复归档或采用经确认的隔离 workstore 策略，不能静默覆盖。
