@@ -44,9 +44,10 @@ tracking:
   redetect_interval: 10
   center_jump_width_fraction: 0.50
 
+# Historical formal ROI settings. These remain frozen for provenance/reproduction
+# of the already-completed formal producer only. Final full-class does NOT read
+# this block; its ROI contract is independently frozen under `fullclass.roi`.
 roi:
-  # Historical settings are retained because the final 1.6 ROI starts from the
-  # same YOLO-context expansion, then expands further to an exact 8:5 crop.
   width: 320
   height: 160
   expand_horizontal_each_side: 0.30
@@ -65,6 +66,16 @@ ritnet:
 # null until sub-031 qualification establishes a defensible descriptive cutoff.
 fullclass:
   output_dirname: "ritnet-fullclass-final"
+  roi:
+    target_width: 640
+    target_height: 400
+    aspect_ratio: 1.6
+    # These values intentionally match the historical context expansion today,
+    # but are duplicated here so future changes to the old ROI block cannot
+    # silently change the final scientific contract.
+    expand_horizontal_each_side: 0.30
+    expand_vertical_each_side: 0.45
+    padding_mode: "replicate"
   qc_interval_sec: 30
   qc_boundary_band_px: 5
   low_max_probability_threshold: null
