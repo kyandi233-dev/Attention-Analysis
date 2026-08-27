@@ -2,8 +2,8 @@
 
 The historical YOLO bounding box is the immutable source. Context expansion and
 1.6 aspect-ratio normalization may only EXPAND around that box; they never crop
-away any part of the YOLO detection. When the desired rectangle extends beyond
-the source frame, explicit padding supplies the missing pixels.
+away any part of the requested eye context. When the desired rectangle extends
+beyond the source frame, explicit padding supplies the missing pixels.
 """
 from __future__ import annotations
 
@@ -21,11 +21,15 @@ ASPECT_WIDTH_UNIT = 8
 ASPECT_HEIGHT_UNIT = 5
 PADDING_MODE_REPLICATE = "replicate"
 SUPPORTED_PADDING_MODES = frozenset({PADDING_MODE_REPLICATE})
-ROI_ALGORITHM_VERSION = "fixed-aspect-1p6-expand-pad-v1"
+ROI_ALGORITHM_VERSION = "fixed-aspect-1p6-expanded-context-replicate-v2"
 
 
 @dataclass(frozen=True)
 class FixedAspectRoi:
+    expanded_x1: float
+    expanded_y1: float
+    expanded_x2: float
+    expanded_y2: float
     requested_x1: int
     requested_y1: int
     requested_x2: int
@@ -51,6 +55,10 @@ class FixedAspectRoi:
 
     def as_dict(self) -> dict[str, int | float | str]:
         return {
+            "roi_expanded_x1": self.expanded_x1,
+            "roi_expanded_y1": self.expanded_y1,
+            "roi_expanded_x2": self.expanded_x2,
+            "roi_expanded_y2": self.expanded_y2,
             "roi_requested_x1": self.requested_x1,
             "roi_requested_y1": self.requested_y1,
             "roi_requested_x2": self.requested_x2,
@@ -91,6 +99,20 @@ def _validate_bbox(
     return x1, y1, x2, y2
 
 
+def _centered_origin_that_encloses(low: float, high: float, size: int) -> int:
+    """Pick the centered integer origin among all origins enclosing [low, high]."""
+    if not (isfinite(low) and isfinite(high) and high > low and size > 0):
+        raise ValueError("invalid interval for fixed-aspect ROI")
+    minimum_origin = int(ceil(high - size))
+    maximum_origin = int(floor(low))
+    if minimum_origin > maximum_origin:
+        raise AssertionError(
+            f"ROI size={size} cannot enclose interval {low}..{high}"
+        )
+    desired = int(round((low + high - size) / 2.0))
+    return min(max(desired, minimum_origin), maximum_origin)
+
+
 def fixed_aspect_roi_geometry(
     *,
     bbox: Sequence[float],
@@ -100,7 +122,15 @@ def fixed_aspect_roi_geometry(
     expand_vertical_each_side: float,
     padding_mode: str = PADDING_MODE_REPLICATE,
 ) -> FixedAspectRoi:
-    """Construct an exact 8:5 ROI that contains the expanded YOLO eye box."""
+    """Construct an exact integer 8:5 ROI containing all expanded eye context.
+
+    The historical YOLO bbox is expanded using the configured horizontal and
+    vertical fractions in floating source-frame coordinates. The smallest
+    integer 8*k by 5*k rectangle capable of enclosing that entire expanded
+    region is then chosen. Its origin is as centered as possible subject to the
+    enclosure constraint. Out-of-frame parts are represented by padding, not by
+    clipping the requested rectangle and stretching what remains.
+    """
     x1, y1, x2, y2 = _validate_bbox(bbox, frame_width, frame_height)
     horizontal = float(expand_horizontal_each_side)
     vertical = float(expand_vertical_each_side)
@@ -113,35 +143,38 @@ def fixed_aspect_roi_geometry(
 
     bbox_width = x2 - x1
     bbox_height = y2 - y1
-    desired_width = bbox_width * (1.0 + 2.0 * horizontal)
-    desired_height = bbox_height * (1.0 + 2.0 * vertical)
+    expanded_x1 = x1 - horizontal * bbox_width
+    expanded_x2 = x2 + horizontal * bbox_width
+    expanded_y1 = y1 - vertical * bbox_height
+    expanded_y2 = y2 + vertical * bbox_height
 
-    # Exact integer 8:5 dimensions avoid later x/y scale mismatch. Taking the
-    # maximum unit count means aspect-ratio normalization only expands context.
+    # Integer span needed to cover every source pixel touched by the floating
+    # expanded rectangle. Exact 8*k by 5*k dimensions make the later 640x400
+    # resize isotropic by construction.
+    required_width = int(ceil(expanded_x2) - floor(expanded_x1))
+    required_height = int(ceil(expanded_y2) - floor(expanded_y1))
     units = max(
         1,
-        int(ceil(desired_width / ASPECT_WIDTH_UNIT)),
-        int(ceil(desired_height / ASPECT_HEIGHT_UNIT)),
+        int(ceil(required_width / ASPECT_WIDTH_UNIT)),
+        int(ceil(required_height / ASPECT_HEIGHT_UNIT)),
     )
     width = ASPECT_WIDTH_UNIT * units
     height = ASPECT_HEIGHT_UNIT * units
 
-    center_x = (x1 + x2) / 2.0
-    center_y = (y1 + y2) / 2.0
-    requested_x1 = int(floor(center_x - width / 2.0))
-    requested_y1 = int(floor(center_y - height / 2.0))
+    requested_x1 = _centered_origin_that_encloses(expanded_x1, expanded_x2, width)
+    requested_y1 = _centered_origin_that_encloses(expanded_y1, expanded_y2, height)
     requested_x2 = requested_x1 + width
     requested_y2 = requested_y1 + height
 
-    # Because width/height are >= desired expansion dimensions and centered on
-    # the same YOLO box, this is a fail-fast invariant rather than a best effort.
     if not (
-        requested_x1 <= x1
-        and requested_y1 <= y1
-        and requested_x2 >= x2
-        and requested_y2 >= y2
+        requested_x1 <= expanded_x1
+        and requested_y1 <= expanded_y1
+        and requested_x2 >= expanded_x2
+        and requested_y2 >= expanded_y2
     ):
-        raise AssertionError("fixed-aspect ROI unexpectedly failed to contain YOLO bbox")
+        raise AssertionError("fixed-aspect ROI failed to contain full expanded context")
+    if width * ASPECT_HEIGHT_UNIT != height * ASPECT_WIDTH_UNIT:
+        raise AssertionError("fixed-aspect ROI is not exactly 8:5")
 
     source_x1 = max(0, requested_x1)
     source_y1 = max(0, requested_y1)
@@ -156,6 +189,10 @@ def fixed_aspect_roi_geometry(
     pad_bottom = requested_y2 - source_y2
     if min(pad_left, pad_top, pad_right, pad_bottom) < 0:
         raise AssertionError("ROI padding cannot be negative")
+    if (source_x2 - source_x1) + pad_left + pad_right != width:
+        raise AssertionError("horizontal ROI accounting mismatch")
+    if (source_y2 - source_y1) + pad_top + pad_bottom != height:
+        raise AssertionError("vertical ROI accounting mismatch")
 
     source_area = (source_x2 - source_x1) * (source_y2 - source_y1)
     requested_area = width * height
@@ -166,6 +203,10 @@ def fixed_aspect_roi_geometry(
         raise AssertionError("fixed-aspect ROI does not yield uniform RITnet resize")
 
     return FixedAspectRoi(
+        expanded_x1=float(expanded_x1),
+        expanded_y1=float(expanded_y1),
+        expanded_x2=float(expanded_x2),
+        expanded_y2=float(expanded_y2),
         requested_x1=requested_x1,
         requested_y1=requested_y1,
         requested_x2=requested_x2,
@@ -218,7 +259,7 @@ def crop_fixed_aspect_gray(
             geometry.pad_right,
             borderType=cv2.BORDER_REPLICATE,
         )
-    else:  # Defensive even though geometry creation already validates the mode.
+    else:
         raise ValueError(f"unsupported padding mode: {geometry.padding_mode}")
 
     expected_shape = (geometry.height, geometry.width)
