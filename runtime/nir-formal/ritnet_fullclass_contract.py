@@ -1,8 +1,4 @@
-"""Single canonical schema, naming and frozen QC policy for RITnet full-class evidence.
-
-There is one supported production contract: the complete 640x400 evidence path.
-Older v1.2 artifacts are historical data only and are not an active runner/schema.
-"""
+"""Single canonical schema, naming and frozen QC policy for RITnet full-class evidence."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -11,8 +7,6 @@ FULLCLASS_SCHEMA_VERSION = 2
 FULLCLASS_VERSION = "ritnet-fullclass-v2-native640"
 FULLCLASS_OUTPUT_STEM_VERSION = "v2-native640"
 
-# Internal compatibility aliases used by implementation modules. They all refer
-# to the single canonical contract above; they do not define parallel versions.
 EXTENSION_SCHEMA_VERSION = FULLCLASS_SCHEMA_VERSION
 EXTENSION_VERSION = FULLCLASS_VERSION
 NATIVE_EXTENSION_SCHEMA_VERSION = FULLCLASS_SCHEMA_VERSION
@@ -37,11 +31,10 @@ CLASS_MAPPING = {
     CLASS_PUPIL: "pupil",
 }
 
-# Deterministic sparse QC sampling. These are sampling rules only; they are not
-# scientific validity thresholds and do not define blink/PERCLOS labels.
 QC_STRIDE_FRAMES = 3000
 QC_ANOMALY_LIMIT_PER_REASON_PER_PHASE = 2
-QC_OVERLAY_ALPHA = 0.45
+# Keep class colors visible but let the underlying NIR texture dominate.
+QC_OVERLAY_ALPHA = 0.25
 QC_PALETTE_BGR = {
     CLASS_BACKGROUND: (0, 0, 0),
     CLASS_SCLERA: (255, 0, 0),
@@ -61,7 +54,6 @@ def normalize_subject(value: str) -> str:
 
 
 def fullclass_subject_output_paths(run_dir: Path, subject: str) -> dict[str, Path]:
-    """Canonical complete full-class artifact paths for one subject."""
     prefix = normalize_subject(subject)
     run_dir = Path(run_dir)
     stem = f"{prefix}_ritnet_fullclass_{FULLCLASS_OUTPUT_STEM_VERSION}"
@@ -76,8 +68,6 @@ def fullclass_subject_output_paths(run_dir: Path, subject: str) -> dict[str, Pat
     }
 
 
-# Code-level aliases so implementation files and existing automation resolve to
-# the same canonical output family instead of creating separate production data.
 def subject_output_paths(run_dir: Path, subject: str) -> dict[str, Path]:
     return fullclass_subject_output_paths(run_dir, subject)
 
