@@ -8,12 +8,12 @@ import os
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterator, Mapping
 
 import cv2
 import numpy as np
 
-from ritnet_fullclass_final_runtime import RitnetFullClassFinalRuntime
+from ritnet_fullclass_final_runtime import FIXED_BATCH_SIZE, RitnetFullClassFinalRuntime
 from ritnet_fullclass_io import iter_csv_gz
 from ritnet_fullclass_qc import (
     QC_SELECTION_VERSION,
@@ -32,6 +32,8 @@ from ritnet_fullclass_roi import (
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
 QC_INDEX_SCHEMA_VERSION = 1
+QC_VIDEO_SEEK_GAP_THRESHOLD = 64
+QC_FRAME_GROUP_MAX = 16
 QC_INDEX_FIELDS = (
     "qc_index_schema_version",
     "qc_selection_version",
@@ -132,17 +134,15 @@ def _encode_index(rows: list[dict[str, Any]]) -> bytes:
     return buffer.getvalue().encode("utf-8")
 
 
-def _prepare_eye_overlays(
+def _prepare_eye_rois(
     *,
     frame: np.ndarray,
     eye_rows: Mapping[str, Mapping[str, Any]],
     config: Mapping[str, Any],
-    runtime: RitnetFullClassFinalRuntime,
-) -> dict[str, np.ndarray]:
+) -> list[tuple[str, np.ndarray]]:
     height, width = frame.shape[:2]
     roi_cfg = _roi_config(config)
-    eyes: list[str] = []
-    rois: list[np.ndarray] = []
+    prepared: list[tuple[str, np.ndarray]] = []
     for eye in ("frame_left", "frame_right"):
         row = eye_rows.get(eye)
         if not row or str(row.get("ritnet_status") or "").strip().lower() != "success":
@@ -161,17 +161,93 @@ def _prepare_eye_overlays(
             padding_mode=roi_cfg["padding_mode"],
         )
         _assert_geometry_matches_metric(geometry, row)
-        rois.append(crop_fixed_aspect_gray(frame, geometry))
-        eyes.append(eye)
+        prepared.append((eye, crop_fixed_aspect_gray(frame, geometry)))
+    return prepared
 
-    if not rois:
+
+def _prepare_eye_overlays(
+    *,
+    frame: np.ndarray,
+    eye_rows: Mapping[str, Mapping[str, Any]],
+    config: Mapping[str, Any],
+    runtime: RitnetFullClassFinalRuntime,
+) -> dict[str, np.ndarray]:
+    """Small-call helper retained for tests; production QC batches across frames."""
+    prepared = _prepare_eye_rois(frame=frame, eye_rows=eye_rows, config=config)
+    if not prepared:
         return {}
-    outputs, _timing = runtime.infer_batch(rois)
+    outputs, _timing = runtime.infer_batch([roi for _eye, roi in prepared])
     overlays: dict[str, np.ndarray] = {}
-    for index, eye in enumerate(eyes):
-        _labels_color, overlay = render_qc_images(rois[index], outputs["labels"][index])
+    for index, (eye, roi) in enumerate(prepared):
+        _labels_color, overlay = render_qc_images(roi, outputs["labels"][index])
         overlays[eye] = overlay
     return overlays
+
+
+def _successful_eye_count(rows: Mapping[str, Mapping[str, Any]]) -> int:
+    return sum(
+        str(row.get("ritnet_status") or "").strip().lower() == "success"
+        for row in rows.values()
+    )
+
+
+def _selection_groups(
+    ordered: list[QCSelection],
+    eyes_by_key: Mapping[tuple[str, int, int], Mapping[str, Mapping[str, Any]]],
+) -> Iterator[list[QCSelection]]:
+    """Pack QC frames so one group never needs more than the fixed b16 eye slots."""
+    group: list[QCSelection] = []
+    eye_slots = 0
+    for selection in ordered:
+        needed = _successful_eye_count(eyes_by_key.get(selection.key, {}))
+        if group and (eye_slots + needed > FIXED_BATCH_SIZE or len(group) >= QC_FRAME_GROUP_MAX):
+            yield group
+            group = []
+            eye_slots = 0
+        group.append(selection)
+        eye_slots += needed
+        if eye_slots == FIXED_BATCH_SIZE or len(group) >= QC_FRAME_GROUP_MAX:
+            yield group
+            group = []
+            eye_slots = 0
+    if group:
+        yield group
+
+
+def _read_qc_frame(
+    cap: Any,
+    target_frame: int,
+    current_frame: int | None,
+) -> tuple[np.ndarray | None, int | None]:
+    """Read forward for nearby QC frames; seek only across large/backward gaps."""
+    target_frame = int(target_frame)
+    if (
+        current_frame is None
+        or target_frame < current_frame
+        or target_frame - current_frame > QC_VIDEO_SEEK_GAP_THRESHOLD
+    ):
+        cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+        current_frame = target_frame
+
+    frame: np.ndarray | None = None
+    while current_frame is not None and current_frame <= target_frame:
+        ok, decoded = cap.read()
+        if not ok or decoded is None:
+            frame = None
+            break
+        if current_frame == target_frame:
+            frame = decoded
+        current_frame += 1
+
+    if frame is not None:
+        return frame, current_frame
+
+    # One explicit target retry mirrors the numeric-core failure isolation.
+    cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+    ok, decoded = cap.read()
+    if ok and decoded is not None:
+        return decoded, target_frame + 1
+    return None, None
 
 
 def _index_rows(
@@ -221,9 +297,10 @@ def produce_qc_artifacts(
     """Create bounded composite QC images plus ``qc_index.csv``.
 
     This is a second sparse RITnet pass over selected QC eyes only. YOLO is never
-    rerun: boxes come exclusively from final ``eye_metrics`` provenance. The
-    second pass must reproduce the saved ROI geometry exactly before an overlay
-    is accepted.
+    rerun: boxes come exclusively from final ``eye_metrics`` provenance. QC eyes
+    are packed across frames into the same fixed-b16 RITnet calls used by the
+    production runtime, while every ROI geometry is reproduced and checked
+    against saved provenance before an overlay is accepted.
     """
     final_cfg = config.get("fullclass")
     if not isinstance(final_cfg, Mapping):
@@ -280,81 +357,114 @@ def produce_qc_artifacts(
     encoded_images: list[tuple[QCSelection, Path, bytes, dict[str, Any]]] = []
     image_bytes = 0
     skipped_budget = 0
+    current_frame: int | None = None
     try:
+        # Fixed anchors remain first so they can never be displaced by anomaly
+        # images. Within each tier use absolute frame order instead of phase-name
+        # order, which avoids needless backward seeks through the AVI.
         ordered = sorted(
             selections,
             key=lambda item: (
                 "fixed_anchor" not in item.reasons,
+                item.frame_idx,
                 item.phase,
                 item.phase_segment,
-                item.frame_idx,
             ),
         )
-        for selection in ordered:
-            key = selection.key
-            coverage = coverage_by_key[key]
-            metrics = eyes_by_key.get(key, {})
-            cap.set(cv2.CAP_PROP_POS_FRAMES, selection.frame_idx)
-            ok, frame = cap.read()
-            frame = frame if ok and frame is not None else None
+        for group in _selection_groups(ordered, eyes_by_key):
+            works: list[dict[str, Any]] = []
+            batch_rois: list[np.ndarray] = []
+            batch_targets: list[tuple[int, str, np.ndarray]] = []
 
-            overlays: dict[str, np.ndarray] = {}
-            if frame is not None and any(
-                str(row.get("ritnet_status") or "").strip().lower() == "success"
-                for row in metrics.values()
-            ):
+            for selection in group:
+                key = selection.key
+                coverage = coverage_by_key[key]
+                metrics = eyes_by_key.get(key, {})
+                frame, current_frame = _read_qc_frame(cap, selection.frame_idx, current_frame)
+                work_index = len(works)
+                works.append(
+                    {
+                        "selection": selection,
+                        "coverage": coverage,
+                        "metrics": metrics,
+                        "frame": frame,
+                        "overlays": {},
+                    }
+                )
+                if frame is None:
+                    continue
+                for eye, roi in _prepare_eye_rois(
+                    frame=frame,
+                    eye_rows=metrics,
+                    config=config,
+                ):
+                    batch_targets.append((work_index, eye, roi))
+                    batch_rois.append(roi)
+
+            if batch_rois:
+                if len(batch_rois) > FIXED_BATCH_SIZE:
+                    raise AssertionError(
+                        f"QC selection group exceeded fixed RITnet batch: {len(batch_rois)}"
+                    )
                 if runtime is None:
                     if not model.is_file():
                         raise FileNotFoundError(model)
                     runtime = RitnetFullClassFinalRuntime(model, device=device)
-                overlays = _prepare_eye_overlays(
-                    frame=frame,
-                    eye_rows=metrics,
-                    config=config,
-                    runtime=runtime,
-                )
-
-            composite = render_qc_composite(
-                frame_bgr=frame,
-                selection=selection,
-                coverage_row=coverage,
-                eye_metric_rows=metrics,
-                eye_overlays=overlays,
-                fallback_frame_size=(source_width, source_height),
-            )
-            success, encoded = cv2.imencode(
-                ".png",
-                composite,
-                [cv2.IMWRITE_PNG_COMPRESSION, 6],
-            )
-            if not success:
-                raise RuntimeError(f"failed to encode QC composite: {key}")
-            payload = encoded.tobytes()
-            mandatory = "fixed_anchor" in selection.reasons
-            if image_bytes + len(payload) > budget:
-                if mandatory:
-                    raise RuntimeError(
-                        "mandatory fixed QC images exceed qc_artifact_budget_bytes; "
-                        f"budget={budget}, attempted={image_bytes + len(payload)}"
+                outputs, _timing = runtime.infer_batch(batch_rois)
+                for output_index, (work_index, eye, roi) in enumerate(batch_targets):
+                    _labels_color, overlay = render_qc_images(
+                        roi,
+                        outputs["labels"][output_index],
                     )
-                skipped_budget += 1
-                continue
+                    works[work_index]["overlays"][eye] = overlay
 
-            path = qc_frame_image_path(images_dir, subject, selection)
-            encoded_images.append(
-                (
-                    selection,
-                    path,
-                    payload,
-                    {
-                        "coverage_status": str(coverage.get("coverage_status") or ""),
-                        "source_frame_available": frame is not None,
-                        "left_overlay_available": "frame_left" in overlays,
-                        "right_overlay_available": "frame_right" in overlays,
-                    },
+            for work in works:
+                selection = work["selection"]
+                coverage = work["coverage"]
+                metrics = work["metrics"]
+                frame = work["frame"]
+                overlays = work["overlays"]
+                composite = render_qc_composite(
+                    frame_bgr=frame,
+                    selection=selection,
+                    coverage_row=coverage,
+                    eye_metric_rows=metrics,
+                    eye_overlays=overlays,
+                    fallback_frame_size=(source_width, source_height),
                 )
-            )
-            image_bytes += len(payload)
+                success, encoded = cv2.imencode(
+                    ".png",
+                    composite,
+                    [cv2.IMWRITE_PNG_COMPRESSION, 6],
+                )
+                if not success:
+                    raise RuntimeError(f"failed to encode QC composite: {selection.key}")
+                payload = encoded.tobytes()
+                mandatory = "fixed_anchor" in selection.reasons
+                if image_bytes + len(payload) > budget:
+                    if mandatory:
+                        raise RuntimeError(
+                            "mandatory fixed QC images exceed qc_artifact_budget_bytes; "
+                            f"budget={budget}, attempted={image_bytes + len(payload)}"
+                        )
+                    skipped_budget += 1
+                    continue
+
+                path = qc_frame_image_path(images_dir, subject, selection)
+                encoded_images.append(
+                    (
+                        selection,
+                        path,
+                        payload,
+                        {
+                            "coverage_status": str(coverage.get("coverage_status") or ""),
+                            "source_frame_available": frame is not None,
+                            "left_overlay_available": "frame_left" in overlays,
+                            "right_overlay_available": "frame_right" in overlays,
+                        },
+                    )
+                )
+                image_bytes += len(payload)
     finally:
         cap.release()
 
