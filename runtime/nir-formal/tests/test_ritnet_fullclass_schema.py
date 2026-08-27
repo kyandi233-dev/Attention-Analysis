@@ -8,6 +8,7 @@ from ritnet_fullclass_schema import (
     EYE_METRICS_SCHEMA_VERSION,
     FRAME_COVERAGE_FIELDS,
     FRAME_COVERAGE_SCHEMA_VERSION,
+    SOURCE_YOLO_FIELDS,
     UNCERTAINTY_BASE_FIELDS,
     project_row,
     validate_exact_schema,
@@ -17,8 +18,10 @@ from ritnet_fullclass_schema import (
 def test_final_schemas_are_unique_and_versioned():
     assert len(EYE_METRIC_FIELDS) == len(set(EYE_METRIC_FIELDS))
     assert len(FRAME_COVERAGE_FIELDS) == len(set(FRAME_COVERAGE_FIELDS))
-    assert EYE_METRICS_SCHEMA_VERSION == 4
+    assert EYE_METRICS_SCHEMA_VERSION == 5
     assert FRAME_COVERAGE_SCHEMA_VERSION == 2
+    assert "source_detection_source" in SOURCE_YOLO_FIELDS
+    assert "source_detection_source" in EYE_METRIC_FIELDS
     assert "source_pupil_confidence" not in EYE_METRIC_FIELDS
     assert "pupil_confidence" not in EYE_METRIC_FIELDS
     assert "soft_class_fraction_domain_version" in UNCERTAINTY_BASE_FIELDS
@@ -45,16 +48,18 @@ def test_analysis_domain_qc_facts_are_persisted_by_final_schema():
         assert projected[field] == source[field]
 
 
-def test_project_row_does_not_leak_historical_columns():
+def test_project_row_preserves_explicit_provenance_without_leaking_historical_columns():
     row = {
         "subject": "sub-031",
         "frame_idx": 100,
+        "source_detection_source": "track",
         "pupil_confidence": 0.99,
         "old_pupil_axis_a": 42,
     }
     projected = project_row(row, EYE_METRIC_FIELDS)
     assert set(projected) == set(EYE_METRIC_FIELDS)
     assert projected["subject"] == "sub-031"
+    assert projected["source_detection_source"] == "track"
     assert "pupil_confidence" not in projected
     assert "old_pupil_axis_a" not in projected
 
