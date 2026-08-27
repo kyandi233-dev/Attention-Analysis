@@ -212,7 +212,10 @@ def main() -> int:
             "--run-dir", item["run_dir"],
             "--config", str(config_path),
             "--device", str(args.device),
+            "--source-selection-reason", item["selection_reason"],
         ]
+        for alternative in item["alternatives"]:
+            command.extend(["--source-alternative-run", alternative])
         print(f"[RUN {index}/{len(selections)}] {item['subject']}: {item['run_dir']}")
         print("  " + subprocess.list2cmdline(command))
         completed = subprocess.run(command, cwd=PACKAGE_ROOT)
@@ -223,6 +226,7 @@ def main() -> int:
                 "source_run_id": item["source_run_id"],
                 "source_eyes_sha256": item["source_eyes_sha256"],
                 "selection_reason": item["selection_reason"],
+                "alternatives": item["alternatives"],
                 "returncode": completed.returncode,
                 "status": "completed_or_strictly_skipped" if completed.returncode == 0 else "failed",
             }
