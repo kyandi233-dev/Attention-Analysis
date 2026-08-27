@@ -115,8 +115,6 @@ class RitnetFullClassFinalRuntime:
         if padded_count:
             images.extend([images[-1]] * padded_count)
         tensor = np.stack(images, axis=0).astype(np.float32, copy=False)
-        # Keep the exact upstream arithmetic order while doing it in-place. This
-        # avoids allocating another full fixed-b16 float tensor every batch.
         tensor /= np.float32(255.0)
         tensor -= np.float32(0.5)
         tensor /= np.float32(0.5)
@@ -210,11 +208,14 @@ class RitnetFullClassFinalRuntime:
     ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
         self._validate_prepared_input(tensor, valid_batch_size)
 
-        started = time.perf_counter()
+        total_started = time.perf_counter()
+        session_started = time.perf_counter()
         raw = self.session.run(list(OUTPUT_NAMES), {self.input_name: tensor})
+        session_run_ms = (time.perf_counter() - session_started) * 1000.0
         if len(raw) != len(OUTPUT_NAMES):
             raise RuntimeError(f"RITnet returned {len(raw)} outputs, expected {len(OUTPUT_NAMES)}")
 
+        validation_started = time.perf_counter()
         labels = self._validate_labels_output(raw[0], valid_batch_size)
         class_probability = self._validate_class_probability(raw[1])
         max_probability = self._validate_float_map("max_probability", raw[2], lower=0.0, upper=1.0)
@@ -229,11 +230,15 @@ class RitnetFullClassFinalRuntime:
             "top1_top2_margin": np.ascontiguousarray(margin[real]),
             "entropy": np.ascontiguousarray(entropy[real]),
         }
+        output_validation_ms = (time.perf_counter() - validation_started) * 1000.0
+        gpu_and_transfer_ms = (time.perf_counter() - total_started) * 1000.0
         return outputs, {
             "batch_size": FIXED_BATCH_SIZE,
             "valid_batch_size": int(valid_batch_size),
             "precision": self.precision,
-            "gpu_and_transfer_ms": (time.perf_counter() - started) * 1000.0,
+            "session_run_ms": float(session_run_ms),
+            "output_validation_ms": float(output_validation_ms),
+            "gpu_and_transfer_ms": float(gpu_and_transfer_ms),
         }
 
     def infer_labels_prepared(
@@ -241,24 +246,23 @@ class RitnetFullClassFinalRuntime:
         tensor: np.ndarray,
         valid_batch_size: int,
     ) -> tuple[np.ndarray, dict[str, Any]]:
-        """Run only the hard-label ONNX output for sparse QC rendering.
-
-        Scientific production inference still uses ``infer_prepared`` and the
-        complete five-output contract. This labels-only path avoids transferring
-        four large probability/uncertainty tensors when QC only needs the hard
-        segmentation overlay.
-        """
         self._validate_prepared_input(tensor, valid_batch_size)
-        started = time.perf_counter()
+        total_started = time.perf_counter()
+        session_started = time.perf_counter()
         raw = self.session.run(["labels"], {self.input_name: tensor})
+        session_run_ms = (time.perf_counter() - session_started) * 1000.0
         if len(raw) != 1:
             raise RuntimeError(f"RITnet labels-only inference returned {len(raw)} outputs")
+        validation_started = time.perf_counter()
         labels = self._validate_labels_output(raw[0], valid_batch_size)
+        output_validation_ms = (time.perf_counter() - validation_started) * 1000.0
         return labels, {
             "batch_size": FIXED_BATCH_SIZE,
             "valid_batch_size": int(valid_batch_size),
             "precision": self.precision,
-            "gpu_and_transfer_ms": (time.perf_counter() - started) * 1000.0,
+            "session_run_ms": float(session_run_ms),
+            "output_validation_ms": float(output_validation_ms),
+            "gpu_and_transfer_ms": float((time.perf_counter() - total_started) * 1000.0),
             "output_contract": "labels-only-qc",
         }
 
