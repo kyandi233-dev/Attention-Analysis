@@ -8,6 +8,7 @@ from ritnet_fullclass_schema import (
     EYE_METRICS_SCHEMA_VERSION,
     FRAME_COVERAGE_FIELDS,
     FRAME_COVERAGE_SCHEMA_VERSION,
+    UNCERTAINTY_BASE_FIELDS,
     project_row,
     validate_exact_schema,
 )
@@ -16,10 +17,11 @@ from ritnet_fullclass_schema import (
 def test_final_schemas_are_unique_and_versioned():
     assert len(EYE_METRIC_FIELDS) == len(set(EYE_METRIC_FIELDS))
     assert len(FRAME_COVERAGE_FIELDS) == len(set(FRAME_COVERAGE_FIELDS))
-    assert EYE_METRICS_SCHEMA_VERSION == 3
+    assert EYE_METRICS_SCHEMA_VERSION == 4
     assert FRAME_COVERAGE_SCHEMA_VERSION == 1
     assert "source_pupil_confidence" not in EYE_METRIC_FIELDS
     assert "pupil_confidence" not in EYE_METRIC_FIELDS
+    assert "soft_class_fraction_domain_version" in UNCERTAINTY_BASE_FIELDS
 
 
 def test_analysis_domain_qc_facts_are_persisted_by_final_schema():

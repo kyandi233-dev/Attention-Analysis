@@ -69,15 +69,16 @@ class EvidenceSummaryExportWrapper(torch.nn.Module):
 
 
 class FinalUncertaintyExportWrapper(torch.nn.Module):
-    """Final compact all-class uncertainty interface for the <=1 GiB workflow.
+    """Final all-class probability/uncertainty interface for the <=1 GiB workflow.
 
     RITnet weights and logits are unchanged. The graph adds deterministic
-    post-processing only. Three pixelwise QC maps are returned temporarily to
-    CPU and MUST be reduced immediately; they are not final on-disk artifacts.
+    post-processing only. Four-class pixel probabilities plus three uncertainty
+    maps are returned temporarily to CPU and MUST be reduced immediately; they
+    are not final on-disk artifacts.
 
     Outputs:
       labels: uint8 [B,H,W]
-      soft_class_fraction: float32 [B,4]
+      class_probability: float32 [B,4,H,W]
       max_probability: float32 [B,H,W]
       top1_top2_margin: float32 [B,H,W]
       entropy: float32 [B,H,W]
@@ -103,8 +104,7 @@ class FinalUncertaintyExportWrapper(torch.nn.Module):
         max_probability = top2_probability[:, 0]
         top1_top2_margin = top2_probability[:, 0] - top2_probability[:, 1]
         entropy = -torch.sum(probs * torch.log(torch.clamp(probs, min=1e-12)), dim=1)
-        soft_class_fraction = torch.mean(probs, dim=(2, 3))
-        return labels, soft_class_fraction, max_probability, top1_top2_margin, entropy
+        return labels, probs, max_probability, top1_top2_margin, entropy
 
 
 def parse_batches(text: str) -> list[int]:
@@ -117,7 +117,14 @@ def parse_batches(text: str) -> list[int]:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Export fixed-batch RITnet FP32 ONNX variants")
     parser.add_argument("--weights", type=Path, default=PACKAGE_ROOT / "models" / "ritnet-best_model.pkl")
-    parser.add_argument("--batches", default="8,10,12,14")
+    parser.add_argument(
+        "--batches",
+        default=None,
+        help=(
+            "Comma-separated fixed batch sizes. Default is 16 for --final-uncertainty; "
+            "historical modes retain 8,10,12,14."
+        ),
+    )
     parser.add_argument("--width", type=int, default=640)
     parser.add_argument("--height", type=int, default=400)
     parser.add_argument("--opset", type=int, default=17)
@@ -131,13 +138,15 @@ def parse_args() -> argparse.Namespace:
         "--final-uncertainty",
         action="store_true",
         help=(
-            "Export the final *-uncertainty.onnx interface: labels + soft class fractions + "
-            "temporary max-probability/margin/entropy maps."
+            "Export the final *-uncertainty.onnx interface: labels + transient four-class "
+            "probabilities + max-probability/margin/entropy maps."
         ),
     )
     args = parser.parse_args()
     if args.evidence_summary and args.final_uncertainty:
         parser.error("--evidence-summary and --final-uncertainty are mutually exclusive")
+    if args.batches is None:
+        args.batches = "16" if args.final_uncertainty else "8,10,12,14"
     return args
 
 
@@ -152,7 +161,7 @@ def _export_mode(args: argparse.Namespace) -> tuple[torch.nn.Module, list[str], 
             FinalUncertaintyExportWrapper(model).eval(),
             [
                 "labels",
-                "soft_class_fraction",
+                "class_probability",
                 "max_probability",
                 "top1_top2_margin",
                 "entropy",
@@ -245,8 +254,9 @@ def main() -> int:
     print(f"Exported {len(outputs)} {mode} RITnet variant(s) from unchanged weights: {weights}")
     if args.final_uncertainty:
         print(
-            "Final uncertainty maps are transient runtime outputs only; production code must reduce "
-            "them to compact per-eye summaries and must not persist them per frame."
+            "Final four-class probability and uncertainty maps are transient runtime outputs only; "
+            "production code must reduce them to compact source-valid per-eye summaries and must "
+            "not persist them per frame."
         )
     return 0
 

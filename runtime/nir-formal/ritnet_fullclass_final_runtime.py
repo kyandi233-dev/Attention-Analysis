@@ -1,9 +1,9 @@
 """Final fixed-b16 RITnet DirectML runtime for compact full-class analysis.
 
 The ONNX graph preserves the frozen RITnet network/weights and exposes five
-project-adapter outputs needed by the <=1 GiB workflow. Pixelwise uncertainty
-maps are transient: callers must summarize and release them rather than persist
-one map per eye.
+project-adapter outputs needed by the <=1 GiB workflow. Pixelwise class
+probabilities and uncertainty maps are transient: callers must summarize and
+release them rather than persist one map per eye.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ INPUT_WIDTH = 640
 INPUT_HEIGHT = 400
 OUTPUT_NAMES = (
     "labels",
-    "soft_class_fraction",
+    "class_probability",
     "max_probability",
     "top1_top2_margin",
     "entropy",
@@ -68,7 +68,7 @@ class RitnetFullClassFinalRuntime:
         pixel_shape = (FIXED_BATCH_SIZE, INPUT_HEIGHT, INPUT_WIDTH)
         expected = (
             ("tensor(uint8)", pixel_shape),
-            ("tensor(float)", (FIXED_BATCH_SIZE, 4)),
+            ("tensor(float)", (FIXED_BATCH_SIZE, 4, INPUT_HEIGHT, INPUT_WIDTH)),
             ("tensor(float)", pixel_shape),
             ("tensor(float)", pixel_shape),
             ("tensor(float)", pixel_shape),
@@ -144,6 +144,33 @@ class RitnetFullClassFinalRuntime:
                 )
         return array
 
+    @staticmethod
+    def _validate_class_probability(value: np.ndarray) -> np.ndarray:
+        array = np.asarray(value)
+        expected = (FIXED_BATCH_SIZE, 4, INPUT_HEIGHT, INPUT_WIDTH)
+        if array.shape != expected or array.dtype != np.float32:
+            raise RuntimeError(
+                f"RITnet class_probability output must be {expected} float32, got "
+                f"{array.shape} {array.dtype}"
+            )
+        if not np.isfinite(array).all():
+            raise RuntimeError("RITnet class_probability contains non-finite values")
+        if array.size:
+            minimum = float(array.min())
+            maximum = float(array.max())
+            if minimum < -1e-6 or maximum > 1.0 + 1e-6:
+                raise RuntimeError(
+                    f"RITnet class_probability outside [0,1]: {minimum}..{maximum}"
+                )
+        class_mass = array.sum(axis=1)
+        if not np.allclose(class_mass, 1.0, rtol=0.0, atol=1e-5):
+            deviation = float(np.max(np.abs(class_mass - 1.0)))
+            raise RuntimeError(
+                "RITnet class_probability per-pixel class mass does not sum to 1; "
+                f"max_abs_deviation={deviation}"
+            )
+        return array
+
     def infer_prepared(
         self,
         tensor: np.ndarray,
@@ -173,20 +200,7 @@ class RitnetFullClassFinalRuntime:
         if not np.isin(np.unique(labels[:valid_batch_size]), (0, 1, 2, 3)).all():
             raise RuntimeError("RITnet labels contain values outside {0,1,2,3}")
 
-        soft = np.asarray(raw[1])
-        if soft.shape != (FIXED_BATCH_SIZE, 4) or soft.dtype != np.float32:
-            raise RuntimeError(
-                f"RITnet soft_class_fraction must be {(FIXED_BATCH_SIZE, 4)} float32, "
-                f"got {soft.shape} {soft.dtype}"
-            )
-        soft_real = soft[:valid_batch_size]
-        if not np.isfinite(soft_real).all():
-            raise RuntimeError("RITnet soft_class_fraction contains non-finite values")
-        if soft_real.size and (float(soft_real.min()) < -1e-6 or float(soft_real.max()) > 1.0 + 1e-6):
-            raise RuntimeError("RITnet soft_class_fraction outside [0,1]")
-        if not np.allclose(soft_real.sum(axis=1), 1.0, rtol=0.0, atol=1e-5):
-            raise RuntimeError("RITnet soft_class_fraction rows do not sum to 1")
-
+        class_probability = self._validate_class_probability(raw[1])
         max_probability = self._validate_float_map("max_probability", raw[2], lower=0.0, upper=1.0)
         margin = self._validate_float_map("top1_top2_margin", raw[3], lower=0.0, upper=1.0)
         entropy = self._validate_float_map("entropy", raw[4], lower=0.0, upper=math.log(4.0))
@@ -194,7 +208,7 @@ class RitnetFullClassFinalRuntime:
         real = slice(0, int(valid_batch_size))
         outputs = {
             "labels": np.ascontiguousarray(labels[real]),
-            "soft_class_fraction": np.ascontiguousarray(soft[real]),
+            "class_probability": np.ascontiguousarray(class_probability[real]),
             "max_probability": np.ascontiguousarray(max_probability[real]),
             "top1_top2_margin": np.ascontiguousarray(margin[real]),
             "entropy": np.ascontiguousarray(entropy[real]),

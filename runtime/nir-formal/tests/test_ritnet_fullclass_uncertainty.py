@@ -6,6 +6,7 @@ import pytest
 from ritnet_fullclass_uncertainty import (
     LABEL_HEIGHT,
     LABEL_WIDTH,
+    SOFT_CLASS_FRACTION_DOMAIN_VERSION,
     boundary_band_mask,
     distribution_summary,
     summarize_uncertainty,
@@ -21,9 +22,13 @@ def base_inputs():
     maxprob = np.full(labels.shape, 0.90, dtype=np.float32)
     margin = np.full(labels.shape, 0.70, dtype=np.float32)
     entropy = np.full(labels.shape, 0.30, dtype=np.float32)
-    soft = np.asarray([0.55, 0.25, 0.15, 0.05], dtype=np.float32)
+    probability = np.zeros((4, LABEL_HEIGHT, LABEL_WIDTH), dtype=np.float32)
+    probability[0] = 0.55
+    probability[1] = 0.25
+    probability[2] = 0.15
+    probability[3] = 0.05
     valid = np.ones(labels.shape, dtype=bool)
-    return labels, soft, maxprob, margin, entropy, valid
+    return labels, probability, maxprob, margin, entropy, valid
 
 
 def test_distribution_summary_uses_symmetric_tail_quartile_grid():
@@ -41,7 +46,7 @@ def test_boundary_band_contains_class_transitions_but_not_far_interior():
     assert boundary[100, 200]
     assert boundary[170, 300]
     assert not boundary[50, 50]
-    assert not boundary[200, 320]  # pupil interior, farther than 2 px from boundary
+    assert not boundary[200, 320]
 
 
 def test_boundary_band_does_not_create_transition_from_padding_neighbor():
@@ -57,8 +62,8 @@ def test_boundary_band_does_not_create_transition_from_padding_neighbor():
     assert not boundary[~valid].any()
 
 
-def test_uncertainty_summary_preserves_soft_fractions_and_domains():
-    labels, soft, maxprob, margin, entropy, valid = base_inputs()
+def test_uncertainty_summary_uses_source_valid_soft_fractions_and_domains():
+    labels, probability, maxprob, margin, entropy, valid = base_inputs()
     maxprob[170:230, 280:360] = 0.55
     margin[170:230, 280:360] = 0.10
     entropy[170:230, 280:360] = 1.10
@@ -66,7 +71,7 @@ def test_uncertainty_summary_preserves_soft_fractions_and_domains():
     result = summarize_uncertainty(
         labels=labels,
         valid_source_mask=valid,
-        soft_class_fraction=soft,
+        class_probability=probability,
         max_probability=maxprob,
         top1_top2_margin=margin,
         entropy=entropy,
@@ -74,7 +79,11 @@ def test_uncertainty_summary_preserves_soft_fractions_and_domains():
         low_max_probability_threshold=0.60,
     )
 
-    assert result["soft_background_fraction"] == pytest.approx(float(soft[0]))
+    assert result["soft_class_fraction_domain_version"] == SOFT_CLASS_FRACTION_DOMAIN_VERSION
+    assert result["soft_background_fraction"] == pytest.approx(0.55)
+    assert result["soft_sclera_fraction"] == pytest.approx(0.25)
+    assert result["soft_iris_fraction"] == pytest.approx(0.15)
+    assert result["soft_pupil_fraction"] == pytest.approx(0.05)
     assert sum(result[f"soft_{name}_fraction"] for name in ("background", "sclera", "iris", "pupil")) == pytest.approx(1.0)
     assert result["uncertainty_ocular_pixel_count"] > 0
     assert result["uncertainty_boundary_pixel_count"] > 0
@@ -83,13 +92,13 @@ def test_uncertainty_summary_preserves_soft_fractions_and_domains():
     assert 0.0 <= result["ocular_low_max_probability_fraction"] <= 1.0
 
 
-def test_uncertainty_domains_exclude_padding_from_values_and_counts():
-    labels, soft, maxprob, margin, entropy, valid = base_inputs()
+def test_padding_probability_cannot_change_soft_fractions_or_uncertainty_domains():
+    labels, probability, maxprob, margin, entropy, valid = base_inputs()
     valid[:, :80] = False
 
-    # Deliberately extreme uncertainty and an artificial pupil prediction in
-    # padding. None of these pixels may alter source-backed uncertainty domains.
     labels[:, :80] = 3
+    probability[:, :, :80] = 0.0
+    probability[3, :, :80] = 1.0
     maxprob[:, :80] = 0.01
     margin[:, :80] = 0.0
     entropy[:, :80] = 1.30
@@ -97,7 +106,7 @@ def test_uncertainty_domains_exclude_padding_from_values_and_counts():
     result = summarize_uncertainty(
         labels=labels,
         valid_source_mask=valid,
-        soft_class_fraction=soft,
+        class_probability=probability,
         max_probability=maxprob,
         top1_top2_margin=margin,
         entropy=entropy,
@@ -105,6 +114,10 @@ def test_uncertainty_domains_exclude_padding_from_values_and_counts():
         low_max_probability_threshold=0.60,
     )
 
+    assert result["soft_background_fraction"] == pytest.approx(0.55)
+    assert result["soft_sclera_fraction"] == pytest.approx(0.25)
+    assert result["soft_iris_fraction"] == pytest.approx(0.15)
+    assert result["soft_pupil_fraction"] == pytest.approx(0.05)
     assert result["whole_max_probability_mean"] == pytest.approx(0.90)
     assert result["whole_top1_top2_margin_mean"] == pytest.approx(0.70)
     assert result["whole_entropy_mean"] == pytest.approx(0.30)
@@ -113,11 +126,11 @@ def test_uncertainty_domains_exclude_padding_from_values_and_counts():
 
 
 def test_uncertainty_threshold_can_remain_unfrozen():
-    labels, soft, maxprob, margin, entropy, valid = base_inputs()
+    labels, probability, maxprob, margin, entropy, valid = base_inputs()
     result = summarize_uncertainty(
         labels=labels,
         valid_source_mask=valid,
-        soft_class_fraction=soft,
+        class_probability=probability,
         max_probability=maxprob,
         top1_top2_margin=margin,
         entropy=entropy,
@@ -127,13 +140,15 @@ def test_uncertainty_threshold_can_remain_unfrozen():
     assert result["whole_low_max_probability_fraction"] is None
 
 
-def test_soft_fraction_contract_rejects_bad_sum():
-    labels, _, maxprob, margin, entropy, valid = base_inputs()
-    with pytest.raises(ValueError, match="sum to 1"):
+def test_class_probability_contract_rejects_bad_per_pixel_mass():
+    labels, probability, maxprob, margin, entropy, valid = base_inputs()
+    bad = probability.copy()
+    bad[:, 0, 0] = 0.2
+    with pytest.raises(ValueError, match="per-pixel class mass"):
         summarize_uncertainty(
             labels=labels,
             valid_source_mask=valid,
-            soft_class_fraction=np.asarray([0.2, 0.2, 0.2, 0.2], dtype=np.float32),
+            class_probability=bad,
             max_probability=maxprob,
             top1_top2_margin=margin,
             entropy=entropy,
@@ -141,14 +156,14 @@ def test_soft_fraction_contract_rejects_bad_sum():
 
 
 def test_uncertainty_maps_reject_nonfinite_or_out_of_range():
-    labels, soft, maxprob, margin, entropy, valid = base_inputs()
+    labels, probability, maxprob, margin, entropy, valid = base_inputs()
     bad = maxprob.copy()
     bad[0, 0] = np.nan
     with pytest.raises(ValueError, match="non-finite"):
         summarize_uncertainty(
             labels=labels,
             valid_source_mask=valid,
-            soft_class_fraction=soft,
+            class_probability=probability,
             max_probability=bad,
             top1_top2_margin=margin,
             entropy=entropy,
@@ -160,7 +175,7 @@ def test_uncertainty_maps_reject_nonfinite_or_out_of_range():
         summarize_uncertainty(
             labels=labels,
             valid_source_mask=valid,
-            soft_class_fraction=soft,
+            class_probability=probability,
             max_probability=maxprob,
             top1_top2_margin=bad_margin,
             entropy=entropy,
@@ -168,12 +183,12 @@ def test_uncertainty_maps_reject_nonfinite_or_out_of_range():
 
 
 def test_uncertainty_requires_boolean_source_mask_with_real_pixels():
-    labels, soft, maxprob, margin, entropy, _ = base_inputs()
+    labels, probability, maxprob, margin, entropy, _ = base_inputs()
     with pytest.raises(TypeError, match="must be bool"):
         summarize_uncertainty(
             labels=labels,
             valid_source_mask=np.ones(labels.shape, dtype=np.uint8),
-            soft_class_fraction=soft,
+            class_probability=probability,
             max_probability=maxprob,
             top1_top2_margin=margin,
             entropy=entropy,
@@ -183,7 +198,7 @@ def test_uncertainty_requires_boolean_source_mask_with_real_pixels():
         summarize_uncertainty(
             labels=labels,
             valid_source_mask=np.zeros(labels.shape, dtype=bool),
-            soft_class_fraction=soft,
+            class_probability=probability,
             max_probability=maxprob,
             top1_top2_margin=margin,
             entropy=entropy,

@@ -43,6 +43,15 @@ def synthetic_labels():
     return labels
 
 
+def class_probability(count):
+    probability = np.zeros((count, 4, 400, 640), dtype=np.float32)
+    probability[:, 0] = 0.5
+    probability[:, 1] = 0.3
+    probability[:, 2] = 0.15
+    probability[:, 3] = 0.05
+    return probability
+
+
 class FakeRuntime:
     def __init__(self, labels):
         self.labels = np.asarray(labels, dtype=np.uint8)
@@ -51,9 +60,7 @@ class FakeRuntime:
         count = len(rois)
         return {
             "labels": np.stack([self.labels] * count),
-            "soft_class_fraction": np.tile(
-                np.asarray([[0.5, 0.3, 0.15, 0.05]], dtype=np.float32), (count, 1)
-            ),
+            "class_probability": class_probability(count),
             "max_probability": np.full((count, 400, 640), 0.9, dtype=np.float32),
             "top1_top2_margin": np.full((count, 400, 640), 0.7, dtype=np.float32),
             "entropy": np.full((count, 400, 640), 0.3, dtype=np.float32),
@@ -63,6 +70,8 @@ class FakeRuntime:
 class PaddingUncertaintyRuntime(FakeRuntime):
     def infer_batch(self, rois):
         outputs, timing = super().infer_batch(rois)
+        outputs["class_probability"][:, :, :, :80] = 0.0
+        outputs["class_probability"][:, 3, :, :80] = 1.0
         outputs["max_probability"][:, :, :80] = 0.01
         outputs["top1_top2_margin"][:, :, :80] = 0.0
         outputs["entropy"][:, :, :80] = 1.30
@@ -173,10 +182,10 @@ def test_complete_batch_maps_success_outputs_and_keeps_failed_row_in_order():
     assert completed[2][1]["ritnet_status"] == "success"
     assert completed[0][1]["hard_pupil_pixels"] > 0
     assert completed[0][1]["ocular_max_probability_mean"] == pytest.approx(0.9)
-    assert completed[0][1]["soft_pupil_fraction"] == np.float32(0.05)
+    assert completed[0][1]["soft_pupil_fraction"] == pytest.approx(0.05)
 
 
-def test_complete_batch_excludes_padding_from_hard_metrics_and_uncertainty_but_retains_padding_qc():
+def test_complete_batch_excludes_padding_from_hard_soft_and_uncertainty_metrics_but_retains_padding_qc():
     labels = synthetic_labels()
     source_pupil_pixels = int((labels == 3).sum())
     labels[40:60, 10:30] = 3
@@ -205,6 +214,10 @@ def test_complete_batch_excludes_padding_from_hard_metrics_and_uncertainty_but_r
     assert row["pupil_predicted_in_padding_pixels"] == 400
     assert row["analysis_valid_pixel_count"] == int(valid.sum())
     assert row["analysis_valid_pixel_fraction"] == pytest.approx(float(valid.mean()))
+    assert row["soft_background_fraction"] == pytest.approx(0.50)
+    assert row["soft_sclera_fraction"] == pytest.approx(0.30)
+    assert row["soft_iris_fraction"] == pytest.approx(0.15)
+    assert row["soft_pupil_fraction"] == pytest.approx(0.05)
     assert row["whole_max_probability_mean"] == pytest.approx(0.90)
     assert row["whole_top1_top2_margin_mean"] == pytest.approx(0.70)
     assert row["whole_entropy_mean"] == pytest.approx(0.30)

@@ -1,9 +1,9 @@
 """Compact online uncertainty summaries for final RITnet full-class analysis.
 
-Pixelwise uncertainty maps exist only for the current inference batch. This
-module reduces them to small, versioned per-eye records and does not persist the
-maps. The hard segmentation remains primary; uncertainty summaries are QC facts,
-not calibrated probabilities of correctness.
+Pixelwise four-class probabilities and uncertainty maps exist only for the
+current inference batch. This module reduces them to small, versioned per-eye
+records and does not persist the maps. The hard segmentation remains primary;
+uncertainty summaries are QC facts, not calibrated probabilities of correctness.
 """
 from __future__ import annotations
 
@@ -18,8 +18,9 @@ LABEL_WIDTH = 640
 CLASS_IDS = (0, 1, 2, 3)
 STAT_PERCENTILES = (5, 25, 50, 75, 95)
 STAT_SUFFIXES = ("mean", "p05", "p25", "p50", "p75", "p95")
-UNCERTAINTY_ALGORITHM_VERSION = "allclass-online-summary-v2-source-valid"
-UNCERTAINTY_DOMAIN_VERSION = "source-valid-whole-ocular-boundary-v2"
+UNCERTAINTY_ALGORITHM_VERSION = "allclass-online-summary-v3-source-valid-softclass"
+UNCERTAINTY_DOMAIN_VERSION = "source-valid-allclass-whole-ocular-boundary-v3"
+SOFT_CLASS_FRACTION_DOMAIN_VERSION = "source-valid-class-probability-mean-v1"
 DEFAULT_BOUNDARY_BAND_PX = 5
 
 
@@ -62,12 +63,35 @@ def _validate_map(name: str, values: np.ndarray, *, lower: float, upper: float) 
     return np.asarray(array, dtype=np.float32)
 
 
+def _validate_class_probability(class_probability: np.ndarray) -> np.ndarray:
+    array = np.asarray(class_probability)
+    expected = (4, LABEL_HEIGHT, LABEL_WIDTH)
+    if array.shape != expected:
+        raise ValueError(f"class_probability shape mismatch: expected={expected}, got={array.shape}")
+    if not np.issubdtype(array.dtype, np.floating):
+        raise TypeError(f"class_probability must be floating point, got {array.dtype}")
+    if not np.isfinite(array).all():
+        raise ValueError("class_probability contains non-finite values")
+    minimum = float(array.min())
+    maximum = float(array.max())
+    if minimum < -1e-6 or maximum > 1.0 + 1e-6:
+        raise ValueError(f"class_probability outside [0,1]: {minimum}..{maximum}")
+    mass = array.sum(axis=0)
+    if not np.allclose(mass, 1.0, rtol=0.0, atol=1e-5):
+        deviation = float(np.max(np.abs(mass - 1.0)))
+        raise ValueError(
+            "class_probability per-pixel class mass must sum to 1; "
+            f"max_abs_deviation={deviation}"
+        )
+    return np.asarray(array, dtype=np.float32)
+
+
 def boundary_band_mask(
     labels: np.ndarray,
     band_px: int = DEFAULT_BOUNDARY_BAND_PX,
     valid_source_mask: np.ndarray | None = None,
 ) -> np.ndarray:
-    """Return a class-boundary band without letting padding create boundaries.
+    """Return a class-boundary band without letting synthetic padding create boundaries.
 
     When a source-valid mask is supplied, a class transition counts as a real
     segmentation boundary only if both adjacent pixels are backed by the AVI.
@@ -117,33 +141,34 @@ def summarize_uncertainty(
     *,
     labels: np.ndarray,
     valid_source_mask: np.ndarray,
-    soft_class_fraction: np.ndarray,
+    class_probability: np.ndarray,
     max_probability: np.ndarray,
     top1_top2_margin: np.ndarray,
     entropy: np.ndarray,
     boundary_band_px: int = DEFAULT_BOUNDARY_BAND_PX,
     low_max_probability_threshold: float | None = None,
 ) -> dict[str, Any]:
-    """Reduce one eye's temporary uncertainty maps to compact scalar evidence.
+    """Reduce one eye's temporary probability/uncertainty maps to scalar evidence.
 
-    Whole/ocular/boundary uncertainty domains are restricted to source-backed
-    AVI pixels. ``soft_class_fraction`` is still the upstream ONNX aggregate and
-    is intentionally handled separately by the later soft-fraction repair; this
-    function does not relabel that aggregate as source-valid.
+    The four soft class fractions and all whole/ocular/boundary uncertainty
+    summaries are computed only from source-backed AVI pixels. Replicate padding
+    may influence the neural network context, but its pixels never enter these
+    final numeric summaries.
     """
     labels = _validate_labels(labels)
     valid = _validate_valid_source_mask(valid_source_mask)
-    soft = np.asarray(soft_class_fraction, dtype=np.float64)
-    if soft.shape != (4,) or not np.isfinite(soft).all():
-        raise ValueError(f"soft_class_fraction must be four finite values, got {soft}")
-    if float(soft.min()) < -1e-6 or float(soft.max()) > 1.0 + 1e-6:
-        raise ValueError(f"soft_class_fraction outside [0,1]: {soft}")
-    if not np.isclose(float(soft.sum()), 1.0, rtol=0.0, atol=1e-5):
-        raise ValueError(f"soft_class_fraction must sum to 1, got {soft.sum()}")
-
+    probabilities = _validate_class_probability(class_probability)
     max_probability = _validate_map("max_probability", max_probability, lower=0.0, upper=1.0)
     top1_top2_margin = _validate_map("top1_top2_margin", top1_top2_margin, lower=0.0, upper=1.0)
     entropy = _validate_map("entropy", entropy, lower=0.0, upper=log(4.0))
+
+    valid_count = int(valid.sum())
+    soft = np.asarray(
+        [float(np.mean(probabilities[class_id][valid])) for class_id in CLASS_IDS],
+        dtype=np.float64,
+    )
+    if not np.isclose(float(soft.sum()), 1.0, rtol=0.0, atol=1e-5):
+        raise AssertionError(f"source-valid soft class fractions do not sum to 1: {soft.sum()}")
 
     domains = {
         "whole": valid,
@@ -163,6 +188,7 @@ def summarize_uncertainty(
     result: dict[str, Any] = {
         "uncertainty_algorithm_version": UNCERTAINTY_ALGORITHM_VERSION,
         "uncertainty_domain_version": UNCERTAINTY_DOMAIN_VERSION,
+        "soft_class_fraction_domain_version": SOFT_CLASS_FRACTION_DOMAIN_VERSION,
         "uncertainty_boundary_band_px": int(boundary_band_px),
         "soft_background_fraction": float(soft[0]),
         "soft_sclera_fraction": float(soft[1]),
@@ -171,6 +197,9 @@ def summarize_uncertainty(
         "uncertainty_ocular_pixel_count": int(domains["ocular"].sum()),
         "uncertainty_boundary_pixel_count": int(domains["boundary"].sum()),
     }
+    if valid_count <= 0:
+        raise AssertionError("validated source domain unexpectedly has no pixels")
+
     for domain_name, mask in domains.items():
         for metric_name, values in metrics.items():
             summary = distribution_summary(values, mask)

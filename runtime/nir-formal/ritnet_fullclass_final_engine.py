@@ -40,6 +40,7 @@ from ritnet_fullclass_schema import (
 from ritnet_fullclass_source import SourceFormalContext, load_source_context
 from ritnet_fullclass_temporal import TEMPORAL_QC_VERSION, iter_temporal_facts
 from ritnet_fullclass_uncertainty import (
+    SOFT_CLASS_FRACTION_DOMAIN_VERSION,
     UNCERTAINTY_ALGORITHM_VERSION,
     UNCERTAINTY_DOMAIN_VERSION,
     summarize_uncertainty,
@@ -49,7 +50,7 @@ from ritnet_label_store import sha256_file
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
-CORE_VERSION = "fullclass-final-core-v2-valid-source-hard-domain"
+CORE_VERSION = "fullclass-final-core-v3-source-valid-allclass-domain"
 VIDEO_SEEK_GAP_THRESHOLD = 64
 
 
@@ -306,7 +307,7 @@ def _complete_batch(
             uncertainty = summarize_uncertainty(
                 labels=labels,
                 valid_source_mask=valid_source_mask,
-                soft_class_fraction=outputs["soft_class_fraction"][output_index],
+                class_probability=outputs["class_probability"][output_index],
                 max_probability=outputs["max_probability"][output_index],
                 top1_top2_margin=outputs["top1_top2_margin"][output_index],
                 entropy=outputs["entropy"][output_index],
@@ -354,6 +355,7 @@ def _work_identity(
         "roi_contract": dict(roi_cfg),
         "uncertainty_algorithm_version": UNCERTAINTY_ALGORITHM_VERSION,
         "uncertainty_domain_version": UNCERTAINTY_DOMAIN_VERSION,
+        "soft_class_fraction_domain_version": SOFT_CLASS_FRACTION_DOMAIN_VERSION,
         "temporal_qc_version": TEMPORAL_QC_VERSION,
         "eye_metrics_schema_version": EYE_METRICS_SCHEMA_VERSION,
         "qc_boundary_band_px": int(full_cfg.get("qc_boundary_band_px", 5)),
