@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
+import subprocess
 from dataclasses import dataclass
 from math import log
 from pathlib import Path
@@ -60,6 +62,31 @@ PIXEL_EVIDENCE_KEYS = frozenset(
         "reasons",
     }
 )
+# A branch name identifies a ref/worktree state, not the code bytes that
+# produced an output.  Keep it in the manifest for provenance, while the
+# immutable commit remains an equivalence requirement.
+PROVENANCE_IDENTITY_KEYS = frozenset({"git_commit", "git_branch"})
+# These modules determine source selection/normalization, ROI construction,
+# inference, numeric metrics, temporal facts, schemas, and result serialization.
+# Validator, launcher, QC-rendering, tests, and documentation are deliberately
+# outside this set: their changes do not alter the numeric full-class result.
+RESULT_AFFECTING_RELATIVE_FILES = (
+    "runtime/nir-formal/formal_completion.py",
+    "runtime/nir-formal/ritnet_fullclass_contract.py",
+    "runtime/nir-formal/ritnet_fullclass_coverage.py",
+    "runtime/nir-formal/ritnet_fullclass_final_engine.py",
+    "runtime/nir-formal/ritnet_fullclass_final_runtime.py",
+    "runtime/nir-formal/ritnet_fullclass_io.py",
+    "runtime/nir-formal/ritnet_fullclass_metric_adapter.py",
+    "runtime/nir-formal/ritnet_fullclass_roi.py",
+    "runtime/nir-formal/ritnet_fullclass_schema.py",
+    "runtime/nir-formal/ritnet_fullclass_source.py",
+    "runtime/nir-formal/ritnet_fullclass_temporal.py",
+    "runtime/nir-formal/ritnet_fullclass_uncertainty.py",
+    "runtime/nir-formal/ritnet_fullclass_workstore.py",
+    "runtime/nir-formal/ritnet_label_store.py",
+)
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 @dataclass(frozen=True)
@@ -67,6 +94,88 @@ class FinalCompletionValidation:
     valid: bool
     reason: str
     completion: dict[str, Any] | None = None
+
+
+def _sha256_bytes(payload: bytes) -> str:
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _result_source_hash(payload: bytes) -> str:
+    """Hash source content independent of Git's Windows CRLF checkout filter."""
+    return _sha256_bytes(payload.replace(b"\r\n", b"\n"))
+
+
+def _result_code_hashes_from_worktree() -> dict[str, str]:
+    hashes: dict[str, str] = {}
+    for relative in RESULT_AFFECTING_RELATIVE_FILES:
+        path = REPO_ROOT / relative
+        if not path.is_file():
+            raise FileNotFoundError(f"result-affecting source is missing: {path}")
+        hashes[relative] = _result_source_hash(path.read_bytes())
+    return hashes
+
+
+def _result_code_hashes_at_commit(commit: str) -> dict[str, str]:
+    if len(str(commit)) != 40:
+        raise ValueError(f"invalid recorded git commit for result identity: {commit!r}")
+    hashes: dict[str, str] = {}
+    for relative in RESULT_AFFECTING_RELATIVE_FILES:
+        try:
+            payload = subprocess.check_output(
+                ["git", "show", f"{commit}:{relative}"],
+                cwd=REPO_ROOT,
+                stderr=subprocess.DEVNULL,
+            )
+        except subprocess.CalledProcessError as exc:
+            raise ValueError(
+                f"cannot read result-affecting source {relative} at recorded commit {commit}"
+            ) from exc
+        hashes[relative] = _result_source_hash(payload)
+    return hashes
+
+
+def _scientific_identity(
+    work_identity: Mapping[str, Any],
+    *,
+    result_code_hashes: Mapping[str, str],
+) -> dict[str, Any]:
+    values = {
+        key: value
+        for key, value in dict(work_identity).items()
+        if key not in PROVENANCE_IDENTITY_KEYS
+    }
+    files = dict(result_code_hashes)
+    values["result_code_files_sha256"] = files
+    values["result_code_sha256"] = _sha256_bytes(
+        json.dumps(files, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    )
+    return values
+
+
+def _provenance_identity(work_identity: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key, value in dict(work_identity).items()
+        if key in PROVENANCE_IDENTITY_KEYS
+    }
+
+
+def _recorded_scientific_identity(
+    manifest: Mapping[str, Any],
+    work_identity: Mapping[str, Any],
+) -> dict[str, Any]:
+    recorded = manifest.get("scientific_identity")
+    if recorded is not None:
+        if not isinstance(recorded, dict):
+            raise ValueError("manifest scientific_identity must be an object")
+        return dict(recorded)
+    # Legacy manifests predate the two-layer identity. Reconstruct their
+    # result-code fingerprint from the immutable recorded commit, without
+    # changing the historical manifest or completion marker.
+    return _scientific_identity(
+        work_identity,
+        result_code_hashes=_result_code_hashes_at_commit(str(work_identity.get("git_commit") or "")),
+    )
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -276,13 +385,19 @@ def build_manifest(
         relative: _artifact_record(subject_dir, relative)
         for relative in REQUIRED_DATA_ARTIFACTS
     }
+    work_identity = dict(core.work_identity)
     return {
         "schema_version": FINAL_MANIFEST_SCHEMA_VERSION,
         "subject": core.subject,
         "source_identity": dict(core.source_context.source_identity),
         "source_video_resolution": dict(core.source_context.video_resolution),
         "source_selection": _normalize_source_selection(core, source_selection),
-        "work_identity": dict(core.work_identity),
+        "work_identity": work_identity,
+        "scientific_identity": _scientific_identity(
+            work_identity,
+            result_code_hashes=_result_code_hashes_from_worktree(),
+        ),
+        "provenance_identity": _provenance_identity(work_identity),
         "artifacts": artifacts,
         "qc": {
             "selected_count": qc.selected_count,
@@ -340,8 +455,14 @@ def validate_final_completion(
         work_identity = manifest.get("work_identity")
         if not isinstance(work_identity, dict):
             raise ValueError("manifest work_identity must be an object")
-        if expected_work_identity is not None and work_identity != dict(expected_work_identity):
-            raise ValueError("manifest work_identity does not match requested run identity")
+        if expected_work_identity is not None:
+            recorded_scientific = _recorded_scientific_identity(manifest, work_identity)
+            expected_scientific = _scientific_identity(
+                expected_work_identity,
+                result_code_hashes=_result_code_hashes_from_worktree(),
+            )
+            if recorded_scientific != expected_scientific:
+                raise ValueError("manifest scientific_identity does not match requested run identity")
         source_selection = manifest.get("source_selection")
         if not isinstance(source_selection, dict):
             raise ValueError("manifest source_selection must be an object")
