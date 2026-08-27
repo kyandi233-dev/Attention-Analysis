@@ -14,6 +14,28 @@ from typing import Any, Iterable, Iterator, Mapping
 
 
 WORKSTORE_SCHEMA_VERSION = 1
+V7_CORE_VERSION = "fullclass-final-core-v7-pupil-only-lean-schema"
+V8_CORE_VERSION = "fullclass-final-core-v8-interface-safe-plain-csv"
+RESUME_COMPATIBLE_STORED_CORE_VERSIONS = frozenset({V7_CORE_VERSION, V8_CORE_VERSION})
+SCIENTIFIC_IDENTITY_KEYS = (
+    "subject",
+    "source_identity",
+    "ritnet_model_sha256",
+    "ritnet_external_data_sha256",
+    "ritnet_input",
+    "ritnet_batch_size",
+    "ritnet_precision",
+    "class_mapping",
+    "roi_algorithm_version",
+    "valid_source_mask_version",
+    "roi_contract",
+    "uncertainty_algorithm_version",
+    "uncertainty_domain_version",
+    "soft_class_fraction_domain_version",
+    "temporal_qc_version",
+    "eye_metrics_schema_version",
+    "frame_coverage_schema_version",
+)
 
 
 def canonical_json(value: Any) -> str:
@@ -31,6 +53,28 @@ def _key_from_row(row: Mapping[str, Any]) -> tuple[str, int, int, str]:
         int(float(row["frame_idx"])),
         str(row.get("eye") or ""),
     )
+
+
+def _scientific_identity(identity: Mapping[str, Any]) -> dict[str, Any]:
+    return {key: identity.get(key) for key in SCIENTIFIC_IDENTITY_KEYS}
+
+
+def resume_identity_compatible(
+    stored_identity: Mapping[str, Any],
+    current_identity: Mapping[str, Any],
+) -> bool:
+    """Allow only explicit orchestration-only migrations into the v8 core.
+
+    Git commit, branch, whole-config hash and scheduling knobs are provenance or
+    execution details, not per-eye scientific identity. They may change without
+    invalidating a completed checkpoint only when the current core explicitly
+    declares compatibility and every scientific identity field remains equal.
+    """
+    if current_identity.get("core_version") != V8_CORE_VERSION:
+        return False
+    if stored_identity.get("core_version") not in RESUME_COMPATIBLE_STORED_CORE_VERSIONS:
+        return False
+    return _scientific_identity(stored_identity) == _scientific_identity(current_identity)
 
 
 class FullClassWorkStore:
@@ -82,14 +126,39 @@ class FullClassWorkStore:
             return
         if int(existing.get("schema_version", -1)) != WORKSTORE_SCHEMA_VERSION:
             raise RuntimeError("workstore schema version mismatch")
-        if existing.get("identity_digest") != self.identity_digest:
-            raise RuntimeError("workstore identity digest differs from current run")
         try:
             stored_identity = json.loads(existing.get("identity_json", ""))
         except Exception as exc:
             raise RuntimeError("workstore identity_json is unreadable") from exc
-        if stored_identity != self.identity:
-            raise RuntimeError("workstore identity differs from current run")
+        if not isinstance(stored_identity, dict):
+            raise RuntimeError("workstore identity_json is not an object")
+
+        stored_digest = str(existing.get("identity_digest") or "")
+        if stored_digest == self.identity_digest and stored_identity == self.identity:
+            return
+
+        if resume_identity_compatible(stored_identity, self.identity):
+            # Persist the migration before any new rows can be appended. The old
+            # digest remains in metadata for auditability; numeric payload rows
+            # are not rewritten.
+            with self.connection:
+                self.connection.execute(
+                    "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+                    ("resume_migrated_from_identity_digest", stored_digest),
+                )
+                self.connection.execute(
+                    "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+                    ("identity_json", canonical_json(self.identity)),
+                )
+                self.connection.execute(
+                    "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+                    ("identity_digest", self.identity_digest),
+                )
+            return
+
+        if stored_digest != self.identity_digest:
+            raise RuntimeError("workstore identity digest differs from current scientific run")
+        raise RuntimeError("workstore identity differs from current scientific run")
 
     @property
     def stored_rows(self) -> int:
