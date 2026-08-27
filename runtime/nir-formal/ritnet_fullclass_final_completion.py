@@ -4,8 +4,11 @@ from __future__ import annotations
 import csv
 import json
 from dataclasses import dataclass
+from math import log
 from pathlib import Path
 from typing import Any, Mapping
+
+import numpy as np
 
 from ritnet_fullclass_final_engine import CoreArtifacts
 from ritnet_fullclass_io import (
@@ -14,7 +17,12 @@ from ritnet_fullclass_io import (
     directory_size,
     iter_csv_gz,
 )
-from ritnet_fullclass_qc_producer import QCArtifacts, QC_INDEX_FIELDS
+from ritnet_fullclass_qc_producer import (
+    QCArtifacts,
+    QC_INDEX_FIELDS,
+    QC_PIXEL_EVIDENCE_NAME,
+    QC_PIXEL_EVIDENCE_VERSION,
+)
 from ritnet_fullclass_schema import (
     EYE_METRIC_FIELDS,
     EYE_METRICS_SCHEMA_VERSION,
@@ -36,6 +44,21 @@ REQUIRED_DATA_ARTIFACTS = (
     "data/eye_metrics.csv.gz",
     "data/frame_coverage.csv.gz",
     "qc/qc_index.csv",
+    f"qc/{QC_PIXEL_EVIDENCE_NAME}",
+)
+PIXEL_EVIDENCE_KEYS = frozenset(
+    {
+        "version",
+        "subject",
+        "labels",
+        "entropy",
+        "valid_source_mask",
+        "phase",
+        "phase_segment",
+        "frame_idx",
+        "eye",
+        "reasons",
+    }
 )
 
 
@@ -118,6 +141,62 @@ def _read_qc_index(subject_dir: Path, expected_subject: str) -> tuple[int, int]:
     return count, image_bytes
 
 
+def _validate_qc_pixel_evidence(subject_dir: Path, expected_subject: str) -> tuple[int, int]:
+    path = Path(subject_dir) / "qc" / QC_PIXEL_EVIDENCE_NAME
+    if not path.is_file():
+        raise FileNotFoundError(f"missing sparse QC pixel evidence: {path}")
+    with np.load(path, allow_pickle=False) as payload:
+        if frozenset(payload.files) != PIXEL_EVIDENCE_KEYS:
+            raise ValueError(
+                "QC pixel evidence key contract mismatch: "
+                f"expected={sorted(PIXEL_EVIDENCE_KEYS)}, got={sorted(payload.files)}"
+            )
+        version = str(np.asarray(payload["version"]).item())
+        subject = str(np.asarray(payload["subject"]).item())
+        if version != QC_PIXEL_EVIDENCE_VERSION:
+            raise ValueError(f"QC pixel evidence version mismatch: {version!r}")
+        if subject != expected_subject:
+            raise ValueError(f"QC pixel evidence subject mismatch: {subject!r} != {expected_subject!r}")
+
+        labels = np.asarray(payload["labels"])
+        entropy = np.asarray(payload["entropy"])
+        valid = np.asarray(payload["valid_source_mask"])
+        if labels.ndim != 3 or labels.shape[1:] != (400, 640) or labels.dtype != np.uint8:
+            raise ValueError(f"QC pixel labels contract mismatch: {labels.shape} {labels.dtype}")
+        count = int(labels.shape[0])
+        expected_shape = (count, 400, 640)
+        if entropy.shape != expected_shape or entropy.dtype != np.float16:
+            raise ValueError(f"QC pixel entropy contract mismatch: {entropy.shape} {entropy.dtype}")
+        if valid.shape != expected_shape or valid.dtype != np.bool_:
+            raise ValueError(f"QC pixel valid-source mask mismatch: {valid.shape} {valid.dtype}")
+        if count and int(labels.max()) > 3:
+            raise ValueError("QC pixel labels contain values outside {0,1,2,3}")
+        if not np.isfinite(entropy).all():
+            raise ValueError("QC pixel entropy contains non-finite values")
+        if entropy.size:
+            minimum = float(entropy.min())
+            maximum = float(entropy.max())
+            if minimum < -1e-3 or maximum > log(4.0) + 2e-3:
+                raise ValueError(f"QC pixel entropy outside [0,log(4)]: {minimum}..{maximum}")
+        if count and not np.all(valid.reshape(count, -1).any(axis=1)):
+            raise ValueError("QC pixel evidence contains an eye with no source-backed pixels")
+
+        for name in ("phase", "eye", "reasons"):
+            values = np.asarray(payload[name])
+            if values.shape != (count,) or values.dtype.kind not in {"U", "S"}:
+                raise ValueError(f"QC pixel metadata {name} contract mismatch: {values.shape} {values.dtype}")
+        phase_segment = np.asarray(payload["phase_segment"])
+        frame_idx = np.asarray(payload["frame_idx"])
+        if phase_segment.shape != (count,) or phase_segment.dtype != np.int32:
+            raise ValueError("QC pixel phase_segment contract mismatch")
+        if frame_idx.shape != (count,) or frame_idx.dtype != np.int64:
+            raise ValueError("QC pixel frame_idx contract mismatch")
+        eyes = {str(value) for value in np.asarray(payload["eye"]).tolist()}
+        if not eyes.issubset({"frame_left", "frame_right"}):
+            raise ValueError(f"QC pixel evidence contains unsupported eye labels: {sorted(eyes)}")
+    return count, int(path.stat().st_size)
+
+
 def _artifact_record(subject_dir: Path, relative: str) -> dict[str, Any]:
     path = Path(subject_dir) / relative
     if not path.is_file():
@@ -148,6 +227,10 @@ def build_summary(
         "qc_selected_frame_count": qc.selected_count,
         "qc_saved_image_count": qc.saved_image_count,
         "qc_skipped_for_budget_count": qc.skipped_for_budget_count,
+        "qc_pixel_evidence_requested_count": qc.pixel_evidence_requested_count,
+        "qc_pixel_evidence_saved_count": qc.pixel_evidence_saved_count,
+        "qc_pixel_evidence_skipped_for_budget_count": qc.pixel_evidence_skipped_for_budget_count,
+        "qc_pixel_evidence_bytes": qc.pixel_evidence_bytes,
         "qc_total_bytes": qc.total_qc_bytes,
         "output_limit_bytes": int(output_limit_bytes),
     }
@@ -170,8 +253,12 @@ def build_manifest(*, core: CoreArtifacts, qc: QCArtifacts) -> dict[str, Any]:
             "selected_count": qc.selected_count,
             "saved_image_count": qc.saved_image_count,
             "skipped_for_budget_count": qc.skipped_for_budget_count,
+            "pixel_evidence_requested_count": qc.pixel_evidence_requested_count,
+            "pixel_evidence_saved_count": qc.pixel_evidence_saved_count,
+            "pixel_evidence_skipped_for_budget_count": qc.pixel_evidence_skipped_for_budget_count,
             "image_bytes": qc.image_bytes,
             "index_bytes": qc.index_bytes,
+            "pixel_evidence_bytes": qc.pixel_evidence_bytes,
             "total_qc_bytes": qc.total_qc_bytes,
         },
     }
@@ -238,14 +325,19 @@ def validate_final_completion(
             schema_version=FRAME_COVERAGE_SCHEMA_VERSION,
         )
         qc_count, qc_image_bytes = _read_qc_index(subject_dir, subject)
+        pixel_count, pixel_bytes = _validate_qc_pixel_evidence(subject_dir, subject)
         if eye_count != int(summary.get("eye_metric_row_count", -1)):
             raise ValueError("summary eye metric row count mismatch")
         if frame_count != int(summary.get("frame_coverage_row_count", -1)):
             raise ValueError("summary frame coverage row count mismatch")
         if qc_count != int(summary.get("qc_saved_image_count", -1)):
             raise ValueError("summary QC image count mismatch")
-        if qc_image_bytes > int(summary.get("qc_total_bytes", -1)):
-            raise ValueError("summary QC byte count is smaller than indexed images")
+        if pixel_count != int(summary.get("qc_pixel_evidence_saved_count", -1)):
+            raise ValueError("summary QC pixel evidence count mismatch")
+        if pixel_bytes != int(summary.get("qc_pixel_evidence_bytes", -1)):
+            raise ValueError("summary QC pixel evidence byte count mismatch")
+        if qc_image_bytes + pixel_bytes > int(summary.get("qc_total_bytes", -1)):
+            raise ValueError("summary QC byte count is smaller than indexed QC evidence")
 
         artifact_records = manifest.get("artifacts")
         if not isinstance(artifact_records, dict) or tuple(artifact_records) != REQUIRED_DATA_ARTIFACTS:
@@ -305,7 +397,6 @@ def finalize_subject(
     atomic_write_json(summary_path, summary)
     atomic_write_json(manifest_path, manifest)
 
-    # Re-read every scientific/QC artifact before publishing the final marker.
     eye_count = _count_and_validate_csv_gz(
         core.eye_metrics,
         expected_fields=EYE_METRIC_FIELDS,
@@ -321,10 +412,13 @@ def finalize_subject(
         schema_version=FRAME_COVERAGE_SCHEMA_VERSION,
     )
     qc_count, _qc_image_bytes = _read_qc_index(subject_dir, core.subject)
+    pixel_count, pixel_bytes = _validate_qc_pixel_evidence(subject_dir, core.subject)
     if eye_count != core.eye_row_count or frame_count != core.frame_row_count:
         raise RuntimeError("final table row counts changed before completion")
     if qc_count != qc.saved_image_count:
         raise RuntimeError("QC index row count changed before completion")
+    if pixel_count != qc.pixel_evidence_saved_count or pixel_bytes != qc.pixel_evidence_bytes:
+        raise RuntimeError("QC pixel evidence changed before completion")
 
     completion = {
         "schema_version": FINAL_COMPLETION_SCHEMA_VERSION,
@@ -335,6 +429,7 @@ def finalize_subject(
         "eye_metric_row_count": eye_count,
         "frame_coverage_row_count": frame_count,
         "qc_saved_image_count": qc_count,
+        "qc_pixel_evidence_saved_count": pixel_count,
         "output_limit_bytes": limit,
         "work_identity_sha256": __import__("hashlib").sha256(
             json.dumps(core.work_identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -342,8 +437,6 @@ def finalize_subject(
     }
     existing_bytes = directory_size(subject_dir)
     completion["total_output_bytes"] = existing_bytes + _json_size(completion)
-    # total_output_bytes changes the serialized length in rare digit-boundary
-    # cases, so converge before applying the hard gate.
     for _ in range(4):
         total = existing_bytes + _json_size(completion)
         if total == completion["total_output_bytes"]:
