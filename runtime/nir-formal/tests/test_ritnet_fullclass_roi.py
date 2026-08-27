@@ -25,13 +25,23 @@ def make_geometry(bbox, frame_width=1920, frame_height=1080):
 def assert_contract(geometry, bbox):
     x1, y1, x2, y2 = bbox
     assert geometry.width / geometry.height == TARGET_ASPECT_RATIO
-    assert geometry.requested_x1 <= x1
-    assert geometry.requested_y1 <= y1
-    assert geometry.requested_x2 >= x2
-    assert geometry.requested_y2 >= y2
+    assert geometry.width % 8 == 0
+    assert geometry.height % 5 == 0
+    assert geometry.requested_x1 <= geometry.expanded_x1 <= x1
+    assert geometry.requested_y1 <= geometry.expanded_y1 <= y1
+    assert geometry.requested_x2 >= geometry.expanded_x2 >= x2
+    assert geometry.requested_y2 >= geometry.expanded_y2 >= y2
     assert TARGET_WIDTH / geometry.width == pytest.approx(TARGET_HEIGHT / geometry.height)
     assert geometry.resize_scale == pytest.approx(TARGET_WIDTH / geometry.width)
     assert 0.0 < geometry.valid_content_fraction <= 1.0
+    assert (
+        geometry.source_x2 - geometry.source_x1 + geometry.pad_left + geometry.pad_right
+        == geometry.width
+    )
+    assert (
+        geometry.source_y2 - geometry.source_y1 + geometry.pad_top + geometry.pad_bottom
+        == geometry.height
+    )
 
 
 def test_regular_bbox_expands_to_exact_1p6_without_padding():
@@ -41,7 +51,17 @@ def test_regular_bbox_expands_to_exact_1p6_without_padding():
     assert (geometry.pad_left, geometry.pad_top, geometry.pad_right, geometry.pad_bottom) == (0, 0, 0, 0)
 
 
-def test_tall_bbox_only_expands_width_for_aspect_contract():
+def test_fractional_expanded_context_is_never_lost_by_integer_origin_rounding():
+    bbox = (101.2, 203.4, 156.7, 238.9)
+    geometry = make_geometry(bbox, frame_width=500, frame_height=400)
+    assert_contract(geometry, bbox)
+    assert geometry.requested_x1 <= geometry.expanded_x1
+    assert geometry.requested_x2 >= geometry.expanded_x2
+    assert geometry.requested_y1 <= geometry.expanded_y1
+    assert geometry.requested_y2 >= geometry.expanded_y2
+
+
+def test_tall_bbox_expands_width_without_losing_vertical_context():
     bbox = (900.0, 300.0, 980.0, 600.0)
     geometry = make_geometry(bbox)
     assert_contract(geometry, bbox)
@@ -49,7 +69,7 @@ def test_tall_bbox_only_expands_width_for_aspect_contract():
     assert geometry.height >= (bbox[3] - bbox[1]) * 1.90
 
 
-def test_wide_bbox_only_expands_height_for_aspect_contract():
+def test_wide_bbox_expands_height_without_losing_horizontal_context():
     bbox = (600.0, 450.0, 1200.0, 520.0)
     geometry = make_geometry(bbox)
     assert_contract(geometry, bbox)
@@ -66,19 +86,25 @@ def test_wide_bbox_only_expands_height_for_aspect_contract():
         ((800.0, 1040.0, 860.0, 1080.0), "pad_bottom"),
     ],
 )
-def test_touching_each_frame_edge_uses_padding_without_cropping_bbox(bbox, pad_field):
+def test_touching_each_frame_edge_uses_padding_without_cropping_expanded_context(bbox, pad_field):
     geometry = make_geometry(bbox)
     assert_contract(geometry, bbox)
     assert getattr(geometry, pad_field) > 0
     assert geometry.valid_content_fraction < 1.0
 
 
+def test_corner_can_pad_two_axes_without_breaking_aspect_ratio():
+    bbox = (0.0, 0.0, 70.0, 50.0)
+    geometry = make_geometry(bbox)
+    assert_contract(geometry, bbox)
+    assert geometry.pad_left > 0
+    assert geometry.pad_top > 0
+
+
 def test_odd_and_small_bbox_still_yields_exact_integer_8_by_5_geometry():
     bbox = (101.2, 203.4, 106.7, 208.9)
     geometry = make_geometry(bbox)
     assert_contract(geometry, bbox)
-    assert geometry.width % 8 == 0
-    assert geometry.height % 5 == 0
     assert geometry.width >= 8
     assert geometry.height >= 5
 
