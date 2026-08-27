@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 from dataclasses import dataclass
 from math import log
@@ -13,9 +14,9 @@ import numpy as np
 from ritnet_fullclass_final_engine import CoreArtifacts
 from ritnet_fullclass_io import (
     atomic_write_json,
-    csv_gz_fieldnames,
+    csv_fieldnames,
     directory_size,
-    iter_csv_gz,
+    iter_csv,
 )
 from ritnet_fullclass_qc_producer import (
     QCArtifacts,
@@ -41,8 +42,8 @@ COMPLETION_NAME = "completion.json"
 SUMMARY_NAME = "summary.json"
 MANIFEST_NAME = "manifest.json"
 REQUIRED_DATA_ARTIFACTS = (
-    "data/eye_metrics.csv.gz",
-    "data/frame_coverage.csv.gz",
+    "data/eye_metrics.csv",
+    "data/frame_coverage.csv",
     "qc/qc_index.csv",
     f"qc/{QC_PIXEL_EVIDENCE_NAME}",
 )
@@ -77,9 +78,13 @@ def _load_json(path: Path) -> dict[str, Any]:
     return value
 
 
-def _json_size(payload: Mapping[str, Any]) -> int:
+def _json_bytes(payload: Mapping[str, Any]) -> bytes:
     text = json.dumps(dict(payload), ensure_ascii=False, sort_keys=True, indent=2) + "\n"
-    return len(text.encode("utf-8"))
+    return text.encode("utf-8")
+
+
+def _json_size(payload: Mapping[str, Any]) -> int:
+    return len(_json_bytes(payload))
 
 
 def _normalize_source_selection(
@@ -111,7 +116,7 @@ def _normalize_source_selection(
     }
 
 
-def _count_and_validate_csv_gz(
+def _count_and_validate_csv(
     path: Path,
     *,
     expected_fields: tuple[str, ...],
@@ -119,9 +124,9 @@ def _count_and_validate_csv_gz(
     schema_field: str,
     schema_version: int,
 ) -> int:
-    validate_exact_schema(csv_gz_fieldnames(path), expected_fields)
+    validate_exact_schema(csv_fieldnames(path), expected_fields)
     count = 0
-    for row in iter_csv_gz(path):
+    for row in iter_csv(path):
         count += 1
         if str(row.get("subject") or "") != expected_subject:
             raise ValueError(f"subject mismatch in {path.name} row {count}")
@@ -353,16 +358,16 @@ def validate_final_completion(
         if not isinstance(alternatives, list) or any(not isinstance(item, str) for item in alternatives):
             raise ValueError("manifest source_selection alternatives must be a string list")
 
-        eye_path = subject_dir / "data" / "eye_metrics.csv.gz"
-        coverage_path = subject_dir / "data" / "frame_coverage.csv.gz"
-        eye_count = _count_and_validate_csv_gz(
+        eye_path = subject_dir / "data" / "eye_metrics.csv"
+        coverage_path = subject_dir / "data" / "frame_coverage.csv"
+        eye_count = _count_and_validate_csv(
             eye_path,
             expected_fields=EYE_METRIC_FIELDS,
             expected_subject=subject,
             schema_field="eye_metrics_schema_version",
             schema_version=EYE_METRICS_SCHEMA_VERSION,
         )
-        frame_count = _count_and_validate_csv_gz(
+        frame_count = _count_and_validate_csv(
             coverage_path,
             expected_fields=FRAME_COVERAGE_FIELDS,
             expected_subject=subject,
@@ -406,6 +411,33 @@ def validate_final_completion(
         return FinalCompletionValidation(False, str(exc), locals().get("completion"))
 
 
+def _prevalidate_artifacts(core: CoreArtifacts, qc: QCArtifacts) -> tuple[int, int, int, int]:
+    """Validate all large artifacts exactly once before publishing completion metadata."""
+    eye_count = _count_and_validate_csv(
+        core.eye_metrics,
+        expected_fields=EYE_METRIC_FIELDS,
+        expected_subject=core.subject,
+        schema_field="eye_metrics_schema_version",
+        schema_version=EYE_METRICS_SCHEMA_VERSION,
+    )
+    frame_count = _count_and_validate_csv(
+        core.frame_coverage,
+        expected_fields=FRAME_COVERAGE_FIELDS,
+        expected_subject=core.subject,
+        schema_field="frame_coverage_schema_version",
+        schema_version=FRAME_COVERAGE_SCHEMA_VERSION,
+    )
+    qc_count, _qc_image_bytes = _read_qc_index(core.subject_dir, core.subject)
+    pixel_count, pixel_bytes = _validate_qc_pixel_evidence(core.subject_dir, core.subject)
+    if eye_count != core.eye_row_count or frame_count != core.frame_row_count:
+        raise RuntimeError("final table row counts changed before completion")
+    if qc_count != qc.saved_image_count:
+        raise RuntimeError("QC index row count changed before completion")
+    if pixel_count != qc.pixel_evidence_saved_count or pixel_bytes != qc.pixel_evidence_bytes:
+        raise RuntimeError("QC pixel evidence changed before completion")
+    return eye_count, frame_count, qc_count, pixel_count
+
+
 def finalize_subject(
     *,
     core: CoreArtifacts,
@@ -431,8 +463,6 @@ def finalize_subject(
             + existing.reason
         )
 
-    summary = build_summary(core=core, qc=qc, output_limit_bytes=limit)
-    manifest = build_manifest(core=core, qc=qc, source_selection=source_selection)
     summary_path = subject_dir / SUMMARY_NAME
     manifest_path = subject_dir / MANIFEST_NAME
     if summary_path.exists() or manifest_path.exists():
@@ -440,67 +470,69 @@ def finalize_subject(
             "summary.json/manifest.json already exists without a valid completion marker; "
             "refusing to overwrite incomplete output automatically"
         )
-    atomic_write_json(summary_path, summary)
-    atomic_write_json(manifest_path, manifest)
 
-    eye_count = _count_and_validate_csv_gz(
-        core.eye_metrics,
-        expected_fields=EYE_METRIC_FIELDS,
-        expected_subject=core.subject,
-        schema_field="eye_metrics_schema_version",
-        schema_version=EYE_METRICS_SCHEMA_VERSION,
-    )
-    frame_count = _count_and_validate_csv_gz(
-        core.frame_coverage,
-        expected_fields=FRAME_COVERAGE_FIELDS,
-        expected_subject=core.subject,
-        schema_field="frame_coverage_schema_version",
-        schema_version=FRAME_COVERAGE_SCHEMA_VERSION,
-    )
-    qc_count, _qc_image_bytes = _read_qc_index(subject_dir, core.subject)
-    pixel_count, pixel_bytes = _validate_qc_pixel_evidence(subject_dir, core.subject)
-    if eye_count != core.eye_row_count or frame_count != core.frame_row_count:
-        raise RuntimeError("final table row counts changed before completion")
-    if qc_count != qc.saved_image_count:
-        raise RuntimeError("QC index row count changed before completion")
-    if pixel_count != qc.pixel_evidence_saved_count or pixel_bytes != qc.pixel_evidence_bytes:
-        raise RuntimeError("QC pixel evidence changed before completion")
+    # Full CSV/QC integrity is checked before any completion metadata is written.
+    # The canonical runner therefore does not need to reread the large tables
+    # immediately after finalize_subject returns.
+    eye_count, frame_count, qc_count, pixel_count = _prevalidate_artifacts(core, qc)
+
+    summary = build_summary(core=core, qc=qc, output_limit_bytes=limit)
+    manifest = build_manifest(core=core, qc=qc, source_selection=source_selection)
+    summary_bytes = _json_bytes(summary)
+    manifest_bytes = _json_bytes(manifest)
 
     completion = {
         "schema_version": FINAL_COMPLETION_SCHEMA_VERSION,
         "status": FINAL_COMPLETION_STATUS,
         "subject": core.subject,
-        "summary_sha256": sha256_file(summary_path),
-        "manifest_sha256": sha256_file(manifest_path),
+        "summary_sha256": hashlib.sha256(summary_bytes).hexdigest(),
+        "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
         "eye_metric_row_count": eye_count,
         "frame_coverage_row_count": frame_count,
         "qc_saved_image_count": qc_count,
         "qc_pixel_evidence_saved_count": pixel_count,
         "output_limit_bytes": limit,
-        "work_identity_sha256": __import__("hashlib").sha256(
-            json.dumps(core.work_identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        "work_identity_sha256": hashlib.sha256(
+            json.dumps(
+                core.work_identity,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
         ).hexdigest(),
     }
-    existing_bytes = directory_size(subject_dir)
-    completion["total_output_bytes"] = existing_bytes + _json_size(completion)
+
+    # At this point subject_dir contains only data/QC. Predict the exact final
+    # size before publishing summary/manifest/completion so an over-limit run
+    # does not leave metadata blockers behind.
+    base_bytes = directory_size(subject_dir)
+    metadata_base = base_bytes + len(summary_bytes) + len(manifest_bytes)
+    completion["total_output_bytes"] = metadata_base + _json_size(completion)
     for _ in range(4):
-        total = existing_bytes + _json_size(completion)
+        total = metadata_base + _json_size(completion)
         if total == completion["total_output_bytes"]:
             break
         completion["total_output_bytes"] = total
-    predicted_total = existing_bytes + _json_size(completion)
+    predicted_total = metadata_base + _json_size(completion)
     completion["total_output_bytes"] = predicted_total
     if predicted_total > limit:
         raise RuntimeError(
             f"final subject output would exceed hard limit: {predicted_total} > {limit}"
         )
+
+    atomic_write_json(summary_path, summary)
+    atomic_write_json(manifest_path, manifest)
     atomic_write_json(completion_path, completion)
 
-    validation = validate_final_completion(
-        subject_dir,
-        expected_subject=core.subject,
-        expected_work_identity=core.work_identity,
-    )
-    if not validation.valid:
-        raise RuntimeError("final completion self-validation failed: " + validation.reason)
+    # Cheap post-write envelope checks only. Large tables were already fully
+    # validated before the marker was published.
+    if sha256_file(summary_path) != completion["summary_sha256"]:
+        raise RuntimeError("summary.json changed during atomic completion write")
+    if sha256_file(manifest_path) != completion["manifest_sha256"]:
+        raise RuntimeError("manifest.json changed during atomic completion write")
+    actual_total = directory_size(subject_dir)
+    if actual_total != predicted_total:
+        raise RuntimeError(
+            f"final output size changed during completion write: {actual_total} != {predicted_total}"
+        )
     return completion_path
