@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import csv
-import gzip
 import hashlib
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,7 +8,11 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from ritnet_fullclass_final_completion import finalize_subject, validate_final_completion
+from ritnet_fullclass_final_completion import (
+    REQUIRED_DATA_ARTIFACTS,
+    finalize_subject,
+    validate_final_completion,
+)
 from ritnet_fullclass_qc_producer import (
     QC_INDEX_FIELDS,
     QC_PIXEL_EVIDENCE_NAME,
@@ -23,9 +26,9 @@ from ritnet_fullclass_schema import (
 )
 
 
-def _write_gz(path: Path, fields, row):
+def _write_csv(path: Path, fields, row):
     path.parent.mkdir(parents=True, exist_ok=True)
-    with gzip.open(path, "wt", encoding="utf-8", newline="") as handle:
+    with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(fields))
         writer.writeheader()
         writer.writerow(row)
@@ -37,7 +40,7 @@ def _write_pixel_evidence(path: Path, subject: str) -> None:
     labels[:, 100:300, 100:540] = 1
     entropy = np.full((1, 400, 640), 0.25, dtype=np.float16)
     valid = np.ones((1, 400, 640), dtype=bool)
-    np.savez_compressed(
+    np.savez(
         path,
         version=np.asarray(QC_PIXEL_EVIDENCE_VERSION),
         subject=np.asarray(subject),
@@ -52,11 +55,11 @@ def _write_pixel_evidence(path: Path, subject: str) -> None:
     )
 
 
-def _fixture(tmp_path: Path, *, output_limit=1_000_000):
+def _fixture(tmp_path: Path, *, output_limit=10_000_000):
     subject = "sub-031"
     subject_dir = tmp_path / subject
-    eye_path = subject_dir / "data" / "eye_metrics.csv.gz"
-    coverage_path = subject_dir / "data" / "frame_coverage.csv.gz"
+    eye_path = subject_dir / "data" / "eye_metrics.csv"
+    coverage_path = subject_dir / "data" / "frame_coverage.csv"
     eye_row = {field: "" for field in EYE_METRIC_FIELDS}
     eye_row.update(
         eye_metrics_schema_version=EYE_METRICS_SCHEMA_VERSION,
@@ -76,8 +79,8 @@ def _fixture(tmp_path: Path, *, output_limit=1_000_000):
         coverage_status="single_eye_success",
         fixed_qc_anchor=True,
     )
-    _write_gz(eye_path, EYE_METRIC_FIELDS, eye_row)
-    _write_gz(coverage_path, FRAME_COVERAGE_FIELDS, coverage_row)
+    _write_csv(eye_path, EYE_METRIC_FIELDS, eye_row)
+    _write_csv(coverage_path, FRAME_COVERAGE_FIELDS, coverage_row)
 
     image = subject_dir / "qc" / "images" / "sample.png"
     image.parent.mkdir(parents=True, exist_ok=True)
@@ -145,6 +148,14 @@ def _fixture(tmp_path: Path, *, output_limit=1_000_000):
     return core, qc, output_limit, image, pixel_evidence
 
 
+def test_final_contract_uses_plain_csv_artifacts():
+    assert REQUIRED_DATA_ARTIFACTS[:2] == (
+        "data/eye_metrics.csv",
+        "data/frame_coverage.csv",
+    )
+    assert all(not name.endswith(".gz") for name in REQUIRED_DATA_ARTIFACTS)
+
+
 def test_finalize_writes_marker_last_and_self_validates(tmp_path):
     core, qc, limit, _image, _pixel = _fixture(tmp_path)
     marker = finalize_subject(core=core, qc=qc, output_limit_bytes=limit)
@@ -187,8 +198,10 @@ def test_invalid_existing_completion_is_not_overwritten(tmp_path):
     assert marker.read_text(encoding="utf-8") == "{}"
 
 
-def test_hard_output_limit_prevents_completion_marker(tmp_path):
+def test_hard_output_limit_prevents_all_metadata_files(tmp_path):
     core, qc, _limit, _image, _pixel = _fixture(tmp_path, output_limit=64)
     with pytest.raises(RuntimeError, match="hard limit"):
         finalize_subject(core=core, qc=qc, output_limit_bytes=64)
     assert not (core.subject_dir / "completion.json").exists()
+    assert not (core.subject_dir / "summary.json").exists()
+    assert not (core.subject_dir / "manifest.json").exists()
