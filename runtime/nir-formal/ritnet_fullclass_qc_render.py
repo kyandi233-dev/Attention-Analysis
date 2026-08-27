@@ -1,4 +1,4 @@
-"""Composite frame-level QC rendering for final RITnet full-class output."""
+"""Single-frame QC rendering for lean final RITnet output."""
 from __future__ import annotations
 
 from typing import Any, Mapping
@@ -9,7 +9,7 @@ import numpy as np
 from ritnet_fullclass_qc import QCSelection
 
 
-QC_COMPOSITE_VERSION = "original-frame-plus-two-eye-overlays-v1"
+QC_COMPOSITE_VERSION = "original-frame-plus-two-eye-overlays-v2-pupil-only"
 PANEL_WIDTH = 640
 PANEL_HEIGHT = 400
 HEADER_HEIGHT = 54
@@ -121,11 +121,7 @@ def _header(panel: np.ndarray, title: str, lines: list[str]) -> np.ndarray:
     return canvas
 
 
-def _eye_panel(
-    eye: str,
-    row: Mapping[str, Any] | None,
-    overlay: np.ndarray | None,
-) -> np.ndarray:
+def _eye_panel(eye: str, row: Mapping[str, Any] | None, overlay: np.ndarray | None) -> np.ndarray:
     if overlay is None:
         panel = np.full((PANEL_HEIGHT, PANEL_WIDTH, 3), 35, dtype=np.uint8)
     else:
@@ -135,19 +131,17 @@ def _eye_panel(
 
     status = "not_detected" if not row else str(row.get("ritnet_status") or "unknown")
     if row:
-        _draw_ellipse(panel, row, "iris_outer", (255, 255, 0))
+        # Only the pupil ellipse is a formal geometric overlay. Iris remains a
+        # segmentation class but is not fitted into a diagnostic ellipse/PIR.
         _draw_ellipse(panel, row, "pupil", (0, 0, 255))
 
     lines = [f"status={status}"]
     if row:
-        pir = _finite(row.get("pupil_to_iris_diameter_ratio"))
-        oar = _finite(row.get("ocular_aperture_ratio_median"))
+        pupil_d = _finite(row.get("pupil_geom_mean_diameter"))
         maxp = _finite(row.get("ocular_max_probability_mean"))
         entropy = _finite(row.get("ocular_entropy_mean"))
-        if pir is not None:
-            lines.append(f"PIR={pir:.3f}")
-        if oar is not None:
-            lines.append(f"OAR={oar:.3f}")
+        if pupil_d is not None:
+            lines.append(f"pupilD={pupil_d:.2f}px")
         if maxp is not None:
             lines.append(f"maxP={maxp:.3f}")
         if entropy is not None:
@@ -168,7 +162,6 @@ def render_qc_composite(
     eye_overlays: Mapping[str, np.ndarray],
     fallback_frame_size: tuple[int, int] = (640, 480),
 ) -> np.ndarray:
-    """Render one frame-level artifact: original frame + left/right eye evidence."""
     if frame_bgr is None:
         width, height = map(int, fallback_frame_size)
         original = np.zeros((max(height, 1), max(width, 1), 3), dtype=np.uint8)
