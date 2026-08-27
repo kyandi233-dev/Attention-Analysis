@@ -22,7 +22,7 @@ from ritnet_fullclass_final_engine import (
     run_numeric_core,
 )
 from ritnet_fullclass_git import require_clean_code_worktree
-from ritnet_fullclass_qc_producer import produce_qc_artifacts
+from ritnet_fullclass_qc_producer import QC_PIXEL_EVIDENCE_NAME, produce_qc_artifacts
 from ritnet_fullclass_source import load_source_context
 
 
@@ -96,6 +96,7 @@ def _strict_skip_or_preflight(context, config_path: Path) -> tuple[Path, dict]:
         subject_dir / "summary.json",
         subject_dir / "manifest.json",
         subject_dir / "qc" / "qc_index.csv",
+        subject_dir / "qc" / QC_PIXEL_EVIDENCE_NAME,
     ]
     blockers += list((subject_dir / "qc" / "images").glob("*.png")) if (subject_dir / "qc" / "images").is_dir() else []
     existing = [path for path in blockers if path.exists()]
@@ -117,9 +118,6 @@ def main() -> int:
         raise FileNotFoundError(config_path)
 
     context = load_source_context(run_dir, config_path)
-    # The final model is intentionally allowed to be generated locally and may
-    # therefore appear as the only untracked/modified Git artifact. Its SHA256
-    # is frozen separately in work_identity/manifest. Code/config must be clean.
     require_clean_code_worktree(context.config)
     subject_dir, expected_identity = _strict_skip_or_preflight(context, config_path)
     completion_path = subject_dir / COMPLETION_NAME
@@ -167,6 +165,7 @@ def main() -> int:
                 "eye_metric_rows": core.eye_row_count,
                 "frame_coverage_rows": core.frame_row_count,
                 "qc_images": qc.saved_image_count,
+                "qc_pixel_evidence_eyes": qc.pixel_evidence_saved_count,
                 "qc_bytes": qc.total_qc_bytes,
                 "total_output_bytes": validation.completion["total_output_bytes"],
                 "output_limit_bytes": output_limit,
