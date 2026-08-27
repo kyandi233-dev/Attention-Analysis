@@ -80,6 +80,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--config", type=Path, default=Path(__file__).resolve().parents[1] / "runtime/nir-formal/config.yaml")
     parser.add_argument("--model", type=Path, default=None)
+    parser.add_argument("--implementation", choices=("current", "legacy"), default="current")
     parser.add_argument("--max-eyes", type=int, default=512)
     parser.add_argument("--batches", default="16,24,32,40,48")
     return parser.parse_args()
@@ -187,12 +188,66 @@ def measure(runtime: RitnetFullClassFinalRuntime, rois: list[np.ndarray], batch_
     }
 
 
+def measure_legacy(runtime, rois: list[np.ndarray], batch_size: int) -> dict[str, object]:
+    if batch_size > runtime.FIXED_BATCH_SIZE:
+        try:
+            runtime.infer_batch(rois[:batch_size])
+        except Exception as exc:
+            return {"batch_size": batch_size, "status": "unsupported_fixed_model", "reason": str(exc)}
+    warm_start = time.perf_counter()
+    runtime.infer_batch(rois[: runtime.FIXED_BATCH_SIZE])
+    warm_elapsed = time.perf_counter() - warm_start
+    labels_seen = 0
+    start = time.perf_counter()
+    monitor = Monitor()
+    with monitor:
+        for offset in range(0, len(rois), runtime.FIXED_BATCH_SIZE):
+            results = runtime.infer_batch(rois[offset : offset + runtime.FIXED_BATCH_SIZE])
+            if len(results) != min(runtime.FIXED_BATCH_SIZE, len(rois) - offset):
+                raise RuntimeError("legacy postprocess output count mismatch")
+            if any(not isinstance(item, dict) for item in results):
+                raise RuntimeError("legacy postprocess output integrity check failed")
+            labels_seen += len(results)
+    elapsed = time.perf_counter() - start
+    gpu = monitor.gpu
+    total_memory = float(getattr(monitor, "gpu_total", 0.0))
+    peak_memory = max((item[1] for item in gpu), default=0.0)
+    return {
+        "batch_size": batch_size,
+        "status": "ok",
+        "input_eyes": len(rois),
+        "input_frames": None,
+        "warmup_eyes": runtime.FIXED_BATCH_SIZE,
+        "warmup_sec": warm_elapsed,
+        "measurement_wall_sec": elapsed,
+        "eyes_per_sec": labels_seen / elapsed,
+        "frames_per_sec": None,
+        "labels_checked": labels_seen,
+        "metrics_checked": labels_seen,
+        "provider": runtime.providers[0] if runtime.providers else None,
+        "gpu_util_avg_pct": float(np.mean([item[0] for item in gpu])) if gpu else None,
+        "gpu_util_p95_pct": float(np.percentile([item[0] for item in gpu], 95)) if gpu else None,
+        "gpu_memory_peak_bytes": peak_memory,
+        "gpu_memory_total_bytes": total_memory,
+        "gpu_memory_headroom_bytes": total_memory - peak_memory if total_memory else None,
+        "cpu_peak_pct": max(monitor.cpu, default=None),
+        "ram_peak_bytes": max(monitor.ram, default=None),
+        "io_bottleneck_observed": False,
+        "error": None,
+    }
+
+
 def main() -> int:
     args = parse_args()
     runtime_dir = RUNTIME_DIR
     config = yaml.safe_load(args.config.read_text(encoding="utf-8"))
     roi_cfg = config["fullclass"]["roi"]
-    model = args.model or (runtime_dir / config["models"]["ritnet_fullclass_final"])
+    if args.implementation == "legacy":
+        from ritnet_onnx_runtime import RitnetOnnxRuntime
+
+        model = args.model or (runtime_dir / config["models"]["ritnet_onnx"])
+    else:
+        model = args.model or (runtime_dir / config["models"]["ritnet_fullclass_final"])
     video, rows = load_rows(args.run_dir.resolve(), args.max_eyes)
     rois = extract_rois(video, rows, roi_cfg)
     frame_count = len({int(float(row["frame_idx"])) for row in rows})
@@ -201,13 +256,17 @@ def main() -> int:
         if batch != 16:
             results.append({"batch_size": batch, "status": "unsupported_fixed_model", "reason": "frozen ONNX input shape is [16,1,400,640]"})
             continue
-        runtime = RitnetFullClassFinalRuntime(model, device="0")
-        result = measure(runtime, rois, batch)
+        if args.implementation == "legacy":
+            runtime = RitnetOnnxRuntime(runtime_dir, model, input_size=(640, 400), device="0", analysis_size=(320, 160), precision="fp32")
+            result = measure_legacy(runtime, rois, batch)
+        else:
+            runtime = RitnetFullClassFinalRuntime(model, device="0")
+            result = measure(runtime, rois, batch)
         result["input_frames"] = frame_count
         if result.get("status") == "ok":
             result["frames_per_sec"] = frame_count / float(result["measurement_wall_sec"])
         results.append(result)
-    print(json.dumps({"subject": args.run_dir.name.split("_formal", 1)[0], "source_run_dir": str(args.run_dir.resolve()), "video": video, "input_eyes": len(rois), "input_frames": frame_count, "results": results}, ensure_ascii=False, indent=2))
+    print(json.dumps({"implementation": args.implementation, "model": str(model), "subject": args.run_dir.name.split("_formal", 1)[0], "source_run_dir": str(args.run_dir.resolve()), "video": video, "input_eyes": len(rois), "input_frames": frame_count, "results": results}, ensure_ascii=False, indent=2))
     return 0
 
 
