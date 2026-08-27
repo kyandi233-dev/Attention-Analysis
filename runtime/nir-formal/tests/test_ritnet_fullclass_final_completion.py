@@ -113,6 +113,7 @@ def _fixture(tmp_path: Path, *, output_limit=1_000_000):
 
     work_identity = {"core_version": "test-core", "git_commit": "a" * 40}
     source_context = SimpleNamespace(
+        run_dir=tmp_path / "source_formal_run",
         video=tmp_path / "source.avi",
         eye_rows=({},),
         frame_rows=({},),
