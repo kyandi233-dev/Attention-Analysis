@@ -1,10 +1,9 @@
-"""Internal batch implementation for the single canonical RITnet full-class workflow.
+"""Internal batch selection/dispatch for the canonical final full-class workflow.
 
-Source formal runs are never trusted from ``completion.status`` alone. Every
-candidate must pass ``formal_completion.validate_completion`` before it can be
-selected. If multiple validated candidates exist for one subject, selection is
-strict: prefer the configured production YOLO batch size and only auto-resolve
-true duplicates whose formal identity and ``eyes.csv`` bytes are identical.
+Historical formal sources are accepted only after strict completion validation.
+For each subject this runner selects one unambiguous source and dispatches the
+canonical ``run_ritnet_fullclass_extension.py`` final <=1 GiB pipeline. Legacy
+label-chunk/compression controls are intentionally absent.
 """
 from __future__ import annotations
 
@@ -25,7 +24,6 @@ from formal_completion import validate_completion
 from ritnet_fullclass_contract import FULLCLASS_VERSION, normalize_subject
 from ritnet_label_store import sha256_file
 
-# Always route subjects through the canonical user-facing single-subject gate.
 EXTENSION = PACKAGE_ROOT / "run_ritnet_fullclass_extension.py"
 
 
@@ -38,7 +36,6 @@ def load_config(path: Path) -> dict[str, Any]:
 
 
 def _formal_identity(marker: dict[str, Any]) -> dict[str, Any]:
-    """Fields that make a formal source scientifically distinct for reuse."""
     return {
         "run_id": marker.get("run_id"),
         "subject": marker.get("subject"),
@@ -56,7 +53,6 @@ def _formal_identity(marker: dict[str, Any]) -> dict[str, Any]:
 
 
 def discover_source_runs(output_root: Path) -> dict[str, list[dict[str, Any]]]:
-    """Return only formal runs that pass the full completion contract."""
     grouped: dict[str, list[dict[str, Any]]] = {}
     for run_dir in sorted(output_root.glob("sub-*_formal_*")):
         if not run_dir.is_dir():
@@ -67,7 +63,6 @@ def discover_source_runs(output_root: Path) -> dict[str, list[dict[str, Any]]]:
         marker = validation.marker
         eyes_path = run_dir / "eyes.csv"
         if not eyes_path.is_file():
-            # Defensive: validate_completion already requires this artifact.
             continue
         subject = normalize_subject(marker.get("subject") or run_dir.name.split("_formal_", 1)[0])
         grouped.setdefault(subject, []).append(
@@ -83,10 +78,7 @@ def discover_source_runs(output_root: Path) -> dict[str, list[dict[str, Any]]]:
 
 
 def _same_source_identity(left: dict[str, Any], right: dict[str, Any]) -> bool:
-    return (
-        left["formal_identity"] == right["formal_identity"]
-        and left["eyes_sha256"] == right["eyes_sha256"]
-    )
+    return left["formal_identity"] == right["formal_identity"] and left["eyes_sha256"] == right["eyes_sha256"]
 
 
 def select_run(
@@ -94,15 +86,8 @@ def select_run(
     *,
     expected_yolo_batch_size: int,
 ) -> tuple[dict[str, Any], list[Path], str]:
-    """Select one validated formal source without mtime-based ambiguity.
-
-    A source with a different YOLO batch size is not silently substituted because
-    full-class reuses its YOLO boxes. Multiple matching candidates are only
-    auto-resolved when their formal identity and ``eyes.csv`` bytes are identical.
-    """
     if not candidates:
         raise RuntimeError("select_run requires at least one validated source candidate")
-
     matching = [
         item
         for item in candidates
@@ -114,7 +99,6 @@ def select_run(
             "No validated formal source matches configured production yolo.batch_size="
             f"{expected_yolo_batch_size}; available={available}"
         )
-
     if len(matching) == 1:
         selected = matching[0]
         alternatives = [item["run_dir"] for item in candidates if item is not selected]
@@ -135,7 +119,6 @@ def select_run(
             "Ambiguous validated formal sources for one subject; refusing silent selection: "
             + json.dumps(details, ensure_ascii=False, sort_keys=True)
         )
-
     matching_sorted = sorted(matching, key=lambda item: str(item["run_dir"]).lower())
     selected = matching_sorted[0]
     alternatives = [item["run_dir"] for item in candidates if item is not selected]
@@ -149,26 +132,17 @@ def parse_subjects(text: str | None) -> list[str] | None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Batch canonical RITnet full-class producer")
-    parser.add_argument("--output", type=Path, required=True)
+    parser = argparse.ArgumentParser(description="Batch final <=1 GiB RITnet full-class producer")
+    parser.add_argument("--output", type=Path, required=True, help="Historical formal output root")
     parser.add_argument("--config", type=Path, default=PACKAGE_ROOT / "config.yaml")
     parser.add_argument("--subjects", help="Optional comma-separated subject filter")
     parser.add_argument("--device", default="0")
-    # Kept temporarily for CLI compatibility while the old all-label store is
-    # removed in later checklist steps. It is not a scientific parameter.
-    parser.add_argument("--chunk-rows", type=int, default=128)
-    parser.add_argument("--compression", choices=("npz_compressed", "npz_stored"), default="npz_compressed")
-    # Accepted for compatibility with the canonical outer wrapper; child runs
-    # hash source videos unconditionally through run_ritnet_fullclass_extension.py.
-    parser.add_argument("--hash-video", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    if args.chunk_rows <= 0:
-        raise ValueError("--chunk-rows must be positive")
     output_root = args.output.resolve()
     config_path = args.config.resolve()
     if not output_root.is_dir():
@@ -220,8 +194,8 @@ def main() -> int:
         "configured_source_yolo_batch_size": expected_yolo_batch_size,
         "source_completion_contract_enforced": True,
         "source_ambiguity_mtime_selection_allowed": False,
-        "source_video_content_sha256_enforced_by_child": True,
-        "model_mismatch_override_allowed": False,
+        "source_video_content_sha256_frozen_by_child": True,
+        "legacy_label_chunk_storage_enabled": False,
         "selections": selections,
         "dry_run": bool(args.dry_run),
     }
@@ -238,8 +212,6 @@ def main() -> int:
             "--run-dir", item["run_dir"],
             "--config", str(config_path),
             "--device", str(args.device),
-            "--chunk-rows", str(args.chunk_rows),
-            "--compression", str(args.compression),
         ]
         print(f"[RUN {index}/{len(selections)}] {item['subject']}: {item['run_dir']}")
         print("  " + subprocess.list2cmdline(command))
@@ -252,7 +224,7 @@ def main() -> int:
                 "source_eyes_sha256": item["source_eyes_sha256"],
                 "selection_reason": item["selection_reason"],
                 "returncode": completed.returncode,
-                "status": "completed" if completed.returncode == 0 else "failed",
+                "status": "completed_or_strictly_skipped" if completed.returncode == 0 else "failed",
             }
         )
         if completed.returncode != 0 and not continue_on_error:
