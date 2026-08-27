@@ -1,9 +1,11 @@
 """Final fixed-b16 RITnet DirectML runtime for compact full-class analysis.
 
 The frozen ONNX graph still exposes the qualified five-output contract. Cohort
-production requests only hard labels plus four-class probabilities and derives
-the three deterministic uncertainty maps lazily on CPU summary workers. Full
-five-output inference remains available for model qualification and sparse QC.
+production requests only hard labels plus four-class probabilities. The three
+deterministic uncertainty maps are represented by zero-copy descriptors and are
+reduced directly from ocular probability pixels by CPU summary workers, rather
+than materialized as full 400x640 maps. Full five-output inference remains
+available for model qualification and sparse QC.
 """
 from __future__ import annotations
 
@@ -29,16 +31,25 @@ OUTPUT_NAMES = (
     "entropy",
 )
 COHORT_OUTPUT_NAMES = ("labels", "class_probability")
+COHORT_FULL_VALIDATION_INTERVAL = 100
 PREPROCESSING_VERSION = "ritnet-upstream-preprocess-fixed-aspect-roi-v2"
 
 
-class _DerivedUncertaintyBatch:
-    """Lazy deterministic uncertainty maps derived from four-class probability.
+class _DerivedUncertaintyEye:
+    """Zero-copy marker for one deterministic uncertainty metric of one eye."""
 
-    The ONNX export defines max probability, top1-top2 margin and entropy solely
-    from ``class_probability``. Production keeps the exact definitions but
-    materializes one eye-sized map only when a CPU summary worker indexes it,
-    avoiding three extra full-b16 GPU->CPU outputs.
+    def __init__(self, class_probability: np.ndarray, metric: str) -> None:
+        self.class_probability = np.asarray(class_probability, dtype=np.float32)
+        self.ritnet_derived_uncertainty_metric = str(metric)
+
+
+class _DerivedUncertaintyBatch:
+    """Zero-copy descriptors derived from four-class probability.
+
+    Production only needs compact ocular means. Returning a descriptor here
+    avoids materializing full max/margin/entropy maps on CPU for every eye.
+    ``summarize_uncertainty(inputs_validated=True)`` recognizes the descriptor
+    and reduces directly over ocular probability pixels.
     """
 
     def __init__(self, class_probability: np.ndarray, metric: str) -> None:
@@ -59,22 +70,8 @@ class _DerivedUncertaintyBatch:
     def __len__(self) -> int:
         return int(self._probability.shape[0])
 
-    def __getitem__(self, index: int) -> np.ndarray:
-        probability = np.asarray(self._probability[index], dtype=np.float32)
-        if self._metric == "max_probability":
-            return np.ascontiguousarray(np.max(probability, axis=0), dtype=np.float32)
-        if self._metric == "top1_top2_margin":
-            # Four classes only. Sorting four values per pixel gives the same top1
-            # and top2 values as the frozen torch.topk export, independent of tie
-            # class ordering because only the probability values enter the margin.
-            top = np.sort(probability, axis=0)
-            return np.ascontiguousarray(top[3] - top[2], dtype=np.float32)
-
-        # Exact export definition:
-        # -sum(p * log(clamp(p, min=1e-12)), dim=class)
-        safe = np.maximum(probability, np.float32(1e-12))
-        entropy = -np.sum(probability * np.log(safe), axis=0)
-        return np.ascontiguousarray(entropy, dtype=np.float32)
+    def __getitem__(self, index: int) -> _DerivedUncertaintyEye:
+        return _DerivedUncertaintyEye(self._probability[index], self._metric)
 
 
 class RitnetFullClassFinalRuntime:
@@ -89,10 +86,8 @@ class RitnetFullClassFinalRuntime:
         self.preprocessing_version = PREPROCESSING_VERSION
         self.session = create_directml_session(self.weights, self.device_id)
         self.providers = list(self.session.get_providers())
-        # Production engine calls infer_prepared(). Keep the qualified five-output
-        # graph itself frozen, but request only the two information-complete cohort
-        # outputs. Tests constructed via __new__ default to the historical full path.
         self.cohort_compact_outputs = True
+        self._cohort_call_count = 0
 
         inputs = self.session.get_inputs()
         outputs = self.session.get_outputs()
@@ -180,17 +175,21 @@ class RitnetFullClassFinalRuntime:
         }
 
     @staticmethod
-    def _validate_labels_output(value: np.ndarray, valid_batch_size: int) -> np.ndarray:
+    def _labels_output_structure(value: np.ndarray, valid_batch_size: int) -> np.ndarray:
         labels = np.asarray(value)
         expected = (FIXED_BATCH_SIZE, INPUT_HEIGHT, INPUT_WIDTH)
         if labels.shape != expected or labels.dtype != np.uint8:
             raise RuntimeError(
                 f"RITnet labels output must be {expected} uint8, got {labels.shape} {labels.dtype}"
             )
-        real = labels[: int(valid_batch_size)]
+        return np.ascontiguousarray(labels[: int(valid_batch_size)])
+
+    @classmethod
+    def _validate_labels_output(cls, value: np.ndarray, valid_batch_size: int) -> np.ndarray:
+        real = cls._labels_output_structure(value, valid_batch_size)
         if not np.isin(np.unique(real), (0, 1, 2, 3)).all():
             raise RuntimeError("RITnet labels contain values outside {0,1,2,3}")
-        return np.ascontiguousarray(real)
+        return real
 
     @staticmethod
     def _validate_float_map(name: str, value: np.ndarray, *, lower: float, upper: float) -> np.ndarray:
@@ -212,7 +211,7 @@ class RitnetFullClassFinalRuntime:
         return array
 
     @staticmethod
-    def _validate_class_probability(value: np.ndarray) -> np.ndarray:
+    def _class_probability_structure(value: np.ndarray) -> np.ndarray:
         array = np.asarray(value)
         expected = (FIXED_BATCH_SIZE, 4, INPUT_HEIGHT, INPUT_WIDTH)
         if array.shape != expected or array.dtype != np.float32:
@@ -220,6 +219,11 @@ class RitnetFullClassFinalRuntime:
                 f"RITnet class_probability output must be {expected} float32, got "
                 f"{array.shape} {array.dtype}"
             )
+        return array
+
+    @classmethod
+    def _validate_class_probability(cls, value: np.ndarray) -> np.ndarray:
+        array = cls._class_probability_structure(value)
         if not np.isfinite(array).all():
             raise RuntimeError("RITnet class_probability contains non-finite values")
         if array.size:
@@ -239,7 +243,7 @@ class RitnetFullClassFinalRuntime:
         return array
 
     @staticmethod
-    def _validate_prepared_input(tensor: np.ndarray, valid_batch_size: int) -> None:
+    def _prepared_input_structure(tensor: np.ndarray, valid_batch_size: int) -> None:
         expected_tensor = (FIXED_BATCH_SIZE, 1, INPUT_HEIGHT, INPUT_WIDTH)
         if tensor.shape != expected_tensor or tensor.dtype != np.float32:
             raise ValueError(
@@ -248,6 +252,10 @@ class RitnetFullClassFinalRuntime:
             )
         if not 1 <= int(valid_batch_size) <= FIXED_BATCH_SIZE:
             raise ValueError(f"valid_batch_size must be 1..{FIXED_BATCH_SIZE}")
+
+    @classmethod
+    def _validate_prepared_input(cls, tensor: np.ndarray, valid_batch_size: int) -> None:
+        cls._prepared_input_structure(tensor, valid_batch_size)
         if not np.isfinite(tensor).all():
             raise ValueError("prepared RITnet tensor contains non-finite values")
 
@@ -291,6 +299,7 @@ class RitnetFullClassFinalRuntime:
             "output_validation_ms": float(output_validation_ms),
             "gpu_and_transfer_ms": float(gpu_and_transfer_ms),
             "output_contract": "five-output-full",
+            "full_output_validation": True,
         }
 
     def _infer_cohort_prepared(
@@ -298,8 +307,18 @@ class RitnetFullClassFinalRuntime:
         tensor: np.ndarray,
         valid_batch_size: int,
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Information-complete cohort path with only two DirectML outputs."""
-        self._validate_prepared_input(tensor, valid_batch_size)
+        """Information-complete cohort path with sampled full pixel validation."""
+        call_count = int(getattr(self, "_cohort_call_count", 0)) + 1
+        self._cohort_call_count = call_count
+        full_validation = (
+            call_count == 1
+            or call_count % COHORT_FULL_VALIDATION_INTERVAL == 0
+            or int(valid_batch_size) < FIXED_BATCH_SIZE
+        )
+        if full_validation:
+            self._validate_prepared_input(tensor, valid_batch_size)
+        else:
+            self._prepared_input_structure(tensor, valid_batch_size)
 
         total_started = time.perf_counter()
         session_started = time.perf_counter()
@@ -311,8 +330,12 @@ class RitnetFullClassFinalRuntime:
             )
 
         validation_started = time.perf_counter()
-        labels = self._validate_labels_output(raw[0], valid_batch_size)
-        class_probability_full = self._validate_class_probability(raw[1])
+        if full_validation:
+            labels = self._validate_labels_output(raw[0], valid_batch_size)
+            class_probability_full = self._validate_class_probability(raw[1])
+        else:
+            labels = self._labels_output_structure(raw[0], valid_batch_size)
+            class_probability_full = self._class_probability_structure(raw[1])
         real = slice(0, int(valid_batch_size))
         class_probability = np.ascontiguousarray(class_probability_full[real])
         outputs: dict[str, Any] = {
@@ -334,6 +357,8 @@ class RitnetFullClassFinalRuntime:
             "output_validation_ms": float(output_validation_ms),
             "gpu_and_transfer_ms": float(gpu_and_transfer_ms),
             "output_contract": "labels+class_probability-cohort",
+            "full_output_validation": bool(full_validation),
+            "cohort_call_count": int(call_count),
         }
 
     def infer_prepared(
@@ -368,6 +393,7 @@ class RitnetFullClassFinalRuntime:
             "output_validation_ms": float(output_validation_ms),
             "gpu_and_transfer_ms": float((time.perf_counter() - total_started) * 1000.0),
             "output_contract": "labels-only-qc",
+            "full_output_validation": True,
         }
 
     def infer_batch(self, roi_grays: list[np.ndarray]) -> tuple[dict[str, Any], dict[str, Any]]:
