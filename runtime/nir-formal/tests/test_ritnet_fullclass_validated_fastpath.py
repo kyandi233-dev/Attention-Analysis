@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
+import pytest
 
 from ritnet_fullclass_uncertainty import summarize_uncertainty
 
@@ -25,7 +26,7 @@ def _inputs():
     return labels, probability, max_probability, margin, entropy, valid
 
 
-def test_runtime_validated_fast_path_matches_fail_closed_path_exactly():
+def test_validated_cohort_path_preserves_primary_class_outputs_and_temporal_uncertainty_means():
     labels, probability, max_probability, margin, entropy, valid = _inputs()
     kwargs = dict(
         labels=labels,
@@ -39,6 +40,33 @@ def test_runtime_validated_fast_path_matches_fail_closed_path_exactly():
     )
 
     checked = summarize_uncertainty(**kwargs, inputs_validated=False)
-    trusted = summarize_uncertainty(**kwargs, inputs_validated=True)
+    cohort = summarize_uncertainty(**kwargs, inputs_validated=True)
 
-    assert trusted == checked
+    # Production keeps all four soft classes exactly; these are scientific outputs.
+    for name in ("background", "sclera", "iris", "pupil"):
+        field = f"soft_{name}_fraction"
+        assert cohort[field] == pytest.approx(checked[field])
+
+    # The three ocular means consumed by temporal QC remain numerically identical.
+    for field in (
+        "ocular_max_probability_mean",
+        "ocular_top1_top2_margin_mean",
+        "ocular_entropy_mean",
+    ):
+        assert cohort[field] == pytest.approx(checked[field])
+
+    # Cohort production deliberately skips the expensive QC-only percentile/boundary scope.
+    assert "whole_max_probability_mean" in checked
+    assert "whole_max_probability_mean" not in cohort
+    assert "boundary_entropy_p95" in checked
+    assert "boundary_entropy_p95" not in cohort
+    assert cohort["uncertainty_boundary_band_px"] is None
+    assert cohort["uncertainty_boundary_pixel_count"] is None
+
+    # The configured low-confidence threshold is retained only for the ocular domain used in cohort QC.
+    assert cohort["low_max_probability_threshold"] == pytest.approx(0.60)
+    assert cohort["ocular_low_max_probability_fraction"] == pytest.approx(
+        checked["ocular_low_max_probability_fraction"]
+    )
+    assert cohort["whole_low_max_probability_fraction"] is None
+    assert cohort["boundary_low_max_probability_fraction"] is None
