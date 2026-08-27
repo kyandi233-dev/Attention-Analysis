@@ -12,6 +12,7 @@ FIELDS = [
     "eye", "source", "redetect_reason", "frame_status", "status", "anchor_yolo_confidence",
     "bbox_x1", "bbox_y1", "bbox_x2", "bbox_y2", "yolo_batch_size",
 ]
+LEGACY_FIELDS = [field for field in FIELDS if field != "yolo_batch_size"]
 
 
 def row(eye, x1, x2, frame=100):
@@ -25,9 +26,9 @@ def row(eye, x1, x2, frame=100):
     }
 
 
-def write(path, rows):
+def write(path, rows, fields=FIELDS):
     with path.open("w", encoding="utf-8-sig", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=FIELDS)
+        writer = csv.DictWriter(handle, fieldnames=fields, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
 
@@ -40,6 +41,19 @@ def test_source_eye_loader_accepts_ordered_pair(tmp_path):
     assert len(rows) == 2
 
 
+def test_source_eye_loader_accepts_legacy_table_without_yolo_batch_column(tmp_path):
+    path = tmp_path / "eyes.csv"
+    write(
+        path,
+        [row("frame_left", 10, 50), row("frame_right", 100, 140)],
+        fields=LEGACY_FIELDS,
+    )
+    fields, rows = load_source_eye_rows(path, "sub-031")
+    assert "yolo_batch_size" not in fields
+    assert len(rows) == 2
+    assert rows[0].get("yolo_batch_size") is None
+
+
 def test_source_eye_loader_rejects_reversed_identity(tmp_path):
     path = tmp_path / "eyes.csv"
     write(path, [row("frame_left", 100, 140), row("frame_right", 10, 50)])
@@ -47,13 +61,13 @@ def test_source_eye_loader_rejects_reversed_identity(tmp_path):
         load_source_eye_rows(path, "sub-031")
 
 
-def test_source_eye_loader_requires_final_source_columns(tmp_path):
+def test_source_eye_loader_requires_actual_analysis_columns(tmp_path):
     path = tmp_path / "eyes.csv"
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=["frame_idx", "eye"])
         writer.writeheader()
         writer.writerow({"frame_idx": 1, "eye": "frame_left"})
-    with pytest.raises(ValueError, match="missing final-source columns"):
+    with pytest.raises(ValueError, match="missing required source columns"):
         load_source_eye_rows(path, "sub-031")
 
 
