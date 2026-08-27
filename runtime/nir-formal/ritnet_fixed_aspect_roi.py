@@ -1,12 +1,12 @@
 """Deterministic fixed-aspect ROI construction for final RITnet analysis.
 
 The historical formal pipeline expanded each YOLO eye box and then resized the
-result to 640x400 even when the crop aspect ratio differed from 1.6.  That
-introduces anisotropic stretch.  The final full-class path must instead build a
-virtual crop whose integer pixel size is exactly 8:5 (= 1.6), pad at frame
-boundaries when necessary, and then resize uniformly to 640x400.
+result to 640x400 even when the crop aspect ratio differed from 1.6. That
+introduces anisotropic stretch. The final full-class path instead builds a
+virtual crop whose integer pixel size is exactly 8:5 (=1.6), pads at frame
+boundaries when necessary, and then resizes uniformly to 640x400.
 
-This module contains only geometry/cropping logic.  It does not run YOLO or
+This module contains only geometry/cropping logic. It does not run YOLO or
 RITnet and does not modify historical source files.
 """
 from __future__ import annotations
@@ -101,7 +101,9 @@ class FixedAspectRoiGeometry:
         }
 
 
-def _validate_bbox(box: Sequence[float], frame_width: int, frame_height: int) -> tuple[float, float, float, float]:
+def _validate_bbox(
+    box: Sequence[float], frame_width: int, frame_height: int
+) -> tuple[float, float, float, float]:
     if len(box) != 4:
         raise ValueError(f"bbox must have four values, got {box!r}")
     x1, y1, x2, y2 = map(float, box)
@@ -117,6 +119,22 @@ def _validate_bbox(box: Sequence[float], frame_width: int, frame_height: int) ->
     return x1, y1, x2, y2
 
 
+def _choose_integer_origin(
+    *, low_edge: float, high_edge: float, size: int
+) -> int:
+    """Choose the most centered integer origin that still encloses [low, high]."""
+    if size <= 0 or high_edge <= low_edge:
+        raise ValueError("invalid interval/size for integer ROI origin")
+    minimum_origin = int(ceil(high_edge - size))
+    maximum_origin = int(floor(low_edge))
+    if minimum_origin > maximum_origin:
+        raise AssertionError(
+            f"integer ROI size {size} cannot enclose interval {low_edge}..{high_edge}"
+        )
+    desired = int(round((low_edge + high_edge - size) / 2.0))
+    return min(max(desired, minimum_origin), maximum_origin)
+
+
 def build_fixed_aspect_geometry(
     box: Sequence[float],
     *,
@@ -128,16 +146,21 @@ def build_fixed_aspect_geometry(
 ) -> FixedAspectRoiGeometry:
     """Build one deterministic 8:5 virtual crop around a YOLO eye box.
 
-    Expansion happens in floating-point source-frame coordinates.  The expanded
-    context is then enclosed by the smallest integer 8*k by 5*k crop centered on
-    the expanded region.  The virtual crop may extend outside the frame; those
-    pixels are represented by explicit padding rather than by clipping one side
-    and distorting the aspect ratio.
+    Expansion happens in floating-point source-frame coordinates. The expanded
+    context is fully enclosed by the smallest integer 8*k by 5*k crop that can
+    contain it. Among all legal origins, the crop closest to the expanded
+    context center is selected. The virtual crop may extend outside the frame;
+    those pixels are explicit padding rather than asymmetric clipping.
     """
     x1, y1, x2, y2 = _validate_bbox(box, int(frame_width), int(frame_height))
     horizontal = float(expand_horizontal_each_side)
     vertical = float(expand_vertical_each_side)
-    if not isfinite(horizontal) or not isfinite(vertical) or horizontal < 0 or vertical < 0:
+    if (
+        not isfinite(horizontal)
+        or not isfinite(vertical)
+        or horizontal < 0
+        or vertical < 0
+    ):
         raise ValueError("ROI expansion fractions must be finite and non-negative")
     if padding_mode not in {"reflect101", "replicate", "constant"}:
         raise ValueError(f"unsupported padding_mode: {padding_mode!r}")
@@ -148,20 +171,41 @@ def build_fixed_aspect_geometry(
     expanded_x2 = x2 + horizontal * bbox_w
     expanded_y1 = y1 - vertical * bbox_h
     expanded_y2 = y2 + vertical * bbox_h
-    expanded_w = expanded_x2 - expanded_x1
-    expanded_h = expanded_y2 - expanded_y1
 
-    # 8*k by 5*k gives an exact integer 1.6 aspect ratio and guarantees the
-    # virtual crop encloses the full expanded context in both dimensions.
-    k = max(1, int(ceil(max(expanded_w / TARGET_ASPECT_NUM, expanded_h / TARGET_ASPECT_DEN))))
+    # First convert the floating context to the exact integer span required to
+    # cover every source pixel touched by that context. Then choose the smallest
+    # 8*k by 5*k rectangle that can contain both required spans.
+    required_w = int(ceil(expanded_x2) - floor(expanded_x1))
+    required_h = int(ceil(expanded_y2) - floor(expanded_y1))
+    k = max(
+        1,
+        int(
+            ceil(
+                max(
+                    required_w / TARGET_ASPECT_NUM,
+                    required_h / TARGET_ASPECT_DEN,
+                )
+            )
+        ),
+    )
     virtual_w = TARGET_ASPECT_NUM * k
     virtual_h = TARGET_ASPECT_DEN * k
-    center_x = (expanded_x1 + expanded_x2) / 2.0
-    center_y = (expanded_y1 + expanded_y2) / 2.0
-    virtual_x1 = int(floor(center_x - virtual_w / 2.0))
-    virtual_y1 = int(floor(center_y - virtual_h / 2.0))
+    virtual_x1 = _choose_integer_origin(
+        low_edge=expanded_x1, high_edge=expanded_x2, size=virtual_w
+    )
+    virtual_y1 = _choose_integer_origin(
+        low_edge=expanded_y1, high_edge=expanded_y2, size=virtual_h
+    )
     virtual_x2 = virtual_x1 + virtual_w
     virtual_y2 = virtual_y1 + virtual_h
+
+    # These are invariant checks, not approximate QC conditions.
+    if virtual_x1 > expanded_x1 or virtual_x2 < expanded_x2:
+        raise AssertionError("fixed-aspect ROI failed to enclose expanded x context")
+    if virtual_y1 > expanded_y1 or virtual_y2 < expanded_y2:
+        raise AssertionError("fixed-aspect ROI failed to enclose expanded y context")
+    if virtual_w * TARGET_ASPECT_DEN != virtual_h * TARGET_ASPECT_NUM:
+        raise AssertionError("fixed-aspect ROI is not exactly 8:5")
 
     source_x1 = max(0, virtual_x1)
     source_y1 = max(0, virtual_y1)
@@ -262,11 +306,15 @@ def crop_fixed_aspect_gray(
     crop = np.ascontiguousarray(crop)
     expected = (geometry.virtual_height, geometry.virtual_width)
     if crop.shape != expected:
-        raise RuntimeError(f"fixed-aspect crop shape mismatch: expected={expected}, got={crop.shape}")
+        raise RuntimeError(
+            f"fixed-aspect crop shape mismatch: expected={expected}, got={crop.shape}"
+        )
     return crop
 
 
-def uniform_resize_scale(geometry: FixedAspectRoiGeometry, output_size: tuple[int, int] = (640, 400)) -> float:
+def uniform_resize_scale(
+    geometry: FixedAspectRoiGeometry, output_size: tuple[int, int] = (640, 400)
+) -> float:
     output_w, output_h = map(int, output_size)
     if output_w <= 0 or output_h <= 0:
         raise ValueError(f"invalid output size: {output_size}")
@@ -275,5 +323,7 @@ def uniform_resize_scale(geometry: FixedAspectRoiGeometry, output_size: tuple[in
     scale_x = output_w / geometry.virtual_width
     scale_y = output_h / geometry.virtual_height
     if not np.isclose(scale_x, scale_y, rtol=0.0, atol=1e-12):
-        raise AssertionError(f"non-uniform resize would occur: scale_x={scale_x}, scale_y={scale_y}")
+        raise AssertionError(
+            f"non-uniform resize would occur: scale_x={scale_x}, scale_y={scale_y}"
+        )
     return float(scale_x)
