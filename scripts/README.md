@@ -13,6 +13,7 @@
 | `nir_build_analysis_tables.py` | **当前 NIR 下游** | `10_analysis_ready` + Behavior → `11_analysis_tables` |
 | `nir_formal_pipeline.py` | **当前 NIR 下游统一入口** | 分阶段运行 `materialize / tables / all`；不会调用 YOLO/RITnet |
 | `nir_pipeline_validation.py` | **当前 validation-only** | core diagnostic validation + publication analysis + Figure 1–10；只写 `12_pipeline_validation` |
+| `nir_pupil_benchmark.py` | **当前 NIR 测量学 benchmark** | 只读 production `eyes.csv` 和原视频，构建 source-pixel crop，运行七传统算法、agreement/QC 与完整性验证 |
 | `nir_behavior_alignment.py` | **历史 prototype、可执行** | 旧 production-based NIR × Behavior schema-v2 对齐；不再是当前正式主分析入口 |
 | `build_stimulus_visual_table.py` | **当前** | 重建正式 SART 画面并生成视觉协变量/报告 PNG |
 | `rgb_analysis.py` | **当前，共享 RGB** | RGB audit / timeline / Motion / Pose / Face sampling 与 QC 入口 |

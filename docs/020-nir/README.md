@@ -20,6 +20,19 @@ NIR extraction / full-class production
 
 当前 AMD 44 人仍是 exploratory/development cohort；未来约 116 人 final cohort 应复用冻结后的同一套代码，在独立 snapshot 中执行。
 
+## 七传统算法测量学 benchmark
+
+Issue #19 的 production `eyes.csv` → 原始 NIR 视频 → 1:1 source-pixel crop → 七算法 → RITnet agreement/QC 已有独立入口：
+
+```text
+scripts/nir_pupil_benchmark.py
+configs/nir_pypupilext_native_benchmark.yaml
+src/attention_pipeline/nir_pupil_benchmark/
+docs/020-nir/030-七算法官方API审计与统一Benchmark设计.md
+```
+
+这一层只验证逐帧测量行为，不运行 YOLO/RITnet，不把 RITnet 当人工真值，不得从 agreement 直接声称 accuracy 或选出最好算法。当前已通过 sub-031 极小 smoke 和人工 montage 生成；在人工标注与用户批准前，不扩大到 10 人正式运行。
+
 ## 当前上位导航
 
 如果要理解“整个 NIR 到底怎么分析”，优先读取：

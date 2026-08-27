@@ -8,6 +8,7 @@
 | `sart_bbb_v3_0.yaml` | 2026-08-16、sub-011~030、BBB SART 分析 | **历史可执行配置，不是当前口径** |
 | `preexperiment.yaml` | 预实验 v2 路径、窗口、审批门等 | 历史兼容配置；不作为 current CLI 默认入口 |
 | `formal.yaml` | 08-16 阶段 NIR ROI / PuReST 候选链 | 历史兼容配置；不作为 current NIR 配置 |
+| `nir_pypupilext_native_benchmark.yaml` | production evidence → source-pixel crop → 七算法 benchmark | **当前测量学验证配置；不运行 YOLO/RITnet，不产生 accuracy 结论** |
 | `../runtime/nir-formal/config.yaml` | YOLO26n + RITnet 正式 NIR | **当前正式 NIR 配置** |
 
 ## 正式原始数据根

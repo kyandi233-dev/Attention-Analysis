@@ -1,7 +1,7 @@
 pipeline:
   name: attention-analysis-nir-pypupilext-native-benchmark
-  version: 0.3.0
-  schema_version: 1
+  version: 0.4.0
+  schema_version: 2
 
 # Runtime policy (docs/020-nir/030 section 3-4):
 # - The main algorithm runtime MUST measure plain run() only.
@@ -13,13 +13,22 @@ runtime:
   confidence: separate_optional
 
 paths:
-  alignment_config: "configs/nir_behavior_alignment.yaml"
-  raw_data_roots:
-    - "E:/正式实验"
-    - "F:/正式实验"
-    - "E:/Data"
-    - "F:/Data"
+  # This benchmark consumes frozen production evidence from this exact root.
+  # The source video is resolved from completion.json / eyes.csv and must exist;
+  # it is never inferred by concatenating a raw-data directory name.
+  production_root: "D:/_AttentionData/Beijing-NIR/amd-directml"
   output_root: "D:/_AttentionData/Beijing-NIR/analysis/pypupilext-native-benchmark/sub031-040"
+
+production:
+  required_completion_status: complete
+  prefer_run_name_contains: "yolo-b8_ritnet-b16"
+  required_files: [completion.json, eyes.csv, run_manifest.json]
+  ritnet_analysis_size: [320, 160]
+  hash_evidence_files: true
+  # Full source-video SHA256 is intentionally off because the multi-GB videos
+  # are immutable upstream data and hashing all ten is a separate I/O cost.
+  # File size and nanosecond mtime are always recorded instead.
+  hash_source_video: false
 
 subjects:
   include:
@@ -56,13 +65,17 @@ algorithms:
 sampling:
   # Per subject. Sampling is decided before any pupil detector runs.
   block_uniform_n: 300
+  ritnet_high_quality_n: 100
+  ritnet_difficult_n: 100
   temporal_n: 300
   temporal_preferred_phase: block1
   manual_qc_n: 12
 
 smoke:
-  block_uniform_n: 5
-  temporal_n: 30
+  block_uniform_n: 3
+  ritnet_high_quality_n: 2
+  ritnet_difficult_n: 2
+  temporal_n: 5
   manual_qc_n: 2
 
 input:
@@ -75,6 +88,10 @@ input:
   # official behavior recorded in provenance (docs/020-nir/030 section 4); the
   # benchmark itself never resizes.
   resize_native_crop: false
+  bbox_rounding: floor_min_ceil_max
+  tight_input_kind: production_tight_bbox
+  continuous_input_kind: fixed_source_canvas_from_temporal_tight_bbox_union
+  continuous_canvas_padding_px: 0
 
 # Scale rule for resolution-sensitive parameters (docs/020-nir/030 section 6):
 # frozen from the ~424x187 tight crop probe; provenance recorded in output.
@@ -111,3 +128,14 @@ analysis_policy:
   returned_ellipse_equals_credible_pupil: false
   upload_subject_images: false
   upload_frame_level_outputs: false
+  ritnet_is_ground_truth: false
+  agreement_not_accuracy: true
+  select_samples_before_algorithms: true
+  require_fixed_canvas_for_stateful_continuous_mode: true
+
+integrity:
+  fail_on_multiple_complete_runs: true
+  fail_on_insufficient_samples: true
+  fail_on_duplicate_evidence_key: true
+  fail_on_existing_output: true
+  atomic_tabular_writes: true

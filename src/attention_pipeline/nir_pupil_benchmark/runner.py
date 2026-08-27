@@ -22,6 +22,8 @@ import numpy as np
 import pandas as pd
 
 from .adapters import (
+    applied_parameter_snapshot,
+    apply_scale_params,
     make_detector,
     pupil_diameter_bounds,
     run_detection,
@@ -76,11 +78,20 @@ def detect_crop(
         diameter_min_px=diameter_min_px, diameter_max_px=diameter_max_px,
     )
     row = _detection_output_to_row(output, spec, width, height)
+    actual_params = applied_parameter_snapshot(
+        detector,
+        spec,
+        width=width,
+        height=height,
+        diameter_min_px=diameter_min_px,
+        diameter_max_px=diameter_max_px,
+    )
 
     if run_confidence:
         confidence = run_with_confidence(
             spec, image,
             diameter_min_px=diameter_min_px, diameter_max_px=diameter_max_px,
+            params=merged_params,
         )
         row["outline_confidence"] = confidence.outline_confidence
         row["confidence_runtime_ms"] = confidence.confidence_runtime_ms
@@ -92,6 +103,7 @@ def detect_crop(
             "algorithm": algorithm,
             "scale_rule_overrides": overrides,
             "user_params": params or {},
+            "actual_applied": actual_params,
             "scale_rule": "docs/020-nir/030 section 6",
             "mode": "independent",
         },
@@ -159,9 +171,11 @@ def run_crop_list(
 
     Each input row needs at least ``crop_path`` (relative to ``crop_root``) and
     any identity columns (subject/phase/frame_idx/eye/sample_role/bbox_*). In
-    ``continuous`` mode rows are grouped by (subject, eye) and processed in
-    ``frame_idx`` order with one detector per algorithm, constructed with the
-    scale-rule parameters of the group's first crop.
+    ``continuous`` mode rows are grouped by (subject, eye, sequence_id) and
+    processed in frame order.  A continuous sequence must use one fixed source
+    coordinate canvas: input dimensions and bbox coordinates cannot change.
+    Scale-sensitive properties are still re-applied before every call and the
+    actual values are written to provenance.
     """
     algorithms = list(algorithms)
     for algorithm in algorithms:
@@ -171,10 +185,11 @@ def run_crop_list(
 
     records: list[dict[str, Any]] = []
     if mode == "continuous":
-        for subject, eye, group in _group_by_subject_eye(rows):
+        for subject, eye, sequence_id, group in _group_continuous(rows):
             group = sorted(group, key=lambda r: int(r.get("frame_idx", 0)))
             first_image = _load_crop(crop_root, group[0])
             fw, fh = first_image.shape[1], first_image.shape[0]
+            _validate_fixed_continuous_canvas(group, crop_root, fw, fh)
             detectors = {
                 algorithm: make_detector(
                     ALGORITHM_SPECS[algorithm],
@@ -186,12 +201,36 @@ def run_crop_list(
                 image = _load_crop(crop_root, row)
                 for algorithm in algorithms:
                     spec = ALGORITHM_SPECS[algorithm]
+                    applied = apply_scale_params(
+                        detectors[algorithm], spec, image.shape[1], image.shape[0]
+                    )
                     output = _run_on_shared(detectors[algorithm], spec, image)
                     detection = _detection_output_to_row(
                         output, spec, image.shape[1], image.shape[0]
                     )
-                    detection = _maybe_confidence(detection, spec, image, run_confidence)
-                    detection["params_provenance"] = _provenance(algorithm, image.shape[1], image.shape[0])
+                    detection = _maybe_confidence(
+                        detection, spec, image, run_confidence, params=applied
+                    )
+                    radius_min = radius_max = None
+                    if spec.supports_diameter_override:
+                        radius_min, radius_max = pupil_diameter_bounds(
+                            image.shape[1], image.shape[0]
+                        )
+                    actual = applied_parameter_snapshot(
+                        detectors[algorithm],
+                        spec,
+                        width=image.shape[1],
+                        height=image.shape[0],
+                        diameter_min_px=float(2 * radius_min) if radius_min else None,
+                        diameter_max_px=float(2 * radius_max) if radius_max else None,
+                    )
+                    detection["params_provenance"] = _provenance(
+                        algorithm,
+                        image.shape[1],
+                        image.shape[0],
+                        actual_applied=actual,
+                        sequence_id=sequence_id,
+                    )
                     records.append(assemble_row(row, detection))
     else:
         for row in rows:
@@ -210,12 +249,35 @@ def run_crop_list(
     return frame
 
 
-def _group_by_subject_eye(rows: Sequence[Mapping[str, Any]]):
-    groups: dict[tuple[str, str], list[dict[str, Any]]] = {}
+def _group_continuous(rows: Sequence[Mapping[str, Any]]):
+    groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     for row in rows:
-        key = (str(row.get("subject", "")), str(row.get("eye", "")))
+        sequence_id = str(row.get("sequence_id", "")).strip()
+        if not sequence_id:
+            raise ValueError("continuous mode requires a non-empty sequence_id")
+        key = (str(row.get("subject", "")), str(row.get("eye", "")), sequence_id)
         groups.setdefault(key, []).append(dict(row))
-    return ((subject, eye, items) for (subject, eye), items in groups.items())
+    return (
+        (subject, eye, sequence_id, items)
+        for (subject, eye, sequence_id), items in groups.items()
+    )
+
+
+def _validate_fixed_continuous_canvas(
+    rows: Sequence[Mapping[str, Any]], crop_root: Path, width: int, height: int
+) -> None:
+    bbox_keys = ("bbox_x1", "bbox_y1", "bbox_x2", "bbox_y2")
+    reference = tuple(rows[0].get(key) for key in bbox_keys)
+    for row in rows:
+        current = tuple(row.get(key) for key in bbox_keys)
+        if current != reference:
+            raise ValueError(
+                "continuous mode requires a fixed source-coordinate bbox; "
+                "moving tight crops would invalidate detector state"
+            )
+        image = _load_crop(crop_root, row)
+        if image.shape[:2] != (height, width):
+            raise ValueError("continuous mode requires constant input dimensions")
 
 
 def _load_crop(crop_root: Path, row: Mapping[str, Any]) -> np.ndarray:
@@ -243,7 +305,8 @@ def _run_on_shared(detector: Any, spec: Any, image: np.ndarray) -> Any:
 
 
 def _maybe_confidence(
-    detection: dict[str, Any], spec: Any, image: np.ndarray, run_confidence: bool
+    detection: dict[str, Any], spec: Any, image: np.ndarray, run_confidence: bool,
+    *, params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if not run_confidence:
         return detection
@@ -254,6 +317,7 @@ def _maybe_confidence(
         spec, image,
         diameter_min_px=float(2 * radius_min) if radius_min else None,
         diameter_max_px=float(2 * radius_max) if radius_max else None,
+        params=params,
     )
     detection["outline_confidence"] = confidence.outline_confidence
     detection["confidence_runtime_ms"] = confidence.confidence_runtime_ms
@@ -262,13 +326,23 @@ def _maybe_confidence(
     return detection
 
 
-def _provenance(algorithm: str, width: int, height: int) -> str:
+def _provenance(
+    algorithm: str,
+    width: int,
+    height: int,
+    *,
+    actual_applied: Mapping[str, Any],
+    sequence_id: str,
+) -> str:
     return json.dumps(
         {
             "algorithm": algorithm,
             "scale_rule_overrides": scale_params(algorithm, width, height),
+            "actual_applied": dict(actual_applied),
             "scale_rule": "docs/020-nir/030 section 6",
             "mode": "continuous",
+            "sequence_id": sequence_id,
+            "coordinate_contract": "fixed_source_pixel_canvas",
         },
         ensure_ascii=False,
     )

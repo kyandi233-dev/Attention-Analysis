@@ -8,6 +8,7 @@ libraries; algorithm results are simulated with fakes.
 import importlib.util
 import math
 import sys
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -78,6 +79,7 @@ def test_parse_pupil_result_three_layers_kept_apart():
     assert parsed["geometry_sane"] is True
     assert parsed["major_axis"] == 14.0
     assert parsed["minor_axis"] == 8.0
+    assert parsed["angle_deg"] == 102.0  # size[1] is major -> OpenCV angle + 90
     assert parsed["center_x"] == 200.0
     assert parsed["center_y"] == 90.0
     assert math.isclose(parsed["diameter_geom"], math.sqrt(14.0 * 8.0))
@@ -122,6 +124,7 @@ def test_parse_pupil_result_pupil_labs_2d_dict():
     assert parsed["official_valid"] is True
     assert parsed["major_axis"] == 14.0
     assert parsed["minor_axis"] == 8.0
+    assert parsed["angle_deg"] == 12.0  # Detector2D exports major-axis angle
 
 
 def test_parse_pupil_result_pupil_labs_2d_failure_sentinel():
@@ -217,7 +220,11 @@ def test_detect_crop_row_assembly(monkeypatch):
     fake_output = DetectionOutput(
         algorithm="PuRe", result=fake_result, runtime_ms=3.5, failure=None,
     )
-    monkeypatch.setattr(runner_mod, "make_detector", lambda spec, params=None: object())
+    fake_detector = SimpleNamespace(
+        minPupilDiameterMM=1.0,
+        maxPupilDiameterMM=5.0,
+    )
+    monkeypatch.setattr(runner_mod, "make_detector", lambda spec, params=None: fake_detector)
     monkeypatch.setattr(runner_mod, "run_detection", lambda *a, **k: fake_output)
 
     image = np.full((187, 424), 120, dtype=np.uint8)
@@ -236,7 +243,9 @@ def test_detect_crop_failure_recorded(monkeypatch):
     fake_output = DetectionOutput(
         algorithm="Swirski2D", result=None, runtime_ms=1.0, failure="RuntimeError: boom",
     )
-    monkeypatch.setattr(runner_mod, "make_detector", lambda spec, params=None: object())
+    fake_tracker = SimpleNamespace(Radius_Min=4, Radius_Max=19, Seed=0)
+    fake_detector = SimpleNamespace(params=fake_tracker)
+    monkeypatch.setattr(runner_mod, "make_detector", lambda spec, params=None: fake_detector)
     monkeypatch.setattr(runner_mod, "run_detection", lambda *a, **k: fake_output)
     row = detect_crop(np.zeros((187, 424), dtype=np.uint8), "Swirski2D")
     assert row["algorithm_returned"] is False
@@ -260,13 +269,17 @@ def test_assemble_row_merge():
 
 
 def test_run_crop_list_independent(monkeypatch, tmp_path):
-    pytest.importorskip("cv2")
+    cv2 = pytest.importorskip("cv2")
 
     def fake_detect(image, algorithm, **kwargs):
         return {"algorithm": algorithm, "algorithm_returned": True, "center_x": 1.0}
 
     monkeypatch.setattr(runner_mod, "detect_crop", fake_detect)
-    (tmp_path / "a.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    encoded_ok, encoded = cv2.imencode(
+        ".png", np.full((12, 20), 128, dtype=np.uint8)
+    )
+    assert encoded_ok
+    encoded.tofile(str(tmp_path / "a.png"))
     rows = [
         {"subject": "sub-031", "phase": "block1", "frame_idx": 0, "eye": "eye_left",
          "crop_path": "a.png", "sample_role": "smoke"},
@@ -318,9 +331,69 @@ def test_draw_detection_overlay():
     assert np.array_equal(bad, image)
 
 
-def test_write_smoke_manifest_requires_cv2():
+def test_write_smoke_manifest_requires_cv2(tmp_path):
     pytest.importorskip("cv2")
     from attention_pipeline.nir_pupil_benchmark.synthetic import write_smoke_manifest
 
-    rows = write_smoke_manifest(".")
+    rows = write_smoke_manifest(tmp_path)
     assert rows  # would raise earlier if cv2 missing
+
+
+def test_continuous_requires_sequence_id(tmp_path):
+    cv2 = pytest.importorskip("cv2")
+    encoded_ok, encoded = cv2.imencode(
+        ".png", np.full((12, 20), 128, dtype=np.uint8)
+    )
+    assert encoded_ok
+    encoded.tofile(str(tmp_path / "a.png"))
+    rows = [{
+        "subject": "sub-031",
+        "phase": "block1",
+        "frame_idx": 0,
+        "eye": "eye_left",
+        "crop_path": "a.png",
+        "bbox_x1": 10,
+        "bbox_y1": 20,
+        "bbox_x2": 30,
+        "bbox_y2": 32,
+    }]
+    with pytest.raises(ValueError, match="non-empty sequence_id"):
+        run_crop_list(rows, ["ElSe"], crop_root=tmp_path, mode="continuous")
+
+
+def test_continuous_rejects_moving_source_bbox(tmp_path):
+    cv2 = pytest.importorskip("cv2")
+    encoded_ok, encoded = cv2.imencode(
+        ".png", np.full((12, 20), 128, dtype=np.uint8)
+    )
+    assert encoded_ok
+    encoded.tofile(str(tmp_path / "a.png"))
+    encoded.tofile(str(tmp_path / "b.png"))
+    common = {
+        "subject": "sub-031",
+        "phase": "block1",
+        "eye": "eye_left",
+        "sequence_id": "sub-031-block1-eye_left-window0",
+    }
+    rows = [
+        {
+            **common,
+            "frame_idx": 0,
+            "crop_path": "a.png",
+            "bbox_x1": 10,
+            "bbox_y1": 20,
+            "bbox_x2": 30,
+            "bbox_y2": 32,
+        },
+        {
+            **common,
+            "frame_idx": 1,
+            "crop_path": "b.png",
+            "bbox_x1": 11,
+            "bbox_y1": 20,
+            "bbox_x2": 31,
+            "bbox_y2": 32,
+        },
+    ]
+    with pytest.raises(ValueError, match="fixed source-coordinate bbox"):
+        run_crop_list(rows, ["ElSe"], crop_root=tmp_path, mode="continuous")

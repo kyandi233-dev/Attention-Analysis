@@ -313,19 +313,29 @@ def _pair(value: Any) -> tuple[float, float] | None:
     return float(values[0]), float(values[1])
 
 
-def _ellipse_from_pair(center, size, angle_deg) -> Ellipse | None:
+def _ellipse_from_pair(
+    center, size, angle_deg, *, angle_reference: str = "size0"
+) -> Ellipse | None:
     if center is None or size is None:
         return None
     major = max(float(size[0]), float(size[1]))
     minor = min(float(size[0]), float(size[1]))
     if major <= 0 or minor <= 0:
         return None
+    angle = _numeric(angle_deg)
+    if angle_reference == "size0" and float(size[1]) > float(size[0]):
+        # OpenCV RotatedRect.angle describes the orientation of size.width.
+        # Once axes are canonicalized to (major, minor), rotate by 90 degrees
+        # when the original second axis was the major one.
+        angle = (angle + 90.0) % 180.0
+    elif np.isfinite(angle):
+        angle = angle % 180.0
     candidate = Ellipse(
         cx=float(center[0]),
         cy=float(center[1]),
         axis_a=major,
         axis_b=minor,
-        angle_deg=_numeric(angle_deg),
+        angle_deg=angle,
     )
     return candidate if candidate.is_finite_positive() else None
 
@@ -360,6 +370,9 @@ def normalize_result(result: Any) -> dict[str, Any] | None:
             "outline_confidence": float("nan"),
             "has_outline": has_outline,
             "official_valid": bool(confidence > 0) if np.isfinite(confidence) else None,
+            # pupil-detectors already converts its fitted ellipse angle to the
+            # major-axis convention while exporting axes=(minor, major).
+            "angle_reference": "major",
         }
 
     # --- PyPupilEXT Pupil shape ---
@@ -400,6 +413,7 @@ def normalize_result(result: Any) -> dict[str, Any] | None:
         ),
         "has_outline": has_outline,
         "official_valid": official_valid,
+        "angle_reference": "size0",
     }
 
 
@@ -440,7 +454,8 @@ def parse_pupil_result(
     algorithm_returned = False
     if normalized["has_outline"] and normalized["center"] is not None and normalized["size"] is not None:
         ellipse = _ellipse_from_pair(
-            normalized["center"], normalized["size"], normalized["angle_deg"]
+            normalized["center"], normalized["size"], normalized["angle_deg"],
+            angle_reference=normalized.get("angle_reference", "size0"),
         )
         algorithm_returned = ellipse is not None
 

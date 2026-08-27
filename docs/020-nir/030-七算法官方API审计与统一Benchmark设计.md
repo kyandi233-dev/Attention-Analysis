@@ -132,7 +132,7 @@ return center.x > 0 && center.y > 0 && size.width > 0 && size.height > 0 &&
 ## 7. 状态算法处理
 
 - **逐帧独立模式**：PuReST 每帧 `reset()`；Starburst 每帧新实例；Pupil Labs 2D 每帧新实例（消除 strong prior）。公平比较。
-- **连续窗口模式**：对 temporal 窗口按帧序连续调用 PuReST / Starburst / Pupil Labs 2D，记录真实时序行为（temporal jitter、恢复）。
+- **连续窗口模式**：对 temporal 窗口按帧序连续调用，但输入必须是该窗口所有 tight bbox 在 source pixel 中的固定 union canvas。状态以 `(subject, eye, sequence_id, algorithm)` 隔离；移动 tight crop 或变化尺寸直接拒绝。尺度敏感参数每帧重新施加，provenance 记录 detector 实际值。
 - 两种模式都显式记录在输出与 CLI。
 
 ## 8. 边界
@@ -140,3 +140,25 @@ return center.x > 0 && center.y > 0 && size.width > 0 && size.height > 0 &&
 - benchmark 向算法提供 native source-resolution tight crop，**benchmark 本身不 resize**；但逐算法官方内部 resize/downscale 行为见 §4，文档如实记录，不宣称全链路原生分辨率。
 - 不与 RITnet 椭圆 IoU 判"正确"；只做 agreement（center/diameter 分布、temporal）。
 - 不覆盖 frozen production 数据；输出进独立下游目录；不上传原始视频/被试图片/逐帧数据到 GitHub。
+
+## 9. 正式入口、抽样和审批门
+
+唯一 production 入口为 `scripts/nir_pupil_benchmark.py`。使用经核验的 CPython 3.10 detector 环境，且从仓库根运行：
+
+```powershell
+$env:PYTHONPATH = "src"
+$python = "D:\CondaEnvs\pypupilext310\python.exe"
+
+# 只读计划；不抽帧、不运行算法
+& $python scripts/nir_pupil_benchmark.py --stage plan --profile formal --subjects sub-031
+
+# 极小单被试闭环；run-dir 必须为空目录
+& $python scripts/nir_pupil_benchmark.py --stage all --profile smoke `
+  --subjects sub-031 --run-dir "<new-empty-output-directory>"
+
+# 对已有输出独立重读校验
+& $python scripts/nir_pupil_benchmark.py --stage validate --profile smoke `
+  --subjects sub-031 --run-dir "<completed-output-directory>"
+```
+
+formal 配置每被试先于算法抽取 `300 Block1 + 300 Block2 + 100 RITnet high-quality + 100 RITnet difficult`的独立 tight frames，另取 300 帧连续窗口。两类输入分轨报告。写入多被试必须显式加 `--approve-multi-subject`；现阶段仍需先完成单被试人工 credibility 复核，不得仅凭 completion 或自动几何门扩大。

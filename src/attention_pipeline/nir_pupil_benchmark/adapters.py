@@ -156,18 +156,18 @@ def run_detection(
 ) -> DetectionOutput:
     """Run the algorithm's plain ``run()`` (never runWithConfidence)."""
     prepared = _prepare_image(image)
-    start = time.perf_counter()
     try:
         if spec.supports_diameter_override and diameter_min_px is not None and diameter_max_px is not None:
             _set_pure_diameter_range(
                 detector, prepared.shape[1], prepared.shape[0], diameter_min_px, diameter_max_px
             )
+        start = time.perf_counter()
         if spec.name == "PupilLabs2D":
             result = detector.detect(prepared)
         else:
             result = detector.run(prepared)
     except Exception as exc:  # noqa: BLE001 - record every failure, never mask it
-        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        elapsed_ms = (time.perf_counter() - start) * 1000.0 if "start" in locals() else 0.0
         return DetectionOutput(
             algorithm=spec.name, result=None, runtime_ms=elapsed_ms,
             failure=f"{type(exc).__name__}: {exc}",
@@ -182,6 +182,7 @@ def run_with_confidence(
     *,
     diameter_min_px: float | None = None,
     diameter_max_px: float | None = None,
+    params: dict[str, Any] | None = None,
 ) -> DetectionOutput:
     """Separate outline-confidence pass on a fresh detector.
 
@@ -195,7 +196,7 @@ def run_with_confidence(
             outline_confidence=None, confidence_runtime_ms=0.0,
         )
     prepared = _prepare_image(image)
-    detector = make_detector(spec)
+    detector = make_detector(spec, params)
     if spec.supports_diameter_override and diameter_min_px is not None and diameter_max_px is not None:
         _set_pure_diameter_range(
             detector, prepared.shape[1], prepared.shape[0], diameter_min_px, diameter_max_px
@@ -215,6 +216,69 @@ def run_with_confidence(
         algorithm=spec.name, result=result, runtime_ms=elapsed_ms,
         outline_confidence=confidence, confidence_runtime_ms=elapsed_ms,
     )
+
+
+def apply_scale_params(
+    detector: Any,
+    spec: AlgorithmSpec,
+    width: int,
+    height: int,
+) -> dict[str, Any]:
+    """Apply the current crop's frozen scale parameters to a shared detector.
+
+    Stateful continuous execution must not keep first-frame scale parameters
+    while claiming current-frame values in provenance.  PyPupilEXT exposes the
+    Swirski tracker parameters directly; pupil-detectors exposes
+    ``update_properties``.  The returned mapping is exactly what was applied.
+    """
+    if spec.name == "Swirski2D":
+        applied = frozen_swirski_params(width, height)
+        for key, value in applied.items():
+            setattr(detector.params, key, value)
+        return applied
+    if spec.name == "PupilLabs2D":
+        applied = frozen_pupil_labs_properties(width, height)
+        detector.update_properties(applied)
+        return applied
+    return {}
+
+
+def applied_parameter_snapshot(
+    detector: Any,
+    spec: AlgorithmSpec,
+    *,
+    width: int,
+    height: int,
+    diameter_min_px: float | None = None,
+    diameter_max_px: float | None = None,
+) -> dict[str, Any]:
+    """Return the parameter values actually used for one detector call."""
+    snapshot: dict[str, Any] = {"input_width": int(width), "input_height": int(height)}
+    if spec.name == "Swirski2D":
+        snapshot.update(
+            {
+                key: getattr(detector.params, key)
+                for key in ("Radius_Min", "Radius_Max", "Seed")
+            }
+        )
+    elif spec.name == "PupilLabs2D":
+        properties = detector.get_properties()
+        for key in (
+            "coarse_detection", "coarse_filter_min", "coarse_filter_max",
+            "pupil_size_min", "pupil_size_max",
+        ):
+            if key in properties:
+                snapshot[key] = properties[key]
+    if spec.supports_diameter_override:
+        snapshot.update(
+            {
+                "diameter_min_px": diameter_min_px,
+                "diameter_max_px": diameter_max_px,
+                "minPupilDiameterMM": float(detector.minPupilDiameterMM),
+                "maxPupilDiameterMM": float(detector.maxPupilDiameterMM),
+            }
+        )
+    return snapshot
 
 
 def frozen_swirski_params(width: int, height: int) -> dict[str, Any]:
