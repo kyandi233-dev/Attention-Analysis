@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 
 import pytest
@@ -50,6 +51,14 @@ def scientific_identity(core_version, *, subject="sub-031", model_hash="m" * 64)
         "eye_metrics_schema_version": 6,
         "frame_coverage_schema_version": 2,
     }
+
+
+def read_meta(path):
+    con = sqlite3.connect(path)
+    try:
+        return dict(con.execute("SELECT key, value FROM meta"))
+    finally:
+        con.close()
 
 
 def test_workstore_commits_and_reopens_exact_prefix(tmp_path):
@@ -105,14 +114,44 @@ def test_v7_checkpoint_migrates_to_v8_when_scientific_identity_is_identical(tmp_
     current["summary_workers"] = 4
 
     with FullClassWorkStore(path, identity=current) as migrated:
+        # Metadata must remain v7 until the strict source prefix passes.
+        assert V7_CORE_VERSION in read_meta(path)["identity_json"]
         assert migrated.validate_prefix(source) == 1
         assert list(migrated.iter_rows())[0]["hard_pupil_fraction"] == 0.1
 
-    con = sqlite3.connect(path)
-    meta = dict(con.execute("SELECT key, value FROM meta"))
-    con.close()
+    meta = read_meta(path)
     assert "resume_migrated_from_identity_digest" in meta
     assert V8_CORE_VERSION in meta["identity_json"]
+
+
+def test_v7_checkpoint_bad_prefix_does_not_mutate_identity(tmp_path):
+    path = tmp_path / "work.sqlite"
+    stored = scientific_identity(V7_CORE_VERSION)
+    with FullClassWorkStore(path, identity=stored) as store:
+        store.append_rows([(0, payload(10, "frame_left", 0.1))])
+    before = read_meta(path)
+
+    current = scientific_identity(V8_CORE_VERSION)
+    with FullClassWorkStore(path, identity=current) as candidate:
+        with pytest.raises(RuntimeError, match="key mismatch"):
+            candidate.validate_prefix([source_row(10, "frame_right")])
+
+    after = read_meta(path)
+    assert after["identity_json"] == before["identity_json"]
+    assert after["identity_digest"] == before["identity_digest"]
+    assert "resume_migrated_from_identity_digest" not in after
+
+
+def test_v7_checkpoint_rejects_v8_migration_when_scientific_key_is_missing(tmp_path):
+    path = tmp_path / "work.sqlite"
+    stored = scientific_identity(V7_CORE_VERSION)
+    del stored["roi_contract"]
+    with FullClassWorkStore(path, identity=stored):
+        pass
+
+    current = scientific_identity(V8_CORE_VERSION)
+    with pytest.raises(RuntimeError, match="scientific run"):
+        FullClassWorkStore(path, identity=current)
 
 
 def test_v7_checkpoint_rejects_v8_migration_when_model_hash_differs(tmp_path):
