@@ -1,4 +1,9 @@
-"""Sequential batch launcher for ritnet-fullclass-v2-native640."""
+"""Internal batch implementation for the single canonical RITnet full-class workflow.
+
+This module is not a second production path. Every selected subject is launched
+through the canonical single-subject entry point so clean-Git, source-video
+SHA256 and model-identity enforcement cannot be bypassed by the batch layer.
+"""
 from __future__ import annotations
 
 import argparse
@@ -14,9 +19,10 @@ PACKAGE_ROOT = Path(__file__).resolve().parent
 if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
-from ritnet_fullclass_contract import NATIVE_EXTENSION_VERSION, normalize_subject
+from ritnet_fullclass_contract import FULLCLASS_VERSION, normalize_subject
 
-EXTENSION = PACKAGE_ROOT / "run_ritnet_fullclass_native_extension.py"
+# Always route subjects through the canonical user-facing single-subject gate.
+EXTENSION = PACKAGE_ROOT / "run_ritnet_fullclass_extension.py"
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -75,15 +81,16 @@ def parse_subjects(text: str | None) -> list[str] | None:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Batch native640 RITnet evidence producer")
+    parser = argparse.ArgumentParser(description="Batch canonical 640x400 RITnet full-class evidence producer")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--config", type=Path, default=PACKAGE_ROOT / "config.yaml")
     parser.add_argument("--subjects", help="Optional comma-separated subject filter")
     parser.add_argument("--device", default="0")
     parser.add_argument("--chunk-rows", type=int, default=128)
     parser.add_argument("--compression", choices=("npz_compressed", "npz_stored"), default="npz_compressed")
-    parser.add_argument("--hash-video", action="store_true")
-    parser.add_argument("--allow-model-mismatch", action="store_true")
+    # Accepted for compatibility with the canonical outer wrapper; child runs
+    # hash source videos unconditionally through run_ritnet_fullclass_extension.py.
+    parser.add_argument("--hash-video", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
 
@@ -127,13 +134,15 @@ def main() -> int:
                 "alternatives": [str(path) for path in alternatives],
             }
         )
+
     preview = {
-        "extension": NATIVE_EXTENSION_VERSION,
+        "fullclass_version": FULLCLASS_VERSION,
         "selected_count": len(selections),
         "chunk_rows": args.chunk_rows,
         "compression": args.compression,
-        "hash_video": bool(args.hash_video),
-        "method": "RITnet FP32 fixed-b16 640x400 + full hard-label evidence store",
+        "source_video_content_sha256_enforced": True,
+        "model_mismatch_override_allowed": False,
+        "method": "RITnet FP32 fixed-b16 640x400 + complete hard-label evidence store",
         "warning": "chunk_rows=128 remains provisional until sub-031 throughput/compression benchmark",
         "selections": selections,
         "dry_run": bool(args.dry_run),
@@ -154,10 +163,6 @@ def main() -> int:
             "--chunk-rows", str(args.chunk_rows),
             "--compression", str(args.compression),
         ]
-        if args.hash_video:
-            command.append("--hash-video")
-        if args.allow_model_mismatch:
-            command.append("--allow-model-mismatch")
         print(f"[RUN {index}/{len(selections)}] {item['subject']}: {item['run_dir']}")
         print("  " + subprocess.list2cmdline(command))
         completed = subprocess.run(command, cwd=PACKAGE_ROOT)
