@@ -1,6 +1,6 @@
 package:
   name: nir-formal
-  version: 1.1.0
+  version: 1.0.1
   purpose: NVIDIA CUDA formal NIR runtime with final <=1 GiB RITnet full-class evidence path
 
 data:
