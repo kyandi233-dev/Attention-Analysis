@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from math import sqrt
+from math import pi, sqrt
 from typing import Any, Iterable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
+
+# Official PyPupilEXT NO_CONFIDENCE sentinel (Pupil.h).
+OFFICIAL_CONFIDENCE_THRESHOLD = -1.0
+
+# geometry_sane defaults (crop-pixel semantics, tuned to ~424x187 tight crops).
+GEOMETRY_CENTER_MARGIN_FRACTION = 0.05
+GEOMETRY_MAX_AXIS_FRACTION = 0.65
+GEOMETRY_MIN_AXIS = 2.0
+GEOMETRY_MIN_ASPECT = 0.2
 
 
 @dataclass(frozen=True)
@@ -29,10 +38,24 @@ class Ellipse:
         )
 
     @property
+    def major_axis(self) -> float:
+        return max(float(self.axis_a), float(self.axis_b))
+
+    @property
+    def minor_axis(self) -> float:
+        return min(float(self.axis_a), float(self.axis_b))
+
+    @property
     def diameter_geom(self) -> float:
         if not self.is_finite_positive():
             return float("nan")
         return sqrt(float(self.axis_a) * float(self.axis_b))
+
+    @property
+    def area(self) -> float:
+        if not self.is_finite_positive():
+            return float("nan")
+        return pi * float(self.axis_a) * float(self.axis_b) / 4.0
 
 
 def normalize_subject(value: str | int) -> str:
@@ -200,6 +223,45 @@ def ellipse_geometry_plausible(
     return bool(ellipse.axis_a <= width * 1.25 and ellipse.axis_b <= height * 1.25)
 
 
+def geometry_sane(
+    ellipse: Ellipse | None,
+    width: float,
+    height: float,
+    *,
+    center_margin_fraction: float = GEOMETRY_CENTER_MARGIN_FRACTION,
+    max_axis_fraction: float = GEOMETRY_MAX_AXIS_FRACTION,
+    min_axis: float = GEOMETRY_MIN_AXIS,
+    min_aspect: float = GEOMETRY_MIN_ASPECT,
+) -> bool:
+    """Stricter geometric sanity for a detection candidate.
+
+    This is a quality gate on *geometry alone*; it says nothing about whether
+    the detection is a credible pupil. It is deliberately independent of the
+    official valid()/confidence semantics so that confidence-less algorithms
+    (ElSe/ExCuSe/Swirski2D/Starburst) can still be gated consistently.
+    """
+    if ellipse is None or not ellipse.is_finite_positive():
+        return False
+    width, height = float(width), float(height)
+    if width <= 0 or height <= 0:
+        return False
+    margin_x = width * float(center_margin_fraction)
+    margin_y = height * float(center_margin_fraction)
+    if not (-margin_x <= ellipse.cx <= width + margin_x):
+        return False
+    if not (-margin_y <= ellipse.cy <= height + margin_y):
+        return False
+    major = ellipse.major_axis
+    minor = ellipse.minor_axis
+    if major > float(max_axis_fraction) * min(width, height):
+        return False
+    if minor < float(min_axis):
+        return False
+    if major <= 0 or minor / major < float(min_aspect):
+        return False
+    return True
+
+
 def center_distance(a: Ellipse | None, b: Ellipse | None) -> float:
     if a is None or b is None or not a.is_finite_positive() or not b.is_finite_positive():
         return float("nan")
@@ -215,6 +277,14 @@ def safe_ratio(numerator: float, denominator: float) -> float:
     if not np.isfinite([numerator, denominator]).all() or denominator <= 0:
         return float("nan")
     return numerator / denominator
+
+
+def _numeric(value: Any) -> float:
+    try:
+        output = float(value)
+    except (TypeError, ValueError):
+        return float("nan")
+    return output if np.isfinite(output) else float("nan")
 
 
 def _object_value(obj: Any, names: Sequence[str]) -> Any:
@@ -243,45 +313,159 @@ def _pair(value: Any) -> tuple[float, float] | None:
     return float(values[0]), float(values[1])
 
 
-def parse_pypupil_result(result: Any) -> dict[str, Any]:
-    """Normalize a PyPupilEXT Pupil object without importing its binary extension."""
+def _ellipse_from_pair(center, size, angle_deg) -> Ellipse | None:
+    if center is None or size is None:
+        return None
+    major = max(float(size[0]), float(size[1]))
+    minor = min(float(size[0]), float(size[1]))
+    if major <= 0 or minor <= 0:
+        return None
+    candidate = Ellipse(
+        cx=float(center[0]),
+        cy=float(center[1]),
+        axis_a=major,
+        axis_b=minor,
+        angle_deg=_numeric(angle_deg),
+    )
+    return candidate if candidate.is_finite_positive() else None
+
+
+def normalize_result(result: Any) -> dict[str, Any] | None:
+    """Extract common detection fields from a raw result object.
+
+    Handles two official shapes:
+    - PyPupilEXT ``Pupil`` (attribute-based; center/size are (x,y)/(w,h) tuples,
+      full axis lengths; ``valid()`` and ``hasOutline()`` available).
+    - pupil-detectors ``Detector2D.detect()`` dict (``ellipse.center/axes/angle``,
+      ``confidence``; axes are (minor, major) full axis lengths).
+
+    Returns None when the result carries no usable detection shape.
+    """
     if result is None:
+        return None
+
+    # --- Pupil Labs 2D dict shape ---
+    if isinstance(result, Mapping) and "ellipse" in result:
+        ellipse = result.get("ellipse") or {}
+        center = _pair(ellipse.get("center"))
+        axes = _pair(ellipse.get("axes"))
+        angle = _numeric(ellipse.get("angle"))
+        confidence = _numeric(result.get("confidence"))
+        has_outline = bool(axes is not None and axes[0] > 0 and axes[1] > 0)
         return {
-            "ellipse": None,
-            "returned": False,
-            "confidence": np.nan,
-            "outline_confidence": np.nan,
+            "center": center,
+            "size": axes,  # (minor, major) full axes, ordered
+            "angle_deg": angle,
+            "native_confidence": confidence,
+            "outline_confidence": float("nan"),
+            "has_outline": has_outline,
+            "official_valid": bool(confidence > 0) if np.isfinite(confidence) else None,
         }
+
+    # --- PyPupilEXT Pupil shape ---
     center = _pair(_object_value(result, ["center", "Center"]))
     size = _pair(_object_value(result, ["size", "Size"]))
     angle = _object_value(result, ["angle", "Angle"])
+    has_outline_attr = getattr(result, "hasOutline", None)
+    if callable(has_outline_attr):
+        try:
+            has_outline = bool(has_outline_attr())
+        except Exception:
+            has_outline = bool(size is not None and size[0] > 0 and size[1] > 0)
+    else:
+        has_outline = bool(size is not None and size[0] > 0 and size[1] > 0)
+
+    official_valid = None
+    valid_attr = getattr(result, "valid", None)
+    if callable(valid_attr):
+        # pybind11 binding does not expose the C++ default; the official default
+        # threshold is NO_CONFIDENCE (-1.0), so pass it explicitly.
+        try:
+            official_valid = bool(valid_attr(OFFICIAL_CONFIDENCE_THRESHOLD))
+        except TypeError:
+            try:
+                official_valid = bool(valid_attr())
+            except Exception:
+                official_valid = None
+        except Exception:
+            official_valid = None
+
+    return {
+        "center": center,
+        "size": size,  # (w, h) full axis lengths, possibly unordered
+        "angle_deg": _numeric(angle),
+        "native_confidence": _numeric(_object_value(result, ["confidence", "Confidence"])),
+        "outline_confidence": _numeric(
+            _object_value(result, ["outline_confidence", "outlineConfidence", "OutlineConfidence"])
+        ),
+        "has_outline": has_outline,
+        "official_valid": official_valid,
+    }
+
+
+def parse_pupil_result(
+    result: Any,
+    *,
+    width: float | None = None,
+    height: float | None = None,
+) -> dict[str, Any]:
+    """Normalize a raw algorithm result with the three-layer semantics kept apart.
+
+    - ``algorithm_returned``: the run completed and the object carries an
+      ellipse outline (``hasOutline()`` / axes > 0). Explicitly NOT the same as
+      "a credible pupil was detected".
+    - ``official_valid``: strict official ``Pupil.valid(-1.0)`` when available;
+      for confidence-less algorithms (ElSe/ExCuSe/Swirski2D/Starburst) this is
+      False by official semantics; for Pupil Labs 2D it is confidence > 0.
+    - ``geometry_sane``: pure geometric gate; None when crop size is unknown.
+
+    ``width``/``height`` are the crop size in pixels; when given, ``geometry_sane``
+    is evaluated. ``result`` may be None (no object produced).
+    """
+    empty = {
+        "ellipse": None,
+        "algorithm_returned": False,
+        "official_valid": False,
+        "geometry_sane": False if (width is not None and height is not None) else None,
+        "center_x": float("nan"), "center_y": float("nan"),
+        "major_axis": float("nan"), "minor_axis": float("nan"),
+        "angle_deg": float("nan"), "diameter_geom": float("nan"), "area": float("nan"),
+        "native_confidence": float("nan"), "outline_confidence": float("nan"),
+    }
+    normalized = normalize_result(result)
+    if normalized is None:
+        return empty
 
     ellipse = None
-    if center is not None and size is not None:
-        candidate = Ellipse(
-            cx=float(center[0]),
-            cy=float(center[1]),
-            axis_a=float(size[0]),
-            axis_b=float(size[1]),
-            angle_deg=float(angle) if angle is not None else 0.0,
+    algorithm_returned = False
+    if normalized["has_outline"] and normalized["center"] is not None and normalized["size"] is not None:
+        ellipse = _ellipse_from_pair(
+            normalized["center"], normalized["size"], normalized["angle_deg"]
         )
-        if candidate.is_finite_positive():
-            ellipse = candidate
+        algorithm_returned = ellipse is not None
 
-    def numeric(value: Any) -> float:
-        try:
-            output = float(value)
-        except (TypeError, ValueError):
-            return float("nan")
-        return output if np.isfinite(output) else float("nan")
+    official_valid = bool(normalized["official_valid"]) if normalized["official_valid"] is not None else False
+
+    sane: bool | None
+    if width is not None and height is not None:
+        sane = geometry_sane(ellipse, width, height)
+    else:
+        sane = None
 
     return {
         "ellipse": ellipse,
-        "returned": bool(ellipse is not None),
-        "confidence": numeric(_object_value(result, ["confidence", "Confidence"])),
-        "outline_confidence": numeric(
-            _object_value(result, ["outline_confidence", "outlineConfidence", "OutlineConfidence"])
-        ),
+        "algorithm_returned": algorithm_returned,
+        "official_valid": official_valid,
+        "geometry_sane": sane,
+        "center_x": ellipse.cx if ellipse else float("nan"),
+        "center_y": ellipse.cy if ellipse else float("nan"),
+        "major_axis": ellipse.major_axis if ellipse else float("nan"),
+        "minor_axis": ellipse.minor_axis if ellipse else float("nan"),
+        "angle_deg": ellipse.angle_deg if ellipse else float("nan"),
+        "diameter_geom": ellipse.diameter_geom if ellipse else float("nan"),
+        "area": ellipse.area if ellipse else float("nan"),
+        "native_confidence": normalized["native_confidence"],
+        "outline_confidence": normalized["outline_confidence"],
     }
 
 

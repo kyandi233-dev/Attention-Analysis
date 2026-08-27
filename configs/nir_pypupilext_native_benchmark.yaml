@@ -1,7 +1,16 @@
 pipeline:
   name: attention-analysis-nir-pypupilext-native-benchmark
-  version: 0.2.1
+  version: 0.3.0
   schema_version: 1
+
+# Runtime policy (docs/020-nir/030 section 3-4):
+# - The main algorithm runtime MUST measure plain run() only.
+# - runWithConfidence() / outline confidence is an OPTIONAL separate pass whose
+#   extra time is recorded independently in confidence_runtime_ms. It never
+#   contributes to runtime_ms.
+runtime:
+  main_method: run
+  confidence: separate_optional
 
 paths:
   alignment_config: "configs/nir_behavior_alignment.yaml"
@@ -26,17 +35,23 @@ subjects:
     - sub-040
 
 algorithms:
+  # Seven classical algorithms (six from PyPupilEXT + Pupil Labs 2D standalone).
   include:
+    - PuRe
+    - PuReST
+    - PupilLabs2D
     - ElSe
     - ExCuSe
     - Swirski2D
+    - Starburst
   module_candidates:
-    - pypupilext
-    - pypupil
-    - PyPupilEXT
-  method_preference:
-    - runWithConfidence
-    - run
+    pypupilext: [pypupilext, pypupilext, PyPupilEXT]
+    pupil_labs_2d: [pupil_detectors]
+  # RITnet is a comparator/reference only (already-computed production output),
+  # never re-run by this benchmark.
+  ritnet:
+    role: comparator_only
+    use_production_outputs: true
 
 sampling:
   # Per subject. Sampling is decided before any pupil detector runs.
@@ -56,12 +71,22 @@ input:
   min_crop_height: 12
   grayscale: true
   # Keep the existing YOLO eye box in source-video pixels. Do not resize the
-  # crop before ElSe / ExCuSe / Swirski2D.
+  # crop before any algorithm. Per-algorithm INTERNAL resize/downscale is an
+  # official behavior recorded in provenance (docs/020-nir/030 section 4); the
+  # benchmark itself never resizes.
   resize_native_crop: false
+
+# Scale rule for resolution-sensitive parameters (docs/020-nir/030 section 6):
+# frozen from the ~424x187 tight crop probe; provenance recorded in output.
+scale_rule:
+  radius_min_fraction: 0.02
+  radius_max_fraction: 0.10
+  swirski_ransac_seed: 0
+  source_probe: "sub-031 frame 46988 tight crop ~424x187, RITnet pupil ~6-16px diameter"
 
 # Only frame identity and the existing YOLO tight-eye box are consumed from
 # production outputs. No RITnet mask, geometry, validity or confidence field is
-# used by this benchmark.
+# used to gate the classical algorithms; RITnet is agreement-only.
 columns:
   phase:
     aliases: [phase]
