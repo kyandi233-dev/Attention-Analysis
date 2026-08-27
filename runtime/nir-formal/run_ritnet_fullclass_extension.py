@@ -165,13 +165,12 @@ def main() -> int:
         output_limit_bytes=output_limit,
         source_selection=source_selection,
     )
-    validation = validate_final_completion(
-        core.subject_dir,
-        expected_subject=core.subject,
-        expected_work_identity=core.work_identity,
-    )
-    if not validation.valid:
-        raise RuntimeError("final post-write validation failed: " + validation.reason)
+
+    # finalize_subject already performs the one full artifact-integrity pass
+    # before publishing completion.json. Avoid immediately rereading the entire
+    # eye/frame tables a second time; future skip/validation calls still use the
+    # strict public validator.
+    completion_payload = json.loads(completion.read_text(encoding="utf-8"))
 
     print(
         json.dumps(
@@ -184,7 +183,7 @@ def main() -> int:
                 "qc_images": qc.saved_image_count,
                 "qc_pixel_evidence_eyes": qc.pixel_evidence_saved_count,
                 "qc_bytes": qc.total_qc_bytes,
-                "total_output_bytes": validation.completion["total_output_bytes"],
+                "total_output_bytes": completion_payload["total_output_bytes"],
                 "output_limit_bytes": output_limit,
                 "completion": str(completion),
             },
