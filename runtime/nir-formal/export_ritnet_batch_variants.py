@@ -18,7 +18,7 @@ from densenet import DenseNet2D
 
 
 class ExportWrapper(torch.nn.Module):
-    """Match the frozen AMD runtime: project ArgMax label + class-3 softmax map."""
+    """Historical production interface: project ArgMax label + class-3 probability."""
 
     def __init__(self, model: torch.nn.Module) -> None:
         super().__init__()
@@ -32,11 +32,11 @@ class ExportWrapper(torch.nn.Module):
 
 
 class EvidenceSummaryExportWrapper(torch.nn.Module):
-    """Experimental small-output confidence summaries for DirectML qualification.
+    """Historical experimental small-output confidence summaries.
 
-    This wrapper does not change network weights or argmax labels. It adds
-    deterministic reductions after the upstream logits. It must remain a
-    separate *-evidence.onnx artifact until DirectML parity/performance tests pass.
+    Retained for provenance only. The final full-class path uses
+    ``FinalUncertaintyExportWrapper`` because mean-only summaries cannot support
+    percentile, top1-vs-top2 or boundary uncertainty QC.
     """
 
     def __init__(self, model: torch.nn.Module) -> None:
@@ -58,9 +58,6 @@ class EvidenceSummaryExportWrapper(torch.nn.Module):
         labels = labels_long.to(torch.uint8)
         pupil_probability = probs[:, 3]
 
-        # Mean probability assigned to the winning pixels of each class. A class
-        # absent from the hard argmax mask yields NaN via 0/0; runtime must retain
-        # availability separately rather than inventing a confidence value.
         one_hot = torch.nn.functional.one_hot(labels_long, num_classes=4).permute(0, 3, 1, 2).to(probs.dtype)
         class_prob_sum = torch.sum(probs * one_hot, dim=(2, 3))
         class_pixel_count = torch.sum(one_hot, dim=(2, 3))
@@ -69,6 +66,45 @@ class EvidenceSummaryExportWrapper(torch.nn.Module):
         entropy = -torch.sum(probs * torch.log(torch.clamp(probs, min=1e-12)), dim=1)
         entropy_mean = torch.mean(entropy, dim=(1, 2))
         return labels, pupil_probability, class_mean_on_argmax, top1_probability_mean, entropy_mean
+
+
+class FinalUncertaintyExportWrapper(torch.nn.Module):
+    """Final compact all-class uncertainty interface for the <=1 GiB workflow.
+
+    RITnet weights and logits are unchanged. The graph adds deterministic
+    post-processing only. Three pixelwise QC maps are returned temporarily to
+    CPU and MUST be reduced immediately; they are not final on-disk artifacts.
+
+    Outputs:
+      labels: uint8 [B,H,W]
+      soft_class_fraction: float32 [B,4]
+      max_probability: float32 [B,H,W]
+      top1_top2_margin: float32 [B,H,W]
+      entropy: float32 [B,H,W]
+    """
+
+    def __init__(self, model: torch.nn.Module) -> None:
+        super().__init__()
+        self.model = model
+
+    def forward(
+        self, image: torch.Tensor
+    ) -> tuple[
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+        torch.Tensor,
+    ]:
+        logits = self.model(image)
+        probs = torch.softmax(logits, dim=1)
+        top2_probability, top2_class = torch.topk(probs, k=2, dim=1, largest=True, sorted=True)
+        labels = top2_class[:, 0].to(torch.uint8)
+        max_probability = top2_probability[:, 0]
+        top1_top2_margin = top2_probability[:, 0] - top2_probability[:, 1]
+        entropy = -torch.sum(probs * torch.log(torch.clamp(probs, min=1e-12)), dim=1)
+        soft_class_fraction = torch.mean(probs, dim=(2, 3))
+        return labels, soft_class_fraction, max_probability, top1_top2_margin, entropy
 
 
 def parse_batches(text: str) -> list[int]:
@@ -89,12 +125,60 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--evidence-summary",
         action="store_true",
+        help="Export historical experimental *-evidence.onnx mean-only summaries.",
+    )
+    parser.add_argument(
+        "--final-uncertainty",
+        action="store_true",
         help=(
-            "Export a separate *-evidence.onnx with small all-class confidence summaries. "
-            "It is experimental and must not replace the production ONNX before DirectML parity/performance qualification."
+            "Export the final *-uncertainty.onnx interface: labels + soft class fractions + "
+            "temporary max-probability/margin/entropy maps."
         ),
     )
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.evidence_summary and args.final_uncertainty:
+        parser.error("--evidence-summary and --final-uncertainty are mutually exclusive")
+    return args
+
+
+def _export_mode(args: argparse.Namespace) -> tuple[torch.nn.Module, list[str], str, str]:
+    model = DenseNet2D(dropout=True, prob=0.2)
+    state = torch.load(args.weights, map_location="cpu", weights_only=True)
+    model.load_state_dict(state)
+    model.eval()
+
+    if args.final_uncertainty:
+        return (
+            FinalUncertaintyExportWrapper(model).eval(),
+            [
+                "labels",
+                "soft_class_fraction",
+                "max_probability",
+                "top1_top2_margin",
+                "entropy",
+            ],
+            "-uncertainty",
+            "final uncertainty",
+        )
+    if args.evidence_summary:
+        return (
+            EvidenceSummaryExportWrapper(model).eval(),
+            [
+                "labels",
+                "pupil_probability",
+                "class_mean_probability_on_argmax_mask",
+                "top1_probability_mean",
+                "entropy_mean",
+            ],
+            "-evidence",
+            "historical experimental evidence-summary",
+        )
+    return (
+        ExportWrapper(model).eval(),
+        ["labels", "pupil_probability"],
+        "",
+        "historical production-interface",
+    )
 
 
 def main() -> int:
@@ -102,31 +186,15 @@ def main() -> int:
     weights = args.weights.expanduser().resolve()
     if not weights.is_file():
         raise FileNotFoundError(weights)
+    args.weights = weights
+    if int(args.width) != 640 or int(args.height) != 400:
+        if args.final_uncertainty:
+            raise ValueError("final uncertainty RITnet export is frozen to 640x400")
 
-    model = DenseNet2D(dropout=True, prob=0.2)
-    state = torch.load(weights, map_location="cpu", weights_only=True)
-    model.load_state_dict(state)
-    model.eval()
-    wrapped = (
-        EvidenceSummaryExportWrapper(model).eval()
-        if args.evidence_summary
-        else ExportWrapper(model).eval()
-    )
-    output_names = (
-        [
-            "labels",
-            "pupil_probability",
-            "class_mean_probability_on_argmax_mask",
-            "top1_probability_mean",
-            "entropy_mean",
-        ]
-        if args.evidence_summary
-        else ["labels", "pupil_probability"]
-    )
+    wrapped, output_names, suffix, mode = _export_mode(args)
 
     outputs: list[Path] = []
     for batch in parse_batches(args.batches):
-        suffix = "-evidence" if args.evidence_summary else ""
         output = PACKAGE_ROOT / "models" / f"ritnet-b{batch}-fp32{suffix}.onnx"
         output_data = output.with_name(output.name + ".data")
         if not args.force and (output.exists() or output_data.exists()):
@@ -165,12 +233,21 @@ def main() -> int:
 
         check = onnx.load(str(output), load_external_data=True)
         onnx.checker.check_model(check)
+        actual_output_names = [value.name for value in check.graph.output]
+        if actual_output_names != output_names:
+            raise RuntimeError(
+                f"exported ONNX output contract mismatch: expected={output_names}, got={actual_output_names}"
+            )
         print(f"batch={batch}: {output}")
         print(f"           {output_data}")
         outputs.append(output)
 
-    mode = "experimental evidence-summary" if args.evidence_summary else "production-interface"
     print(f"Exported {len(outputs)} {mode} RITnet variant(s) from unchanged weights: {weights}")
+    if args.final_uncertainty:
+        print(
+            "Final uncertainty maps are transient runtime outputs only; production code must reduce "
+            "them to compact per-eye summaries and must not persist them per frame."
+        )
     return 0
 
 
