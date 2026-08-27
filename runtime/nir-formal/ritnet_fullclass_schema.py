@@ -1,8 +1,9 @@
-"""Fixed versioned output schemas for the final NIR RITnet full-class workflow.
+"""Fixed lean schema for the final NIR RITnet full-class workflow.
 
-The final tables intentionally do NOT inherit every historical ``eyes.csv``
-column. Source data are mapped into a small explicit provenance set, while all
-new scientific/QC fields have stable names and documented coordinate semantics.
+Four-class hard/soft segmentation, pupil geometry, source/ROI provenance and
+compact temporal/model-QC facts are retained. Expensive or scientifically weak
+iris ellipse/PIR/OAR fields and obsolete empty uncertainty distributions are not
+part of the production cohort schema.
 """
 from __future__ import annotations
 
@@ -67,6 +68,7 @@ RITNET_STATUS_FIELDS = (
     "ritnet_failure_reason",
 )
 
+# Preserve the four native classes plus two cheap unions. No geometry is implied.
 HARD_CLASS_FIELDS = tuple(
     field
     for name in ("background", "sclera", "iris", "pupil", "iris_outer", "ocular")
@@ -85,21 +87,33 @@ ANALYSIS_DOMAIN_FIELDS = (
     "ocular_touches_valid_domain_edge",
 )
 
-# Connected-component QC is retained only for the pupil in the lean cohort schema.
+# Connected-component QC is retained only for the pupil.
 COMPONENT_FIELDS = (
     "pupil_component_count",
     "pupil_largest_component_fraction",
 )
 
+# Formal NIR geometry is pupil-only. Iris remains available as a hard/soft class.
 GEOMETRY_FIELDS = tuple(
     f"pupil_{suffix}"
     for suffix in (
-        "found", "fit_valid", "center_x", "center_y", "short_axis", "long_axis",
-        "angle_deg", "contour_area", "ellipse_area", "equiv_diameter", "geom_mean_diameter",
-        "whole_mask_touches_edge", "largest_contour_touches_edge",
+        "found",
+        "fit_valid",
+        "center_x",
+        "center_y",
+        "short_axis",
+        "long_axis",
+        "angle_deg",
+        "contour_area",
+        "ellipse_area",
+        "equiv_diameter",
+        "geom_mean_diameter",
+        "whole_mask_touches_edge",
+        "largest_contour_touches_edge",
     )
 )
 
+# Retained as named compatibility groups for callers; intentionally empty in v6.
 RELATION_FIELDS: tuple[str, ...] = ()
 OAR_FIELDS: tuple[str, ...] = ()
 
@@ -111,14 +125,14 @@ UNCERTAINTY_BASE_FIELDS = (
     "uncertainty_algorithm_version",
     "uncertainty_domain_version",
     "soft_class_fraction_domain_version",
-    "uncertainty_boundary_band_px",
     "soft_background_fraction",
     "soft_sclera_fraction",
     "soft_iris_fraction",
     "soft_pupil_fraction",
     "uncertainty_ocular_pixel_count",
-    "uncertainty_boundary_pixel_count",
 )
+
+# Cohort production only needs these three scalar uncertainty summaries.
 UNCERTAINTY_DISTRIBUTION_FIELDS = (
     "ocular_max_probability_mean",
     "ocular_top1_top2_margin_mean",
@@ -197,7 +211,6 @@ _assert_unique(FRAME_COVERAGE_FIELDS, "FRAME_COVERAGE_FIELDS")
 
 
 def project_row(row: Mapping[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:
-    """Return exactly the fixed schema fields; unknown inputs cannot leak through."""
     return {field: row.get(field) for field in fields}
 
 
