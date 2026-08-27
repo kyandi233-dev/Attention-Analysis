@@ -6,8 +6,10 @@ checkpoints, sparse QC, provenance manifests, strict resume and final SHA256
 verification. The former fast/320x160 extension is historical and is no longer
 an executable production path.
 
-Canonical production runs always hash the source video and do not permit model
-mismatch overrides.
+Canonical production runs always hash the source video, require a clean Git
+worktree, reject model-mismatch overrides, and guarantee an explicit ``subject``
+column in every derived full-class CSV row even when a historical source
+``eyes.csv`` predates the subject-column fix.
 """
 from __future__ import annotations
 
@@ -15,7 +17,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from run_ritnet_fullclass_native_extension import main
+import run_ritnet_fullclass_native_extension as implementation
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
 
@@ -44,6 +46,31 @@ def _enforce_canonical_provenance() -> None:
         )
 
 
+def _install_subject_identity_guard() -> None:
+    """Adapt historical source eyes.csv rows without modifying the source file."""
+    original = implementation._source_rows
+
+    def source_rows_with_subject(path: Path, subject: str):
+        fields, rows = original(path, subject)
+        if "subject" not in fields:
+            fields = ["subject", *fields]
+        normalized_rows = []
+        for ordinal, row in enumerate(rows):
+            copied = dict(row)
+            row_subject = implementation.normalize_subject(copied.get("subject") or subject)
+            if row_subject != subject:
+                raise ValueError(
+                    f"mixed subjects in source eyes.csv at row {ordinal}: "
+                    f"{row_subject} != {subject}"
+                )
+            copied["subject"] = subject
+            normalized_rows.append(copied)
+        return fields, normalized_rows
+
+    implementation._source_rows = source_rows_with_subject
+
+
 if __name__ == "__main__":
     _enforce_canonical_provenance()
-    raise SystemExit(main())
+    _install_subject_identity_guard()
+    raise SystemExit(implementation.main())
