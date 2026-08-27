@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 
-EYE_METRICS_SCHEMA_VERSION = 2
+EYE_METRICS_SCHEMA_VERSION = 3
 FRAME_COVERAGE_SCHEMA_VERSION = 1
 
 IDENTITY_FIELDS = (
@@ -70,6 +70,23 @@ HARD_CLASS_FIELDS = tuple(
     field
     for name in ("background", "sclera", "iris", "pupil", "iris_outer", "ocular")
     for field in (f"hard_{name}_pixels", f"hard_{name}_fraction")
+)
+
+# These fields define the real-video analysis domain used by all primary hard
+# segmentation metrics. Replicate padding remains available to RITnet as image
+# context, but it is excluded from scientific denominators/geometry. Predictions
+# inside padding and contact with the real/padded boundary are retained as QC
+# evidence rather than silently discarded.
+ANALYSIS_DOMAIN_FIELDS = (
+    "analysis_domain_version",
+    "analysis_valid_pixel_count",
+    "analysis_valid_pixel_fraction",
+    "pupil_predicted_in_padding_pixels",
+    "iris_outer_predicted_in_padding_pixels",
+    "ocular_predicted_in_padding_pixels",
+    "pupil_touches_valid_domain_edge",
+    "iris_outer_touches_valid_domain_edge",
+    "ocular_touches_valid_domain_edge",
 )
 
 COMPONENT_FIELDS = tuple(
@@ -177,6 +194,7 @@ EYE_METRIC_FIELDS = (
     *ROI_FIELDS,
     *RITNET_STATUS_FIELDS,
     *HARD_CLASS_FIELDS,
+    *ANALYSIS_DOMAIN_FIELDS,
     *COMPONENT_FIELDS,
     *GEOMETRY_FIELDS,
     *RELATION_FIELDS,
