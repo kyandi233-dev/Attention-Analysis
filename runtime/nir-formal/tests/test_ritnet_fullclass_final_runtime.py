@@ -112,6 +112,28 @@ def test_infer_prepared_discards_batch_padding_and_returns_transient_probability
     assert timing["valid_batch_size"] == 3
 
 
+def test_labels_only_qc_inference_requests_no_probability_outputs():
+    class Session:
+        def run(self, output_names, feeds):
+            assert output_names == ["labels"]
+            assert feeds["image"].shape == (16, 1, 400, 640)
+            labels = np.zeros((16, 400, 640), dtype=np.uint8)
+            labels[:, 100:300, 100:540] = 1
+            return [labels]
+
+    runtime = RitnetFullClassFinalRuntime.__new__(RitnetFullClassFinalRuntime)
+    runtime.session = Session()
+    runtime.input_name = "image"
+    runtime.precision = "fp32"
+    tensor = np.zeros((FIXED_BATCH_SIZE, 1, INPUT_HEIGHT, INPUT_WIDTH), dtype=np.float32)
+
+    labels, timing = runtime.infer_labels_prepared(tensor, 3)
+    assert labels.shape == (3, 400, 640)
+    assert labels.dtype == np.uint8
+    assert timing["valid_batch_size"] == 3
+    assert timing["output_contract"] == "labels-only-qc"
+
+
 def test_infer_prepared_rejects_probability_mass_not_summing_to_one():
     class Session:
         def run(self, output_names, feeds):
