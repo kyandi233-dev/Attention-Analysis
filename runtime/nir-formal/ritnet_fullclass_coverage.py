@@ -182,6 +182,11 @@ def build_frame_coverage(
         right_status, right_reason = status_for("frame_right")
         success_count = int(left_status == "success") + int(right_status == "success")
         source_status = str(frame_row.get("status") or "")
+        reasons = [reason for reason in (left_reason, right_reason) if reason]
+        final_decode_failed = any(
+            reason.startswith("source_video_decode_failed:") for reason in reasons
+        )
+        roi_invalid = any(reason.startswith("roi_invalid:") or reason == "roi_invalid" for reason in reasons)
 
         if source_status == "video_read_failed":
             if selected_eye_count != 0:
@@ -189,10 +194,14 @@ def build_frame_coverage(
             coverage_status = "video_read_failed"
         elif selected_eye_count == 0:
             coverage_status = "yolo_no_eye"
+        elif final_decode_failed:
+            coverage_status = "final_video_decode_failed"
         elif success_count == 2:
             coverage_status = "both_eyes_success"
         elif success_count == 1:
             coverage_status = "single_eye_success"
+        elif roi_invalid:
+            coverage_status = "roi_invalid"
         elif finals:
             coverage_status = "ritnet_no_success"
         else:

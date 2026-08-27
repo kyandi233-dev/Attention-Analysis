@@ -10,7 +10,7 @@ from typing import Any, Mapping
 
 
 EYE_METRICS_SCHEMA_VERSION = 4
-FRAME_COVERAGE_SCHEMA_VERSION = 1
+FRAME_COVERAGE_SCHEMA_VERSION = 2
 
 IDENTITY_FIELDS = (
     "eye_metrics_schema_version",

@@ -35,6 +35,7 @@ from ritnet_fullclass_schema import (
     EYE_METRIC_FIELDS,
     EYE_METRICS_SCHEMA_VERSION,
     FRAME_COVERAGE_FIELDS,
+    FRAME_COVERAGE_SCHEMA_VERSION,
     project_row,
 )
 from ritnet_fullclass_source import SourceFormalContext, load_source_context
@@ -50,7 +51,7 @@ from ritnet_label_store import sha256_file
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
-CORE_VERSION = "fullclass-final-core-v3-source-valid-allclass-domain"
+CORE_VERSION = "fullclass-final-core-v4-local-data-failure-status"
 VIDEO_SEEK_GAP_THRESHOLD = 64
 
 
@@ -200,6 +201,25 @@ def _group_remaining_rows(
         yield current_frame, group
 
 
+def _failed_prepared_item(
+    *,
+    context: SourceFormalContext,
+    ordinal: int,
+    source: Mapping[str, Any],
+    reason: str,
+) -> dict[str, Any]:
+    base = _source_base_row(context.subject, source)
+    base["ritnet_status"] = "failed"
+    base["ritnet_failure_reason"] = str(reason)
+    return {
+        "ordinal": int(ordinal),
+        "source": source,
+        "base": base,
+        "roi": None,
+        "valid_source_mask": None,
+    }
+
+
 def _prepared_items(
     *,
     context: SourceFormalContext,
@@ -225,15 +245,44 @@ def _prepared_items(
                 cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
                 current_frame = target_frame
             frame = None
+            decode_failed_at: int | None = None
             while current_frame is not None and current_frame <= target_frame:
                 ok, decoded = cap.read()
                 if not ok or decoded is None:
-                    raise RuntimeError(f"source video decode failed at frame {current_frame}")
+                    decode_failed_at = int(current_frame)
+                    break
                 if current_frame == target_frame:
                     frame = decoded
                 current_frame += 1
-            if frame is None:
-                raise RuntimeError(f"failed to obtain source frame {target_frame}")
+
+            if decode_failed_at is not None or frame is None:
+                # A failed sequential decode can occasionally be seek-related, so
+                # retry the actual target frame once before treating this frame as
+                # a local data failure. Model/contract failures remain fail-fast
+                # elsewhere and are never converted into per-eye QC rows.
+                cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
+                retry_ok, retry_frame = cap.read()
+                if retry_ok and retry_frame is not None:
+                    frame = retry_frame
+                    current_frame = target_frame + 1
+                else:
+                    first_failed = target_frame if decode_failed_at is None else decode_failed_at
+                    reason = (
+                        "source_video_decode_failed:"
+                        f"target_frame={target_frame}:first_failed_frame={first_failed}"
+                    )
+                    for ordinal, source in group:
+                        yield _failed_prepared_item(
+                            context=context,
+                            ordinal=ordinal,
+                            source=source,
+                            reason=reason,
+                        )
+                    # Force an explicit seek on the next source-eye frame so one
+                    # unreadable frame does not poison all later groups.
+                    current_frame = None
+                    continue
+
             if frame.shape[1] != frame_width or frame.shape[0] != frame_height:
                 raise RuntimeError(
                     f"source frame size changed at {target_frame}: {frame.shape[1]}x{frame.shape[0]} "
@@ -358,6 +407,7 @@ def _work_identity(
         "soft_class_fraction_domain_version": SOFT_CLASS_FRACTION_DOMAIN_VERSION,
         "temporal_qc_version": TEMPORAL_QC_VERSION,
         "eye_metrics_schema_version": EYE_METRICS_SCHEMA_VERSION,
+        "frame_coverage_schema_version": FRAME_COVERAGE_SCHEMA_VERSION,
         "qc_boundary_band_px": int(full_cfg.get("qc_boundary_band_px", 5)),
         "low_max_probability_threshold": full_cfg.get("low_max_probability_threshold"),
     }

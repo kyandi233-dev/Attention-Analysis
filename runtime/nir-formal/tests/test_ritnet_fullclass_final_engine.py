@@ -1,13 +1,17 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import cv2
 import numpy as np
 import pytest
 
+import ritnet_fullclass_final_engine as final_engine
 from ritnet_fullclass_final_engine import (
     _complete_batch,
     _final_roi_config,
     _group_remaining_rows,
+    _prepared_items,
     _source_base_row,
 )
 
@@ -143,6 +147,63 @@ def test_group_remaining_rows_preserves_source_ordinal_groups():
     assert [ordinal for ordinal, _ in groups[0][1]] == [1]
     assert groups[1][0] == 11
     assert groups[2][0] == 12
+
+
+def test_prepared_items_records_local_decode_failure_and_resumes_next_frame(monkeypatch):
+    class FakeCapture:
+        def __init__(self, *_):
+            self.position = 0
+            self.released = False
+
+        def isOpened(self):
+            return True
+
+        def get(self, prop):
+            if prop == cv2.CAP_PROP_FRAME_WIDTH:
+                return 160
+            if prop == cv2.CAP_PROP_FRAME_HEIGHT:
+                return 100
+            return 0
+
+        def set(self, prop, value):
+            assert prop == cv2.CAP_PROP_POS_FRAMES
+            self.position = int(value)
+            return True
+
+        def read(self):
+            if self.position == 10:
+                return False, None
+            frame = np.zeros((100, 160, 3), dtype=np.uint8)
+            self.position += 1
+            return True, frame
+
+        def release(self):
+            self.released = True
+
+    monkeypatch.setattr(final_engine.cv2, "VideoCapture", FakeCapture)
+    context = SimpleNamespace(
+        subject="sub-031",
+        video="dummy.avi",
+        config=final_roi_config(),
+        eye_rows=(
+            source(10, "frame_left"),
+            source(10, "frame_right"),
+            source(11, "frame_left"),
+        ),
+    )
+
+    items = list(_prepared_items(context=context, start_ordinal=0))
+    assert len(items) == 3
+    assert items[0]["roi"] is None
+    assert items[1]["roi"] is None
+    assert items[0]["base"]["ritnet_status"] == "failed"
+    assert items[1]["base"]["ritnet_status"] == "failed"
+    assert items[0]["base"]["ritnet_failure_reason"].startswith(
+        "source_video_decode_failed:target_frame=10"
+    )
+    assert items[1]["base"]["ritnet_failure_reason"] == items[0]["base"]["ritnet_failure_reason"]
+    assert items[2]["roi"] is not None
+    assert items[2]["valid_source_mask"].shape == (400, 640)
 
 
 def test_complete_batch_maps_success_outputs_and_keeps_failed_row_in_order():

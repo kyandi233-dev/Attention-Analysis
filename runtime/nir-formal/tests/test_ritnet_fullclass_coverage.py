@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from ritnet_fullclass_coverage import build_fixed_qc_anchor_keys, build_frame_coverage
-from ritnet_fullclass_schema import FRAME_COVERAGE_FIELDS
+from ritnet_fullclass_schema import FRAME_COVERAGE_FIELDS, FRAME_COVERAGE_SCHEMA_VERSION
 
 
 def frame(index, status="observed", selected=2, phase="block1", segment=1):
@@ -68,6 +68,7 @@ def test_coverage_retains_yolo_miss_frame_with_no_eye_rows():
     )
     assert len(coverage) == 3
     assert tuple(coverage[1]) == FRAME_COVERAGE_FIELDS
+    assert coverage[1]["frame_coverage_schema_version"] == FRAME_COVERAGE_SCHEMA_VERSION
     assert coverage[1]["coverage_status"] == "yolo_no_eye"
     assert coverage[1]["ritnet_success_eye_count"] == 0
     assert coverage[1]["fixed_qc_anchor"] is True
@@ -82,7 +83,7 @@ def test_coverage_distinguishes_single_eye_and_failed_eye():
     finals = [
         final_eye(0, "frame_left"),
         final_eye(1, "frame_left"),
-        final_eye(1, "frame_right", status="failed", reason="roi_invalid"),
+        final_eye(1, "frame_right", status="failed", reason="roi_invalid:test"),
     ]
     coverage = build_frame_coverage(
         subject="sub-031",
@@ -95,7 +96,42 @@ def test_coverage_distinguishes_single_eye_and_failed_eye():
     assert coverage[0]["right_ritnet_status"] == "not_detected"
     assert coverage[1]["coverage_status"] == "single_eye_success"
     assert coverage[1]["right_ritnet_status"] == "failed"
-    assert coverage[1]["right_failure_reason"] == "roi_invalid"
+    assert coverage[1]["right_failure_reason"] == "roi_invalid:test"
+
+
+def test_final_decode_failure_and_roi_invalid_have_explicit_frame_statuses():
+    frames = [frame(3, selected=2), frame(4, selected=2)]
+    source_eyes = [
+        eye(3, "frame_left"), eye(3, "frame_right"),
+        eye(4, "frame_left"), eye(4, "frame_right"),
+    ]
+    finals = [
+        final_eye(
+            3,
+            "frame_left",
+            status="failed",
+            reason="source_video_decode_failed:target_frame=3:first_failed_frame=3",
+        ),
+        final_eye(
+            3,
+            "frame_right",
+            status="failed",
+            reason="source_video_decode_failed:target_frame=3:first_failed_frame=3",
+        ),
+        final_eye(4, "frame_left", status="failed", reason="roi_invalid:ValueError:left"),
+        final_eye(4, "frame_right", status="failed", reason="roi_invalid:ValueError:right"),
+    ]
+    coverage = build_frame_coverage(
+        subject="sub-031",
+        source_frames=frames,
+        source_eye_rows=source_eyes,
+        final_eye_rows=finals,
+        fixed_anchor_keys=set(),
+    )
+    assert coverage[0]["coverage_status"] == "final_video_decode_failed"
+    assert coverage[0]["ritnet_success_eye_count"] == 0
+    assert coverage[1]["coverage_status"] == "roi_invalid"
+    assert coverage[1]["ritnet_success_eye_count"] == 0
 
 
 def test_video_read_failure_has_priority_in_coverage_status():

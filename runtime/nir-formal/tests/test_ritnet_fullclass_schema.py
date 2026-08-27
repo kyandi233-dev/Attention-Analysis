@@ -18,7 +18,7 @@ def test_final_schemas_are_unique_and_versioned():
     assert len(EYE_METRIC_FIELDS) == len(set(EYE_METRIC_FIELDS))
     assert len(FRAME_COVERAGE_FIELDS) == len(set(FRAME_COVERAGE_FIELDS))
     assert EYE_METRICS_SCHEMA_VERSION == 4
-    assert FRAME_COVERAGE_SCHEMA_VERSION == 1
+    assert FRAME_COVERAGE_SCHEMA_VERSION == 2
     assert "source_pupil_confidence" not in EYE_METRIC_FIELDS
     assert "pupil_confidence" not in EYE_METRIC_FIELDS
     assert "soft_class_fraction_domain_version" in UNCERTAINTY_BASE_FIELDS
