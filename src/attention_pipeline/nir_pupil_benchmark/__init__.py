@@ -35,7 +35,7 @@ from .core import (
     temporal_stability_table,
 )
 from .overlay import draw_detection, write_algorithm_montage
-from .runner import assemble_row, detect_crop, run_crop_list, scale_params
+from .runner import VideoFrameSource, assemble_row, detect_crop, run_crop_list, scale_params
 from .schema import ALGORITHMS, ALGORITHM_SPECS, RESULT_COLUMNS, SCALE_RULE
 from .synthetic import make_synthetic_eye, write_smoke_manifest
 
@@ -47,6 +47,7 @@ __all__ = [
     "Ellipse",
     "DetectionOutput",
     "UnavailableAlgorithmError",
+    "VideoFrameSource",
     "assemble_row",
     "center_distance",
     "choose_continuous_window",

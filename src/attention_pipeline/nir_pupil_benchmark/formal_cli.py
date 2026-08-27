@@ -27,6 +27,7 @@ from .formal import (
     validate_result_contract,
     write_manual_qc_montages,
 )
+from .runner import VideoFrameSource
 from .schema import ALGORITHMS
 
 
@@ -42,6 +43,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--algorithms", default=",".join(ALGORITHMS))
     parser.add_argument("--run-dir", help="required for prepare/run/all/validate")
     parser.add_argument("--run-confidence", action="store_true")
+    parser.add_argument(
+        "--in-memory",
+        action="store_true",
+        help="do not materialize crops to disk; decode source-video frames in "
+             "memory during execution (manual QC montages are still written)",
+    )
     parser.add_argument(
         "--approve-multi-subject",
         action="store_true",
@@ -123,7 +130,13 @@ def _prepare(config_path: Path, config: dict, args, subjects: list[str], run_dir
             min_crop_width=int(config["input"]["min_crop_width"]),
             min_crop_height=int(config["input"]["min_crop_height"]),
         )
-        manifest = materialize_crops(manifest, run_dir)
+        if getattr(args, "in_memory", False):
+            # Defer decoding to execution; no PNG crops are written to disk.
+            manifest["input_status"] = manifest["input_status"].where(
+                manifest["input_status"] != "pending", "ready"
+            )
+        else:
+            manifest = materialize_crops(manifest, run_dir)
         atomic_write_csv(manifest, run_dir / "subjects" / subject / "sample_manifest.csv")
         manifests.append(manifest)
         provenance.append(
@@ -163,64 +176,72 @@ def _run(config: dict, args, algorithms: list[str], run_dir: Path) -> dict:
     if (run_dir / "frame_results.csv").exists():
         raise FileExistsError(f"refusing to overwrite existing results in {run_dir}")
     manifest = pd.read_csv(manifest_path, low_memory=False)
-    results = execute_manifest(
-        manifest,
-        algorithms,
-        run_dir=run_dir,
-        run_confidence=args.run_confidence,
-    )
-    checks = validate_result_contract(manifest, results, algorithms)
-    atomic_write_csv(results, run_dir / "frame_results.csv")
-    _write_parquet_atomic(results, run_dir / "frame_results.parquet")
-    summary = subject_algorithm_summary(results)
-    pairwise = algorithm_pairwise_summary(results)
-    temporal = temporal_summary(results)
-    atomic_write_csv(summary, run_dir / "subject_algorithm_summary.csv")
-    atomic_write_csv(pairwise, run_dir / "algorithm_pairwise_summary.csv")
-    atomic_write_csv(temporal, run_dir / "temporal_window_summary.csv")
-    manual_n = int(
-        config["smoke"]["manual_qc_n"] if args.profile == "smoke"
-        else config["sampling"]["manual_qc_n"]
-    )
-    manual = write_manual_qc_montages(
-        results, run_dir, n_frames_per_subject=manual_n
-    )
-    atomic_write_csv(manual, run_dir / "manual_qc_labels.csv")
-    atomic_write_json(checks, run_dir / "validation_summary.json")
-    montage_paths = sorted((run_dir / "manual_qc").glob("**/*.png"))
-    expected_montages = manual_n * int(results["subject"].nunique())
-    if len(montage_paths) != expected_montages:
-        raise AssertionError(
-            f"manual QC montage count mismatch: expected {expected_montages}, "
-            f"found {len(montage_paths)}"
+    image_source = "video" if args.in_memory else "disk"
+    frame_source = VideoFrameSource() if args.in_memory else None
+    try:
+        results = execute_manifest(
+            manifest,
+            algorithms,
+            run_dir=run_dir,
+            run_confidence=args.run_confidence,
+            image_source=image_source,
         )
-    completion = {
-        "status": "complete",
-        "pipeline": config["pipeline"],
-        "profile": args.profile,
-        "subjects": sorted(results["subject"].dropna().unique().tolist()),
-        "algorithms": algorithms,
-        "result_rows": int(len(results)),
-        "manual_qc_rows": int(len(manual)),
-        "manual_qc_montage_count": int(len(montage_paths)),
-        "manual_qc_montage_sha256": {
-            path.relative_to(run_dir).as_posix(): sha256_file(path)
-            for path in montage_paths
-        },
-        "validation": checks,
-        "artifacts_sha256": {
-            name: sha256_file(run_dir / name)
-            for name in (
-                "sample_manifest.csv", "frame_results.csv", "frame_results.parquet",
-                "subject_algorithm_summary.csv", "algorithm_pairwise_summary.csv",
-                "temporal_window_summary.csv",
-                "manual_qc_labels.csv", "validation_summary.json",
+        checks = validate_result_contract(manifest, results, algorithms)
+        atomic_write_csv(results, run_dir / "frame_results.csv")
+        _write_parquet_atomic(results, run_dir / "frame_results.parquet")
+        summary = subject_algorithm_summary(results)
+        pairwise = algorithm_pairwise_summary(results)
+        temporal = temporal_summary(results)
+        atomic_write_csv(summary, run_dir / "subject_algorithm_summary.csv")
+        atomic_write_csv(pairwise, run_dir / "algorithm_pairwise_summary.csv")
+        atomic_write_csv(temporal, run_dir / "temporal_window_summary.csv")
+        manual_n = int(
+            config["smoke"]["manual_qc_n"] if args.profile == "smoke"
+            else config["sampling"]["manual_qc_n"]
+        )
+        manual = write_manual_qc_montages(
+            results, run_dir, n_frames_per_subject=manual_n, frame_source=frame_source
+        )
+        atomic_write_csv(manual, run_dir / "manual_qc_labels.csv")
+        atomic_write_json(checks, run_dir / "validation_summary.json")
+        montage_paths = sorted((run_dir / "manual_qc").glob("**/*.png"))
+        expected_montages = manual_n * int(results["subject"].nunique())
+        if len(montage_paths) != expected_montages:
+            raise AssertionError(
+                f"manual QC montage count mismatch: expected {expected_montages}, "
+                f"found {len(montage_paths)}"
             )
-        },
-        "scientific_boundary": "engineering benchmark and descriptive agreement only; no accuracy claim",
-    }
-    atomic_write_json(completion, run_dir / "completion.json")
-    return completion
+        completion = {
+            "status": "complete",
+            "pipeline": config["pipeline"],
+            "profile": args.profile,
+            "image_source": image_source,
+            "subjects": sorted(results["subject"].dropna().unique().tolist()),
+            "algorithms": algorithms,
+            "result_rows": int(len(results)),
+            "manual_qc_rows": int(len(manual)),
+            "manual_qc_montage_count": int(len(montage_paths)),
+            "manual_qc_montage_sha256": {
+                path.relative_to(run_dir).as_posix(): sha256_file(path)
+                for path in montage_paths
+            },
+            "validation": checks,
+            "artifacts_sha256": {
+                name: sha256_file(run_dir / name)
+                for name in (
+                    "sample_manifest.csv", "frame_results.csv", "frame_results.parquet",
+                    "subject_algorithm_summary.csv", "algorithm_pairwise_summary.csv",
+                    "temporal_window_summary.csv",
+                    "manual_qc_labels.csv", "validation_summary.json",
+                )
+            },
+            "scientific_boundary": "engineering benchmark and descriptive agreement only; no accuracy claim",
+        }
+        atomic_write_json(completion, run_dir / "completion.json")
+        return completion
+    finally:
+        if frame_source is not None:
+            frame_source.close()
 
 
 def main(argv: list[str] | None = None) -> int:

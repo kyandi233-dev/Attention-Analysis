@@ -811,6 +811,7 @@ def execute_manifest(
     *,
     run_dir: str | Path,
     run_confidence: bool = False,
+    image_source: str = "disk",
 ) -> pd.DataFrame:
     for algorithm in algorithms:
         if algorithm not in ALGORITHM_SPECS:
@@ -826,6 +827,7 @@ def execute_manifest(
             run_crop_list(
                 tight.to_dict("records"), algorithms, crop_root=run_dir,
                 run_confidence=run_confidence, mode="independent",
+                image_source=image_source,
             )
         )
     if not continuous.empty:
@@ -833,6 +835,7 @@ def execute_manifest(
             run_crop_list(
                 continuous.to_dict("records"), algorithms, crop_root=run_dir,
                 run_confidence=run_confidence, mode="continuous",
+                image_source=image_source,
             )
         )
     unavailable = manifest[~manifest["input_status"].eq("ready")]
@@ -980,11 +983,16 @@ def write_manual_qc_montages(
     run_dir: str | Path,
     *,
     n_frames_per_subject: int,
+    frame_source: Any = None,
 ) -> pd.DataFrame:
     """Write local frame montages: original + RITnet + all algorithms, both eyes.
 
     The returned CSV template intentionally leaves the human label blank.  A
     montage is review evidence, not an automatic correctness decision.
+
+    ``frame_source`` (a ``runner.VideoFrameSource``) supplies crops from the
+    source video in memory; when None, crops are read from disk via
+    ``crop_path``.
     """
     import cv2
 
@@ -1006,9 +1014,13 @@ def write_manual_qc_montages(
         candidate_inputs = subject_rows[
             [*identity_columns, "eye", "input_status", "crop_path"]
         ].drop_duplicates()
+        crop_available = (
+            pd.Series(True, index=candidate_inputs.index)
+            if frame_source is not None
+            else candidate_inputs["crop_path"].notna()
+        )
         candidate_inputs = candidate_inputs[
-            candidate_inputs["input_status"].eq("ready")
-            & candidate_inputs["crop_path"].notna()
+            candidate_inputs["input_status"].eq("ready") & crop_available
         ]
         ready_eye_counts = candidate_inputs.groupby(
             identity_columns, dropna=False, sort=True
@@ -1061,10 +1073,14 @@ def write_manual_qc_montages(
                 if eye_rows.empty:
                     continue
                 first = eye_rows.iloc[0]
-                crop_path = run_dir / str(first["crop_path"])
-                image = cv2.imdecode(np.fromfile(str(crop_path), dtype=np.uint8), cv2.IMREAD_COLOR)
-                if image is None:
-                    raise ValueError(f"manual QC could not decode crop: {crop_path}")
+                if frame_source is not None:
+                    gray = frame_source.crop(first)
+                    image = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+                else:
+                    crop_path = run_dir / str(first["crop_path"])
+                    image = cv2.imdecode(np.fromfile(str(crop_path), dtype=np.uint8), cv2.IMREAD_COLOR)
+                    if image is None:
+                        raise ValueError(f"manual QC could not decode crop: {crop_path}")
 
                 tiles: list[tuple[str, np.ndarray]] = [("original", image.copy())]
                 ritnet_row = {

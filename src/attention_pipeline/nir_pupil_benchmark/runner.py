@@ -159,6 +159,59 @@ def assemble_row(identity: Mapping[str, Any], detection: Mapping[str, Any]) -> d
     return row
 
 
+class VideoFrameSource:
+    """Decode source-video frames on demand and crop eye regions in memory.
+
+    Avoids materializing PNG crops to disk for full-video runs: each source
+    video keeps one open ``cv2.VideoCapture`` and one cached decoded frame.
+    ``crop(row)`` uses the row's ``source_video`` / ``frame_idx`` / bbox.
+    Must be closed (releases captures) when done.
+    """
+
+    def __init__(self) -> None:
+        self._caps: dict[str, Any] = {}
+        self._last: dict[str, tuple[int, np.ndarray]] = {}
+
+    def gray_frame(self, video: str, frame_idx: int) -> np.ndarray:
+        import cv2
+
+        video = str(video)
+        frame_idx = int(frame_idx)
+        last = self._last.get(video)
+        if last is not None and last[0] == frame_idx:
+            return last[1]
+        cap = self._caps.get(video)
+        if cap is None:
+            cap = cv2.VideoCapture(video)
+            if not cap.isOpened():
+                raise RuntimeError(f"cannot open source video: {video}")
+            self._caps[video] = cap
+        if not cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx):
+            raise RuntimeError(f"video seek failed: {video} frame {frame_idx}")
+        ok, frame = cap.read()
+        if not ok or frame is None:
+            raise RuntimeError(f"video read failed: {video} frame {frame_idx}")
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
+        self._last[video] = (frame_idx, gray)
+        return gray
+
+    def crop(self, row: Mapping[str, Any]) -> np.ndarray:
+        frame = self.gray_frame(str(row["source_video"]), int(row["frame_idx"]))
+        x1, y1, x2, y2 = (
+            int(row["bbox_x1"]), int(row["bbox_y1"]), int(row["bbox_x2"]), int(row["bbox_y2"])
+        )
+        crop = frame[y1:y2, x1:x2]
+        if crop.size == 0:
+            raise ValueError(f"empty crop: {row.get('input_kind')} frame {row['frame_idx']}")
+        return crop
+
+    def close(self) -> None:
+        for cap in self._caps.values():
+            cap.release()
+        self._caps.clear()
+        self._last.clear()
+
+
 def run_crop_list(
     rows: Sequence[Mapping[str, Any]],
     algorithms: Iterable[str],
@@ -166,30 +219,55 @@ def run_crop_list(
     crop_root: str | Path,
     run_confidence: bool = False,
     mode: str = "independent",
+    image_source: str = "disk",
 ) -> pd.DataFrame:
     """Run detection over a manifest of crops and return the unified frame.
 
-    Each input row needs at least ``crop_path`` (relative to ``crop_root``) and
-    any identity columns (subject/phase/frame_idx/eye/sample_role/bbox_*). In
-    ``continuous`` mode rows are grouped by (subject, eye, sequence_id) and
+    Each input row needs either ``crop_path`` (relative to ``crop_root``) when
+    ``image_source="disk"``, or ``source_video`` + ``frame_idx`` + bbox columns
+    when ``image_source="video"`` (frames decoded in memory, nothing written).
+    In ``continuous`` mode rows are grouped by (subject, eye, sequence_id) and
     processed in frame order.  A continuous sequence must use one fixed source
     coordinate canvas: input dimensions and bbox coordinates cannot change.
     Scale-sensitive properties are still re-applied before every call and the
     actual values are written to provenance.
     """
+    if image_source not in ("disk", "video"):
+        raise ValueError(f"image_source must be 'disk' or 'video', got {image_source!r}")
     algorithms = list(algorithms)
     for algorithm in algorithms:
         if algorithm not in ALGORITHM_SPECS:
             raise KeyError(f"unknown algorithm: {algorithm!r}")
     crop_root = Path(crop_root)
+    frame_source = VideoFrameSource() if image_source == "video" else None
+    try:
+        return _run_crop_list_impl(
+            rows, algorithms, crop_root=crop_root,
+            run_confidence=run_confidence, mode=mode, frame_source=frame_source,
+        )
+    finally:
+        if frame_source is not None:
+            frame_source.close()
 
+
+def _run_crop_list_impl(
+    rows: Sequence[Mapping[str, Any]],
+    algorithms: Iterable[str],
+    *,
+    crop_root: Path,
+    run_confidence: bool,
+    mode: str,
+    frame_source: VideoFrameSource | None,
+) -> pd.DataFrame:
     records: list[dict[str, Any]] = []
     if mode == "continuous":
         for subject, eye, sequence_id, group in _group_continuous(rows):
             group = sorted(group, key=lambda r: int(r.get("frame_idx", 0)))
-            first_image = _load_crop(crop_root, group[0])
+            first_image = _load_crop(crop_root, group[0], frame_source=frame_source)
             fw, fh = first_image.shape[1], first_image.shape[0]
-            _validate_fixed_continuous_canvas(group, crop_root, fw, fh)
+            _validate_fixed_continuous_canvas(
+                group, crop_root, fw, fh, frame_source=frame_source
+            )
             detectors = {
                 algorithm: make_detector(
                     ALGORITHM_SPECS[algorithm],
@@ -198,7 +276,7 @@ def run_crop_list(
                 for algorithm in algorithms
             }
             for row in group:
-                image = _load_crop(crop_root, row)
+                image = _load_crop(crop_root, row, frame_source=frame_source)
                 for algorithm in algorithms:
                     spec = ALGORITHM_SPECS[algorithm]
                     applied = apply_scale_params(
@@ -234,7 +312,7 @@ def run_crop_list(
                     records.append(assemble_row(row, detection))
     else:
         for row in rows:
-            image = _load_crop(crop_root, row)
+            image = _load_crop(crop_root, row, frame_source=frame_source)
             for algorithm in algorithms:
                 detection = detect_crop(image, algorithm, run_confidence=run_confidence)
                 records.append(assemble_row(row, detection))
@@ -264,7 +342,8 @@ def _group_continuous(rows: Sequence[Mapping[str, Any]]):
 
 
 def _validate_fixed_continuous_canvas(
-    rows: Sequence[Mapping[str, Any]], crop_root: Path, width: int, height: int
+    rows: Sequence[Mapping[str, Any]], crop_root: Path, width: int, height: int,
+    frame_source: VideoFrameSource | None = None,
 ) -> None:
     bbox_keys = ("bbox_x1", "bbox_y1", "bbox_x2", "bbox_y2")
     reference = tuple(rows[0].get(key) for key in bbox_keys)
@@ -275,12 +354,18 @@ def _validate_fixed_continuous_canvas(
                 "continuous mode requires a fixed source-coordinate bbox; "
                 "moving tight crops would invalidate detector state"
             )
-        image = _load_crop(crop_root, row)
+        image = _load_crop(crop_root, row, frame_source=frame_source)
         if image.shape[:2] != (height, width):
             raise ValueError("continuous mode requires constant input dimensions")
 
 
-def _load_crop(crop_root: Path, row: Mapping[str, Any]) -> np.ndarray:
+def _load_crop(
+    crop_root: Path,
+    row: Mapping[str, Any],
+    frame_source: VideoFrameSource | None = None,
+) -> np.ndarray:
+    if frame_source is not None:
+        return frame_source.crop(row)
     import cv2
 
     crop_path = row.get("crop_path")
