@@ -89,8 +89,18 @@ def test_summarize_outputs_preserves_failed_rows_and_scientific_metrics():
     assert [ordinal for ordinal, _ in completed] == [0, 1]
     assert completed[0][1]["ritnet_status"] == "success"
     assert completed[0][1]["hard_pupil_pixels"] > 0
+    # All four soft-class fractions remain cohort outputs.
+    assert completed[0][1]["soft_background_fraction"] == pytest.approx(0.50)
+    assert completed[0][1]["soft_sclera_fraction"] == pytest.approx(0.30)
+    assert completed[0][1]["soft_iris_fraction"] == pytest.approx(0.15)
     assert completed[0][1]["soft_pupil_fraction"] == pytest.approx(0.05)
-    assert completed[0][1]["whole_max_probability_mean"] == pytest.approx(0.9)
+    # Cohort production retains only cheap ocular means needed by temporal QC;
+    # whole/boundary percentile distributions are deliberately sparse-QC-only.
+    assert completed[0][1]["ocular_max_probability_mean"] == pytest.approx(0.9)
+    assert completed[0][1]["ocular_top1_top2_margin_mean"] == pytest.approx(0.7)
+    assert completed[0][1]["ocular_entropy_mean"] == pytest.approx(0.3)
+    assert "whole_max_probability_mean" not in completed[0][1]
+    assert "boundary_entropy_p95" not in completed[0][1]
     assert completed[1][1]["ritnet_status"] == "failed"
     assert completed[1][1]["ritnet_failure_reason"] == "roi_invalid:test"
     assert timing["hard_metric_ms"] >= 0.0
