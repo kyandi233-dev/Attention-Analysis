@@ -1,23 +1,21 @@
+# Full-video benchmark profile for sub-035 only.
+#
+# Runs every block1+block2 frame of sub-035 through the seven classical
+# detectors (tight, independent mode) plus one long continuous window for
+# temporal stability. Full-video tight sampling is detector-outcome-independent
+# and fixed before any algorithm runs.
 pipeline:
   name: attention-analysis-nir-pypupilext-native-benchmark
   version: 0.4.0
   schema_version: 2
 
-# Runtime policy (docs/020-nir/030 section 3-4):
-# - The main algorithm runtime MUST measure plain run() only.
-# - runWithConfidence() / outline confidence is an OPTIONAL separate pass whose
-#   extra time is recorded independently in confidence_runtime_ms. It never
-#   contributes to runtime_ms.
 runtime:
   main_method: run
   confidence: separate_optional
 
 paths:
-  # This benchmark consumes frozen production evidence from this exact root.
-  # The source video is resolved from completion.json / eyes.csv and must exist;
-  # it is never inferred by concatenating a raw-data directory name.
   production_root: "D:/_AttentionData/Beijing-NIR/amd-directml"
-  output_root: "D:/_AttentionData/Beijing-NIR/analysis/pypupilext-native-benchmark/sub031-040"
+  output_root: "D:/_AttentionData/Beijing-NIR/analysis/pypupilext-native-benchmark/sub035-full"
 
 production:
   required_completion_status: complete
@@ -25,26 +23,13 @@ production:
   required_files: [completion.json, eyes.csv, run_manifest.json]
   ritnet_analysis_size: [320, 160]
   hash_evidence_files: true
-  # Full source-video SHA256 is intentionally off because the multi-GB videos
-  # are immutable upstream data and hashing all ten is a separate I/O cost.
-  # File size and nanosecond mtime are always recorded instead.
   hash_source_video: false
 
 subjects:
   include:
-    - sub-031
-    - sub-032
-    - sub-033
-    - sub-034
     - sub-035
-    - sub-036
-    - sub-037
-    - sub-038
-    - sub-039
-    - sub-040
 
 algorithms:
-  # Seven classical algorithms (six from PyPupilEXT + Pupil Labs 2D standalone).
   include:
     - PuRe
     - PuReST
@@ -53,60 +38,39 @@ algorithms:
     - ExCuSe
     - Swirski2D
     - Starburst
-  module_candidates:
-    pypupilext: [pypupilext, pypupilext, PyPupilEXT]
-    pupil_labs_2d: [pupil_detectors]
-  # RITnet is a comparator/reference only (already-computed production output),
-  # never re-run by this benchmark.
   ritnet:
     role: comparator_only
     use_production_outputs: true
 
 sampling:
-  # Per subject. Sampling is decided before any pupil detector runs.
-  # full_video=true selects every block1+block2 frame for the tight sample
-  # (no uniform subsampling, no RITnet strata); used for the full-video profile.
-  full_video: false
-  block_uniform_n: 300
-  ritnet_high_quality_n: 100
-  ritnet_difficult_n: 100
-  temporal_n: 300
+  # Full video: every block1+block2 frame is in the tight sample.
+  full_video: true
+  block_uniform_n: 0
+  ritnet_high_quality_n: 0
+  ritnet_difficult_n: 0
+  # Longest available consecutive two-eye interval in sub-035 block1 is 1600
+  # frames (~53 s); far more informative than the 300-frame default window.
+  temporal_n: 1600
   temporal_preferred_phase: block1
   manual_qc_n: 12
-
-smoke:
-  block_uniform_n: 3
-  ritnet_high_quality_n: 2
-  ritnet_difficult_n: 2
-  temporal_n: 5
-  manual_qc_n: 2
 
 input:
   frame_index_base: 0
   min_crop_width: 20
   min_crop_height: 12
   grayscale: true
-  # Keep the existing YOLO eye box in source-video pixels. Do not resize the
-  # crop before any algorithm. Per-algorithm INTERNAL resize/downscale is an
-  # official behavior recorded in provenance (docs/020-nir/030 section 4); the
-  # benchmark itself never resizes.
   resize_native_crop: false
   bbox_rounding: floor_min_ceil_max
   tight_input_kind: production_tight_bbox
   continuous_input_kind: fixed_source_canvas_from_temporal_tight_bbox_union
   continuous_canvas_padding_px: 0
 
-# Scale rule for resolution-sensitive parameters (docs/020-nir/030 section 6):
-# frozen from the ~424x187 tight crop probe; provenance recorded in output.
 scale_rule:
   radius_min_fraction: 0.02
   radius_max_fraction: 0.10
   swirski_ransac_seed: 0
   source_probe: "sub-031 frame 46988 tight crop ~424x187, RITnet pupil ~6-16px diameter"
 
-# Only frame identity and the existing YOLO tight-eye box are consumed from
-# production outputs. No RITnet mask, geometry, validity or confidence field is
-# used to gate the classical algorithms; RITnet is agreement-only.
 columns:
   phase:
     aliases: [phase]

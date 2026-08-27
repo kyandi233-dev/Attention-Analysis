@@ -76,6 +76,7 @@ def _sampling(config: dict, profile: str) -> dict:
         "ritnet_difficult_n": int(source["ritnet_difficult_n"]),
         "temporal_n": int(source["temporal_n"]),
         "temporal_preferred_phase": str(config["sampling"]["temporal_preferred_phase"]),
+        "full_video": bool(source.get("full_video", False)),
     }
 
 

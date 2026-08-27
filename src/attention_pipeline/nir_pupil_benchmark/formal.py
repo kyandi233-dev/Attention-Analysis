@@ -420,64 +420,76 @@ def build_sample_plan(
     ritnet_difficult_n: int,
     temporal_n: int,
     temporal_preferred_phase: str = "block1",
+    full_video: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Build detector-outcome-independent tight and temporal frame samples."""
+    """Build detector-outcome-independent tight and temporal frame samples.
+
+    ``full_video=True`` selects every frame of block1+block2 for the tight
+    sample (no uniform subsampling, no RITnet strata) and is intended for the
+    full-video benchmark profile. ``temporal_n <= 0`` skips the temporal window.
+    """
     quality = _frame_quality_table(eyes)
     selected: dict[tuple[str, int, int], set[str]] = {}
     for phase in ("block1", "block2"):
         phase_rows = quality[quality["phase"].eq(phase)]
-        values = _uniform_pick(phase_rows["frame_idx"].tolist(), int(block_uniform_n))
+        if full_video:
+            values = sorted(phase_rows["frame_idx"].unique().tolist())
+            role = f"{phase}_full"
+        else:
+            values = _uniform_pick(phase_rows["frame_idx"].tolist(), int(block_uniform_n))
+            role = f"{phase}_uniform"
         segment_by_frame = phase_rows.set_index("frame_idx")["phase_segment"].to_dict()
         for frame_idx in values:
             key = (phase, int(segment_by_frame[frame_idx]), int(frame_idx))
-            selected.setdefault(key, set()).add(f"{phase}_uniform")
+            selected.setdefault(key, set()).add(role)
 
-    used = set(selected)
-    high = quality[
-        quality["eye_rows"].eq(2)
-        & quality["bbox_ready_count"].eq(2)
-        & quality["ritnet_found_count"].eq(2)
-        & quality["observed_count"].eq(2)
-        & quality["roi_clipped_count"].eq(0)
-        & quality["min_pupil_confidence"].notna()
-    ].copy()
-    high["_key"] = high.apply(lambda row: _key_tuple(row), axis=1)
-    high = high[~high["_key"].isin(used)].sort_values(
-        ["min_pupil_confidence", "min_anchor_confidence", "min_edge_margin_norm",
-         "phase", "phase_segment", "frame_idx"],
-        ascending=[False, False, False, True, True, True],
-        na_position="last",
-    )
-    if len(high) < ritnet_high_quality_n:
-        raise ValueError(
-            f"insufficient RITnet high-quality frames: need {ritnet_high_quality_n}, have {len(high)}"
+    if not full_video:
+        used = set(selected)
+        high = quality[
+            quality["eye_rows"].eq(2)
+            & quality["bbox_ready_count"].eq(2)
+            & quality["ritnet_found_count"].eq(2)
+            & quality["observed_count"].eq(2)
+            & quality["roi_clipped_count"].eq(0)
+            & quality["min_pupil_confidence"].notna()
+        ].copy()
+        high["_key"] = high.apply(lambda row: _key_tuple(row), axis=1)
+        high = high[~high["_key"].isin(used)].sort_values(
+            ["min_pupil_confidence", "min_anchor_confidence", "min_edge_margin_norm",
+             "phase", "phase_segment", "frame_idx"],
+            ascending=[False, False, False, True, True, True],
+            na_position="last",
         )
-    for row in high.head(ritnet_high_quality_n).to_dict("records"):
-        key = _key_tuple(row)
-        selected.setdefault(key, set()).add("ritnet_high_quality")
-        used.add(key)
+        if len(high) < ritnet_high_quality_n:
+            raise ValueError(
+                f"insufficient RITnet high-quality frames: need {ritnet_high_quality_n}, have {len(high)}"
+            )
+        for row in high.head(ritnet_high_quality_n).to_dict("records"):
+            key = _key_tuple(row)
+            selected.setdefault(key, set()).add("ritnet_high_quality")
+            used.add(key)
 
-    difficult = quality.copy()
-    difficult["_key"] = difficult.apply(lambda row: _key_tuple(row), axis=1)
-    difficult = difficult[~difficult["_key"].isin(used)].copy()
-    difficult["_hard_failure"] = (
-        difficult["eye_rows"].lt(2)
-        | difficult["bbox_ready_count"].lt(2)
-        | difficult["ritnet_found_count"].lt(difficult["eye_rows"])
-        | difficult["observed_count"].lt(difficult["eye_rows"])
-    ).astype(int)
-    difficult = difficult.sort_values(
-        ["_hard_failure", "roi_clipped_count", "min_pupil_confidence",
-         "min_edge_margin_norm", "min_anchor_confidence", "phase", "phase_segment", "frame_idx"],
-        ascending=[False, False, True, True, True, True, True, True],
-        na_position="first",
-    )
-    if len(difficult) < ritnet_difficult_n:
-        raise ValueError(
-            f"insufficient RITnet difficult frames: need {ritnet_difficult_n}, have {len(difficult)}"
+        difficult = quality.copy()
+        difficult["_key"] = difficult.apply(lambda row: _key_tuple(row), axis=1)
+        difficult = difficult[~difficult["_key"].isin(used)].copy()
+        difficult["_hard_failure"] = (
+            difficult["eye_rows"].lt(2)
+            | difficult["bbox_ready_count"].lt(2)
+            | difficult["ritnet_found_count"].lt(difficult["eye_rows"])
+            | difficult["observed_count"].lt(difficult["eye_rows"])
+        ).astype(int)
+        difficult = difficult.sort_values(
+            ["_hard_failure", "roi_clipped_count", "min_pupil_confidence",
+             "min_edge_margin_norm", "min_anchor_confidence", "phase", "phase_segment", "frame_idx"],
+            ascending=[False, False, True, True, True, True, True, True],
+            na_position="first",
         )
-    for row in difficult.head(ritnet_difficult_n).to_dict("records"):
-        selected.setdefault(_key_tuple(row), set()).add("ritnet_difficult")
+        if len(difficult) < ritnet_difficult_n:
+            raise ValueError(
+                f"insufficient RITnet difficult frames: need {ritnet_difficult_n}, have {len(difficult)}"
+            )
+        for row in difficult.head(ritnet_difficult_n).to_dict("records"):
+            selected.setdefault(_key_tuple(row), set()).add("ritnet_difficult")
 
     tight = pd.DataFrame(
         [
@@ -490,7 +502,10 @@ def build_sample_plan(
             for (phase, segment, frame_idx), roles in sorted(selected.items())
         ]
     )
-    temporal = _choose_temporal_frames(quality, int(temporal_n), temporal_preferred_phase)
+    if int(temporal_n) <= 0:
+        temporal = pd.DataFrame(columns=["phase", "phase_segment", "frame_idx", "sample_role"])
+    else:
+        temporal = _choose_temporal_frames(quality, int(temporal_n), temporal_preferred_phase)
     return tight, temporal
 
 

@@ -177,3 +177,38 @@ def test_result_contract_rejects_equal_row_count_with_wrong_identity_key():
     results = pd.DataFrame([result], columns=RESULT_COLUMNS)
     with pytest.raises(AssertionError, match="formal result contract failed"):
         validate_result_contract(manifest, results, ["PuRe"])
+
+
+def test_build_sample_plan_full_video_selects_all_frames_and_no_strata():
+    eyes = _synthetic_eyes(n_per_block=40)
+    tight, temporal = build_sample_plan(
+        eyes,
+        block_uniform_n=0,
+        ritnet_high_quality_n=0,
+        ritnet_difficult_n=0,
+        temporal_n=0,
+        temporal_preferred_phase="block1",
+        full_video=True,
+    )
+    expected_frames = eyes[eyes["phase"].isin(["block1", "block2"])]["frame_idx"].nunique()
+    assert len(tight) == expected_frames == 80
+    assert tight["sample_role"].str.contains("block1_full", regex=False).sum() == 40
+    assert tight["sample_role"].str.contains("block2_full", regex=False).sum() == 40
+    assert not tight["sample_role"].str.contains("ritnet", regex=False).any()
+    assert temporal.empty  # temporal_n <= 0 skips the window
+
+
+def test_build_sample_plan_full_video_temporal_still_bounded():
+    eyes = _synthetic_eyes(n_per_block=40)
+    tight, temporal = build_sample_plan(
+        eyes,
+        block_uniform_n=0,
+        ritnet_high_quality_n=0,
+        ritnet_difficult_n=0,
+        temporal_n=5,
+        temporal_preferred_phase="block1",
+        full_video=True,
+    )
+    assert len(tight) == 80
+    assert len(temporal) == 5
+    assert np.diff(temporal["frame_idx"]).tolist() == [1, 1, 1, 1]
