@@ -25,10 +25,7 @@ ALLOWED_EYES = frozenset({"frame_left", "frame_right"})
 
 DELTA_SPECS = (
     ("hard_pupil_fraction", "delta_hard_pupil_fraction"),
-    ("hard_iris_outer_fraction", "delta_hard_iris_outer_fraction"),
     ("hard_ocular_fraction", "delta_hard_ocular_fraction"),
-    ("pupil_to_iris_diameter_ratio", "delta_pupil_to_iris_diameter_ratio"),
-    ("ocular_aperture_ratio_median", "delta_ocular_aperture_ratio_median"),
     ("ocular_max_probability_mean", "delta_ocular_max_probability_mean"),
     ("ocular_top1_top2_margin_mean", "delta_ocular_top1_top2_margin_mean"),
     ("ocular_entropy_mean", "delta_ocular_entropy_mean"),

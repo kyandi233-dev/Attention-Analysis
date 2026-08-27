@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 
-EYE_METRICS_SCHEMA_VERSION = 5
+EYE_METRICS_SCHEMA_VERSION = 6
 FRAME_COVERAGE_SCHEMA_VERSION = 2
 
 IDENTITY_FIELDS = (
@@ -85,58 +85,26 @@ ANALYSIS_DOMAIN_FIELDS = (
     "ocular_touches_valid_domain_edge",
 )
 
-COMPONENT_FIELDS = tuple(
-    field
-    for name in ("pupil", "iris_outer", "ocular")
-    for field in (f"{name}_component_count", f"{name}_largest_component_fraction")
+# Connected-component QC is retained only for the pupil in the lean cohort schema.
+COMPONENT_FIELDS = (
+    "pupil_component_count",
+    "pupil_largest_component_fraction",
 )
 
 GEOMETRY_FIELDS = tuple(
-    field
-    for name in ("pupil", "iris_outer")
-    for field in (
-        f"{name}_found",
-        f"{name}_fit_valid",
-        f"{name}_center_x",
-        f"{name}_center_y",
-        f"{name}_short_axis",
-        f"{name}_long_axis",
-        f"{name}_angle_deg",
-        f"{name}_contour_area",
-        f"{name}_ellipse_area",
-        f"{name}_equiv_diameter",
-        f"{name}_geom_mean_diameter",
-        f"{name}_whole_mask_touches_edge",
-        f"{name}_largest_contour_touches_edge",
+    f"pupil_{suffix}"
+    for suffix in (
+        "found", "fit_valid", "center_x", "center_y", "short_axis", "long_axis",
+        "angle_deg", "contour_area", "ellipse_area", "equiv_diameter", "geom_mean_diameter",
+        "whole_mask_touches_edge", "largest_contour_touches_edge",
     )
 )
 
-RELATION_FIELDS = (
-    "pupil_to_iris_diameter_ratio",
-    "pupil_to_iris_ellipse_area_ratio",
-    "pupil_to_iris_contour_area_ratio",
-    "pupil_center_offset_px",
-    "pupil_center_offset_norm",
-    "pupil_center_in_iris_outer",
-    "iris_diameter_gt_pupil_diameter",
-    "pir_finite",
-    "iris_outer_fill_ratio",
-)
-
-OAR_FIELDS = (
-    "ocular_bbox_width",
-    "ocular_bbox_height",
-    "ocular_aperture_height_median",
-    "ocular_aperture_height_p90",
-    "ocular_aperture_ratio_median",
-    "ocular_aperture_ratio_p90",
-    "ocular_whole_mask_touches_edge",
-)
+RELATION_FIELDS: tuple[str, ...] = ()
+OAR_FIELDS: tuple[str, ...] = ()
 
 ATOMIC_QC_FIELDS = (
     "qc_pupil_fragmented",
-    "qc_iris_outer_fragmented",
-    "qc_ocular_fragmented",
 )
 
 UNCERTAINTY_BASE_FIELDS = (
@@ -151,18 +119,12 @@ UNCERTAINTY_BASE_FIELDS = (
     "uncertainty_ocular_pixel_count",
     "uncertainty_boundary_pixel_count",
 )
-UNCERTAINTY_DISTRIBUTION_FIELDS = tuple(
-    f"{domain}_{metric}_{stat}"
-    for domain in ("whole", "ocular", "boundary")
-    for metric in ("max_probability", "top1_top2_margin", "entropy")
-    for stat in ("mean", "p05", "p25", "p50", "p75", "p95")
+UNCERTAINTY_DISTRIBUTION_FIELDS = (
+    "ocular_max_probability_mean",
+    "ocular_top1_top2_margin_mean",
+    "ocular_entropy_mean",
 )
-UNCERTAINTY_THRESHOLD_FIELDS = (
-    "low_max_probability_threshold",
-    "whole_low_max_probability_fraction",
-    "ocular_low_max_probability_fraction",
-    "boundary_low_max_probability_fraction",
-)
+UNCERTAINTY_THRESHOLD_FIELDS: tuple[str, ...] = ()
 
 TEMPORAL_FIELDS = (
     "temporal_qc_version",
@@ -171,10 +133,7 @@ TEMPORAL_FIELDS = (
     "temporal_time_gap_ms",
     "temporal_reset_reason",
     "delta_hard_pupil_fraction",
-    "delta_hard_iris_outer_fraction",
     "delta_hard_ocular_fraction",
-    "delta_pupil_to_iris_diameter_ratio",
-    "delta_ocular_aperture_ratio_median",
     "delta_pupil_center_x",
     "delta_pupil_center_y",
     "delta_pupil_center_distance_px",

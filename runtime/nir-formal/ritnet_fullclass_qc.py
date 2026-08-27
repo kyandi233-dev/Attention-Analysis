@@ -39,11 +39,7 @@ FRAME_FAILURE_REASONS = {
 }
 EYE_BOOLEAN_REASONS = (
     ("qc_pupil_fragmented", "pupil_fragmented"),
-    ("qc_iris_outer_fragmented", "iris_outer_fragmented"),
-    ("qc_ocular_fragmented", "ocular_fragmented"),
     ("pupil_touches_valid_domain_edge", "pupil_real_boundary"),
-    ("iris_outer_touches_valid_domain_edge", "iris_real_boundary"),
-    ("ocular_touches_valid_domain_edge", "ocular_real_boundary"),
     ("temporal_anomaly", "temporal_jump"),
 )
 EYE_PADDING_COUNT_FIELDS = (

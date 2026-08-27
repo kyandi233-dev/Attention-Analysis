@@ -58,7 +58,7 @@ from ritnet_label_store import sha256_file
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
-CORE_VERSION = "fullclass-final-core-v6-overlapped-pipeline"
+CORE_VERSION = "fullclass-final-core-v7-pupil-only-lean-schema"
 VIDEO_SEEK_GAP_THRESHOLD = 64
 DEFAULT_CHECKPOINT_ROWS = 128
 DEFAULT_PROGRESS_EVERY_BATCHES = 100
@@ -491,6 +491,7 @@ def _complete_batch(
                 entropy=outputs["entropy"][output_index],
                 boundary_band_px=boundary_band_px,
                 low_max_probability_threshold=low_max_probability_threshold,
+                inputs_validated=True,
             )
             inferred[item_index] = {**hard, **uncertainty}
 

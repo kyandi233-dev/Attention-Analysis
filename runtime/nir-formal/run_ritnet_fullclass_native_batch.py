@@ -55,6 +55,7 @@ def _formal_identity(marker: dict[str, Any]) -> dict[str, Any]:
 def discover_source_runs(
     output_root: Path,
     subjects: set[str] | None = None,
+    requested_subjects: list[str] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     """Discover strictly complete source runs, narrowing the filesystem scan first.
 
@@ -63,6 +64,7 @@ def discover_source_runs(
     The marker subject is still authoritative after validation.
     """
     grouped: dict[str, list[dict[str, Any]]] = {}
+    subjects = set(requested_subjects) if requested_subjects is not None else subjects
     if subjects:
         run_dirs = {
             run_dir
@@ -101,45 +103,41 @@ def _same_source_identity(left: dict[str, Any], right: dict[str, Any]) -> bool:
 def select_run(
     candidates: list[dict[str, Any]],
     *,
-    expected_yolo_batch_size: int,
+    expected_yolo_batch_size: int | None = None,
 ) -> tuple[dict[str, Any], list[Path], str]:
     if not candidates:
         raise RuntimeError("select_run requires at least one validated source candidate")
-    explicit_matching = []
-    legacy_missing = []
-    for item in candidates:
-        raw_batch_size = item["marker"].get("yolo_batch_size")
-        if raw_batch_size is None or str(raw_batch_size).strip() == "":
-            legacy_missing.append(item)
-            continue
-        try:
-            if int(raw_batch_size) == int(expected_yolo_batch_size):
-                explicit_matching.append(item)
-        except (TypeError, ValueError):
-            continue
+    original_candidates = list(candidates)
+    # Compatibility callers may still pass the historical production batch gate.
+    # The canonical selector itself does not prefer one validated source based on
+    # retroactive YOLO metadata; it only uses that gate when explicitly requested.
+    if expected_yolo_batch_size is not None:
+        explicit = [
+            item for item in candidates
+            if item["marker"].get("yolo_batch_size") not in (None, "")
+            and int(item["marker"].get("yolo_batch_size")) == int(expected_yolo_batch_size)
+        ]
+        missing = [item for item in candidates if item["marker"].get("yolo_batch_size") in (None, "")]
+        matching = explicit or missing
+        if not matching:
+            available = sorted({item["marker"].get("yolo_batch_size") for item in candidates}, key=str)
+            raise RuntimeError(
+                "No validated formal source matches configured production yolo.batch_size="
+                f"{expected_yolo_batch_size}; available={available}"
+            )
+        if len(matching) == 1:
+            item = matching[0]
+            reason = (
+                "legacy_source_yolo_batch_size_not_recorded_accepted"
+                if item in missing else "unique_validated_source_matching_configured_yolo_batch_size"
+            )
+            return item, [other["run_dir"] for other in original_candidates if other is not item], reason
+        candidates = matching
+    if len(candidates) == 1:
+        return candidates[0], [], "unique_validated_historical_formal_source"
 
-    # Prefer an explicitly recorded production batch, while accepting legacy
-    # complete sources whose historical marker predates yolo_batch_size.
-    matching = explicit_matching or legacy_missing
-    if not matching:
-        available = sorted({item["marker"].get("yolo_batch_size") for item in candidates}, key=str)
-        raise RuntimeError(
-            "No validated formal source matches configured production yolo.batch_size="
-            f"{expected_yolo_batch_size}; available={available}"
-        )
-    legacy_selection = not explicit_matching
-    if len(matching) == 1:
-        selected = matching[0]
-        alternatives = [item["run_dir"] for item in candidates if item is not selected]
-        reason = (
-            "unique_validated_legacy_source_yolo_batch_size_not_recorded_accepted"
-            if legacy_selection
-            else "unique_validated_source_matching_configured_yolo_batch_size"
-        )
-        return selected, alternatives, reason
-
-    reference = matching[0]
-    if not all(_same_source_identity(reference, item) for item in matching[1:]):
+    reference = candidates[0]
+    if not all(_same_source_identity(reference, item) for item in candidates[1:]):
         details = [
             {
                 "run_dir": str(item["run_dir"]),
@@ -147,19 +145,15 @@ def select_run(
                 "eyes_sha256": item["eyes_sha256"],
                 "yolo_batch_size": item["marker"].get("yolo_batch_size"),
             }
-            for item in matching
+            for item in candidates
         ]
         raise RuntimeError(
-            "Ambiguous validated formal sources for one subject; refusing silent selection: "
+            "Ambiguous validated historical formal sources for one subject; refusing silent selection: "
             + json.dumps(details, ensure_ascii=False, sort_keys=True)
         )
-    matching_sorted = sorted(matching, key=lambda item: str(item["run_dir"]).lower())
-    selected = matching_sorted[0]
-    alternatives = [item["run_dir"] for item in candidates if item is not selected]
-    reason = "equivalent_duplicate_sources_same_formal_identity_and_eyes_sha256"
-    if legacy_selection:
-        reason += ";legacy_source_yolo_batch_size_not_recorded_accepted"
-    return selected, alternatives, reason
+    candidates_sorted = sorted(candidates, key=lambda item: str(item["run_dir"]).lower())
+    selected = candidates_sorted[0]
+    return selected, [item["run_dir"] for item in candidates_sorted[1:]], "equivalent_duplicate_historical_sources_same_identity_and_eyes_sha256"
 
 
 def parse_subjects(text: str | None) -> list[str] | None:
@@ -191,7 +185,7 @@ def main() -> int:
         for value in config.get("batch", {}).get("subjects", {}).get("exclude", [])
     }
     discovery_subjects = set(requested) if requested is not None else None
-    grouped = discover_source_runs(output_root, subjects=discovery_subjects)
+    grouped = discover_source_runs(output_root, requested_subjects=requested)
     if requested is None:
         subjects = sorted(
             (subject for subject in grouped if subject not in excluded),
@@ -208,10 +202,7 @@ def main() -> int:
     expected_yolo_batch_size = int(config.get("yolo", {}).get("batch_size", 8))
     selections = []
     for subject in subjects:
-        selected, alternatives, selection_reason = select_run(
-            grouped[subject],
-            expected_yolo_batch_size=expected_yolo_batch_size,
-        )
+        selected, alternatives, selection_reason = select_run(grouped[subject])
         marker = selected["marker"]
         source_yolo_batch_size_recorded = not (
             marker.get("yolo_batch_size") is None

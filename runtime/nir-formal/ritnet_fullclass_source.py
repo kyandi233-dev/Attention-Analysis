@@ -84,7 +84,7 @@ def load_source_eye_rows(path: Path, subject: str) -> tuple[tuple[str, ...], tup
         fields = tuple(reader.fieldnames or ())
         missing = REQUIRED_SOURCE_EYE_FIELDS - set(fields)
         if missing:
-            raise ValueError(f"eyes.csv missing final-source columns: {sorted(missing)}")
+            raise ValueError(f"eyes.csv missing required source columns: {sorted(missing)}")
         rows = tuple(dict(row) for row in reader)
     if not rows:
         raise ValueError(f"eyes.csv contains no source eye rows: {path}")
@@ -194,6 +194,15 @@ def resolve_source_video(
         "candidate_count": len(candidates),
         "equivalent_candidates": [str(value) for value in identical],
     }
+
+
+def _completion_yolo_batch(completion: dict[str, Any]) -> int | None:
+    """Return historical YOLO batch only as optional provenance."""
+    value = completion.get("yolo_batch_size")
+    if value is None or str(value).strip() == "":
+        return None
+    parsed = int(value)
+    return parsed if parsed > 0 else None
 
 
 @lru_cache(maxsize=16)
