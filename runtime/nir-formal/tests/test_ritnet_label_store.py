@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from ritnet_label_store import RitnetLabelStore
+from ritnet_label_store import RitnetLabelStore, sha256_file
 
 
 def labels(n: int, value: int = 0) -> np.ndarray:
@@ -51,6 +52,27 @@ def test_store_resume_and_probability_stats_are_checkpointed(tmp_path):
     assert len(rows) == 3
     assert rows[0]["labels"].shape == (400, 640)
     assert np.isclose(rows[2]["pupil_probability_stats"][0], 0.92)
+
+
+def test_reopening_finalized_store_is_byte_stable(tmp_path):
+    store = make_store(tmp_path)
+    append(store, 0, 2)
+    store.finalize(2)
+    manifest_path = store.store_manifest_path
+    before_hash = sha256_file(manifest_path)
+    before_text = manifest_path.read_text(encoding="utf-8")
+    before_manifest = json.loads(before_text)
+    assert before_manifest["status"] == "complete"
+
+    reopened = make_store(tmp_path)
+    after_hash = sha256_file(manifest_path)
+    after_text = manifest_path.read_text(encoding="utf-8")
+    after_manifest = json.loads(after_text)
+
+    assert reopened.verify(expected_rows=2).valid
+    assert after_manifest["status"] == "complete"
+    assert after_hash == before_hash
+    assert after_text == before_text
 
 
 def test_resume_rejects_identity_mismatch(tmp_path):
@@ -103,3 +125,5 @@ def test_orphan_committed_chunk_is_adopted_after_metadata_tear(tmp_path):
     reopened = make_store(tmp_path)
     assert reopened.stored_rows == 2
     assert reopened.verify().valid
+    manifest = json.loads(reopened.store_manifest_path.read_text(encoding="utf-8"))
+    assert manifest["status"] == "running"
