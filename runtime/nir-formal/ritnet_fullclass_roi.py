@@ -22,6 +22,7 @@ ASPECT_HEIGHT_UNIT = 5
 PADDING_MODE_REPLICATE = "replicate"
 SUPPORTED_PADDING_MODES = frozenset({PADDING_MODE_REPLICATE})
 ROI_ALGORITHM_VERSION = "fixed-aspect-1p6-expanded-context-replicate-v2"
+VALID_SOURCE_MASK_VERSION = "pre-resize-source-domain-nearest-v1"
 
 
 @dataclass(frozen=True)
@@ -148,9 +149,6 @@ def fixed_aspect_roi_geometry(
     expanded_y1 = y1 - vertical * bbox_height
     expanded_y2 = y2 + vertical * bbox_height
 
-    # Integer span needed to cover every source pixel touched by the floating
-    # expanded rectangle. Exact 8*k by 5*k dimensions make the later 640x400
-    # resize isotropic by construction.
     required_width = int(ceil(expanded_x2) - floor(expanded_x1))
     required_height = int(ceil(expanded_y2) - floor(expanded_y1))
     units = max(
@@ -268,3 +266,44 @@ def crop_fixed_aspect_gray(
             f"fixed-aspect crop shape mismatch: expected={expected_shape}, got={crop.shape}"
         )
     return np.ascontiguousarray(crop)
+
+
+def valid_source_analysis_mask(
+    geometry: FixedAspectRoi,
+    *,
+    output_width: int = TARGET_WIDTH,
+    output_height: int = TARGET_HEIGHT,
+) -> np.ndarray:
+    """Return a bool output-space mask for pixels backed by real AVI content.
+
+    The pre-resize ROI contains real source pixels inside the four explicit
+    padding widths and synthetic replicate padding outside that rectangle. A
+    binary membership mask is resized with nearest-neighbour interpolation so
+    it never creates fractional/artificial validity weights. This mask is for
+    downstream analysis-domain selection only; it does not alter the image sent
+    to RITnet.
+    """
+    output_width = int(output_width)
+    output_height = int(output_height)
+    if output_width <= 0 or output_height <= 0:
+        raise ValueError("analysis mask output size must be positive")
+    if output_width * ASPECT_HEIGHT_UNIT != output_height * ASPECT_WIDTH_UNIT:
+        raise ValueError("analysis mask output must preserve exact 8:5 aspect ratio")
+
+    pre = np.zeros((geometry.height, geometry.width), dtype=np.uint8)
+    y1 = int(geometry.pad_top)
+    y2 = int(geometry.height - geometry.pad_bottom)
+    x1 = int(geometry.pad_left)
+    x2 = int(geometry.width - geometry.pad_right)
+    if not (0 <= x1 < x2 <= geometry.width and 0 <= y1 < y2 <= geometry.height):
+        raise ValueError("geometry has no valid source-backed content")
+    pre[y1:y2, x1:x2] = 1
+
+    if (geometry.width, geometry.height) == (output_width, output_height):
+        resized = pre
+    else:
+        resized = cv2.resize(pre, (output_width, output_height), interpolation=cv2.INTER_NEAREST)
+    mask = np.ascontiguousarray(resized.astype(bool, copy=False))
+    if not mask.any():
+        raise RuntimeError("analysis mask lost all valid source pixels during resize")
+    return mask
