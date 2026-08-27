@@ -144,8 +144,8 @@ class RitnetFullClassFinalRuntime:
         tensor /= np.float32(0.5)
         tensor = np.ascontiguousarray(tensor[:, None, :, :], dtype=np.float32)
         expected = (FIXED_BATCH_SIZE, 1, INPUT_HEIGHT, INPUT_WIDTH)
-        if tensor.shape != expected:
-            raise RuntimeError(f"prepared RITnet tensor mismatch: {tensor.shape}")
+        if tensor.shape != expected or tensor.dtype != np.float32:
+            raise RuntimeError(f"prepared RITnet tensor mismatch: {tensor.shape} {tensor.dtype}")
         return tensor, valid, {
             "valid_batch_size": valid,
             "padded_count": padded_count,
@@ -156,7 +156,9 @@ class RitnetFullClassFinalRuntime:
     def _validate_prepared_input(tensor: np.ndarray, valid_batch_size: int) -> None:
         expected = (FIXED_BATCH_SIZE, 1, INPUT_HEIGHT, INPUT_WIDTH)
         if tensor.shape != expected or tensor.dtype != np.float32:
-            raise ValueError(f"prepared inference requires {expected} float32 tensor; got {tensor.shape} {tensor.dtype}")
+            raise ValueError(
+                f"prepared inference requires {expected} float32 tensor; got {tensor.shape} {tensor.dtype}"
+            )
         if not 1 <= int(valid_batch_size) <= FIXED_BATCH_SIZE:
             raise ValueError(f"valid_batch_size must be 1..{FIXED_BATCH_SIZE}")
         if not np.isfinite(tensor).all():
@@ -167,7 +169,9 @@ class RitnetFullClassFinalRuntime:
         labels = np.asarray(value)
         expected = (FIXED_BATCH_SIZE, INPUT_HEIGHT, INPUT_WIDTH)
         if labels.shape != expected or labels.dtype != np.uint8:
-            raise RuntimeError(f"RITnet labels output must be {expected} uint8, got {labels.shape} {labels.dtype}")
+            raise RuntimeError(
+                f"RITnet labels output must be {expected} uint8, got {labels.shape} {labels.dtype}"
+            )
         real = labels[: int(valid_batch_size)]
         if not np.isin(np.unique(real), (0, 1, 2, 3)).all():
             raise RuntimeError("RITnet labels contain values outside {0,1,2,3}")
@@ -178,7 +182,9 @@ class RitnetFullClassFinalRuntime:
         array = np.asarray(value)
         expected = (FIXED_BATCH_SIZE, INPUT_HEIGHT, INPUT_WIDTH)
         if array.shape != expected or array.dtype != np.float32:
-            raise RuntimeError(f"RITnet {name} output must be {expected} float32, got {array.shape} {array.dtype}")
+            raise RuntimeError(
+                f"RITnet {name} output must be {expected} float32, got {array.shape} {array.dtype}"
+            )
         if not np.isfinite(array).all():
             raise RuntimeError(f"RITnet {name} output contains non-finite values")
         minimum = float(array.min())
@@ -192,51 +198,83 @@ class RitnetFullClassFinalRuntime:
         array = np.asarray(value)
         expected = (FIXED_BATCH_SIZE, 4, INPUT_HEIGHT, INPUT_WIDTH)
         if array.shape != expected or array.dtype != np.float32:
-            raise RuntimeError(f"RITnet class_probability output must be {expected} float32, got {array.shape} {array.dtype}")
+            raise RuntimeError(
+                f"RITnet class_probability output must be {expected} float32, got {array.shape} {array.dtype}"
+            )
         if not np.isfinite(array).all():
             raise RuntimeError("RITnet class_probability contains non-finite values")
         if float(array.min()) < -1e-6 or float(array.max()) > 1.0 + 1e-6:
             raise RuntimeError("RITnet class_probability outside [0,1]")
         mass = array.sum(axis=1)
         if not np.allclose(mass, 1.0, rtol=0.0, atol=1e-5):
-            raise RuntimeError("RITnet class_probability per-pixel class mass does not sum to 1")
+            deviation = float(np.max(np.abs(mass - 1.0)))
+            raise RuntimeError(
+                "RITnet class_probability per-pixel class mass does not sum to 1; "
+                f"max_abs_deviation={deviation}"
+            )
         return array
 
-    def infer_prepared(self, tensor: np.ndarray, valid_batch_size: int) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+    def infer_prepared(
+        self,
+        tensor: np.ndarray,
+        valid_batch_size: int,
+    ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
         self._validate_prepared_input(tensor, valid_batch_size)
-        started = time.perf_counter()
+        total_started = time.perf_counter()
+        session_started = time.perf_counter()
         raw = self.session.run(list(OUTPUT_NAMES), {self.input_name: tensor})
+        session_run_ms = (time.perf_counter() - session_started) * 1000.0
+        if len(raw) != len(OUTPUT_NAMES):
+            raise RuntimeError(f"RITnet returned {len(raw)} outputs, expected {len(OUTPUT_NAMES)}")
+
+        validation_started = time.perf_counter()
         labels = self._validate_labels_output(raw[0], valid_batch_size)
         class_probability = self._validate_class_probability(raw[1])
         max_probability = self._validate_float_map("max_probability", raw[2], lower=0.0, upper=1.0)
         margin = self._validate_float_map("top1_top2_margin", raw[3], lower=0.0, upper=1.0)
         entropy = self._validate_float_map("entropy", raw[4], lower=0.0, upper=math.log(4.0))
         real = slice(0, int(valid_batch_size))
-        return {
+        outputs = {
             "labels": labels,
             "class_probability": np.ascontiguousarray(class_probability[real]),
             "max_probability": np.ascontiguousarray(max_probability[real]),
             "top1_top2_margin": np.ascontiguousarray(margin[real]),
             "entropy": np.ascontiguousarray(entropy[real]),
-        }, {
+        }
+        output_validation_ms = (time.perf_counter() - validation_started) * 1000.0
+        return outputs, {
             "batch_size": FIXED_BATCH_SIZE,
             "valid_batch_size": int(valid_batch_size),
             "precision": self.precision,
             "provider": "CUDAExecutionProvider",
-            "gpu_and_transfer_ms": (time.perf_counter() - started) * 1000.0,
+            "session_run_ms": float(session_run_ms),
+            "output_validation_ms": float(output_validation_ms),
+            "gpu_and_transfer_ms": float((time.perf_counter() - total_started) * 1000.0),
         }
 
-    def infer_labels_prepared(self, tensor: np.ndarray, valid_batch_size: int) -> tuple[np.ndarray, dict[str, Any]]:
+    def infer_labels_prepared(
+        self,
+        tensor: np.ndarray,
+        valid_batch_size: int,
+    ) -> tuple[np.ndarray, dict[str, Any]]:
         self._validate_prepared_input(tensor, valid_batch_size)
-        started = time.perf_counter()
+        total_started = time.perf_counter()
+        session_started = time.perf_counter()
         raw = self.session.run(["labels"], {self.input_name: tensor})
+        session_run_ms = (time.perf_counter() - session_started) * 1000.0
+        if len(raw) != 1:
+            raise RuntimeError(f"RITnet labels-only inference returned {len(raw)} outputs")
+        validation_started = time.perf_counter()
         labels = self._validate_labels_output(raw[0], valid_batch_size)
+        output_validation_ms = (time.perf_counter() - validation_started) * 1000.0
         return labels, {
             "batch_size": FIXED_BATCH_SIZE,
             "valid_batch_size": int(valid_batch_size),
             "precision": self.precision,
             "provider": "CUDAExecutionProvider",
-            "gpu_and_transfer_ms": (time.perf_counter() - started) * 1000.0,
+            "session_run_ms": float(session_run_ms),
+            "output_validation_ms": float(output_validation_ms),
+            "gpu_and_transfer_ms": float((time.perf_counter() - total_started) * 1000.0),
             "output_contract": "labels-only-qc",
         }
 
@@ -244,10 +282,18 @@ class RitnetFullClassFinalRuntime:
         total_started = time.perf_counter()
         tensor, valid, prep = self.prepare_batch(roi_grays)
         outputs, infer = self.infer_prepared(tensor, valid)
-        return outputs, {**prep, **infer, "total_ms": (time.perf_counter() - total_started) * 1000.0}
+        return outputs, {
+            **prep,
+            **infer,
+            "total_ms": (time.perf_counter() - total_started) * 1000.0,
+        }
 
     def infer_labels_batch(self, roi_grays: list[np.ndarray]) -> tuple[np.ndarray, dict[str, Any]]:
         total_started = time.perf_counter()
         tensor, valid, prep = self.prepare_batch(roi_grays)
         labels, infer = self.infer_labels_prepared(tensor, valid)
-        return labels, {**prep, **infer, "total_ms": (time.perf_counter() - total_started) * 1000.0}
+        return labels, {
+            **prep,
+            **infer,
+            "total_ms": (time.perf_counter() - total_started) * 1000.0,
+        }
