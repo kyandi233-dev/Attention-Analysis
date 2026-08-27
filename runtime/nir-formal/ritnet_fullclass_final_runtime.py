@@ -1,4 +1,10 @@
-"""Final fixed-b16 RITnet CUDA/ONNX Runtime for compact full-class analysis."""
+"""Final fixed-b16 RITnet CUDA/ONNX Runtime for compact full-class analysis.
+
+The frozen ONNX graph still exposes the qualified five-output contract. Cohort
+production requests only hard labels plus four-class probabilities and derives
+the three deterministic uncertainty maps lazily on CPU summary workers. Full
+five-output inference remains available for model qualification and sparse QC.
+"""
 from __future__ import annotations
 
 import math
@@ -19,6 +25,7 @@ OUTPUT_NAMES = (
     "top1_top2_margin",
     "entropy",
 )
+COHORT_OUTPUT_NAMES = ("labels", "class_probability")
 PREPROCESSING_VERSION = "ritnet-upstream-preprocess-fixed-aspect-roi-v2"
 
 
@@ -69,6 +76,39 @@ def _create_cuda_session(weights: Path, device_id: int):
     return session
 
 
+class _DerivedUncertaintyBatch:
+    """Lazy deterministic uncertainty maps derived from four-class probability."""
+
+    def __init__(self, class_probability: np.ndarray, metric: str) -> None:
+        probability = np.asarray(class_probability)
+        expected_tail = (4, INPUT_HEIGHT, INPUT_WIDTH)
+        if probability.ndim != 4 or tuple(probability.shape[1:]) != expected_tail:
+            raise ValueError(
+                "derived uncertainty requires [B,4,400,640] class_probability; "
+                f"got {probability.shape}"
+            )
+        if probability.dtype != np.float32:
+            raise TypeError(f"class_probability must be float32; got {probability.dtype}")
+        if metric not in {"max_probability", "top1_top2_margin", "entropy"}:
+            raise ValueError(f"unsupported derived uncertainty metric: {metric}")
+        self._probability = probability
+        self._metric = metric
+
+    def __len__(self) -> int:
+        return int(self._probability.shape[0])
+
+    def __getitem__(self, index: int) -> np.ndarray:
+        probability = np.asarray(self._probability[index], dtype=np.float32)
+        if self._metric == "max_probability":
+            return np.ascontiguousarray(np.max(probability, axis=0), dtype=np.float32)
+        if self._metric == "top1_top2_margin":
+            top = np.sort(probability, axis=0)
+            return np.ascontiguousarray(top[3] - top[2], dtype=np.float32)
+        safe = np.maximum(probability, np.float32(1e-12))
+        entropy = -np.sum(probability * np.log(safe), axis=0)
+        return np.ascontiguousarray(entropy, dtype=np.float32)
+
+
 class RitnetFullClassFinalRuntime:
     FIXED_BATCH_SIZE = FIXED_BATCH_SIZE
 
@@ -83,6 +123,7 @@ class RitnetFullClassFinalRuntime:
         self.preprocessing_version = PREPROCESSING_VERSION
         self.session = _create_cuda_session(self.weights, self.device_id)
         self.providers = list(self.session.get_providers())
+        self.cohort_compact_outputs = True
 
         inputs = self.session.get_inputs()
         outputs = self.session.get_outputs()
@@ -224,11 +265,11 @@ class RitnetFullClassFinalRuntime:
             )
         return array
 
-    def infer_prepared(
+    def _infer_full_prepared(
         self,
         tensor: np.ndarray,
         valid_batch_size: int,
-    ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
         self._validate_prepared_input(tensor, valid_batch_size)
         total_started = time.perf_counter()
         session_started = time.perf_counter()
@@ -244,7 +285,7 @@ class RitnetFullClassFinalRuntime:
         margin = self._validate_float_map("top1_top2_margin", raw[3], lower=0.0, upper=1.0)
         entropy = self._validate_float_map("entropy", raw[4], lower=0.0, upper=math.log(4.0))
         real = slice(0, int(valid_batch_size))
-        outputs = {
+        outputs: dict[str, Any] = {
             "labels": labels,
             "class_probability": np.ascontiguousarray(class_probability[real]),
             "max_probability": np.ascontiguousarray(max_probability[real]),
@@ -260,7 +301,58 @@ class RitnetFullClassFinalRuntime:
             "session_run_ms": float(session_run_ms),
             "output_validation_ms": float(output_validation_ms),
             "gpu_and_transfer_ms": float((time.perf_counter() - total_started) * 1000.0),
+            "output_contract": "five-output-full",
         }
+
+    def _infer_cohort_prepared(
+        self,
+        tensor: np.ndarray,
+        valid_batch_size: int,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        self._validate_prepared_input(tensor, valid_batch_size)
+        total_started = time.perf_counter()
+        session_started = time.perf_counter()
+        raw = self.session.run(list(COHORT_OUTPUT_NAMES), {self.input_name: tensor})
+        session_run_ms = (time.perf_counter() - session_started) * 1000.0
+        if len(raw) != len(COHORT_OUTPUT_NAMES):
+            raise RuntimeError(
+                f"RITnet cohort call returned {len(raw)} outputs, expected {len(COHORT_OUTPUT_NAMES)}"
+            )
+
+        validation_started = time.perf_counter()
+        labels = self._validate_labels_output(raw[0], valid_batch_size)
+        class_probability_full = self._validate_class_probability(raw[1])
+        real = slice(0, int(valid_batch_size))
+        class_probability = np.ascontiguousarray(class_probability_full[real])
+        outputs: dict[str, Any] = {
+            "labels": labels,
+            "class_probability": class_probability,
+            "max_probability": _DerivedUncertaintyBatch(class_probability, "max_probability"),
+            "top1_top2_margin": _DerivedUncertaintyBatch(
+                class_probability, "top1_top2_margin"
+            ),
+            "entropy": _DerivedUncertaintyBatch(class_probability, "entropy"),
+        }
+        output_validation_ms = (time.perf_counter() - validation_started) * 1000.0
+        return outputs, {
+            "batch_size": FIXED_BATCH_SIZE,
+            "valid_batch_size": int(valid_batch_size),
+            "precision": self.precision,
+            "provider": "CUDAExecutionProvider",
+            "session_run_ms": float(session_run_ms),
+            "output_validation_ms": float(output_validation_ms),
+            "gpu_and_transfer_ms": float((time.perf_counter() - total_started) * 1000.0),
+            "output_contract": "labels+class_probability-cohort",
+        }
+
+    def infer_prepared(
+        self,
+        tensor: np.ndarray,
+        valid_batch_size: int,
+    ) -> tuple[dict[str, Any], dict[str, Any]]:
+        if getattr(self, "cohort_compact_outputs", False):
+            return self._infer_cohort_prepared(tensor, valid_batch_size)
+        return self._infer_full_prepared(tensor, valid_batch_size)
 
     def infer_labels_prepared(
         self,
@@ -288,10 +380,10 @@ class RitnetFullClassFinalRuntime:
             "output_contract": "labels-only-qc",
         }
 
-    def infer_batch(self, roi_grays: list[np.ndarray]) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+    def infer_batch(self, roi_grays: list[np.ndarray]) -> tuple[dict[str, Any], dict[str, Any]]:
         total_started = time.perf_counter()
         tensor, valid, prep = self.prepare_batch(roi_grays)
-        outputs, infer = self.infer_prepared(tensor, valid)
+        outputs, infer = self._infer_full_prepared(tensor, valid)
         return outputs, {
             **prep,
             **infer,
