@@ -88,6 +88,19 @@ fullclass:
   qc_artifact_budget_bytes: 268435456
   final_output_limit_bytes: 1073741824
 
+  # Throughput-only scheduling. These values do not change any ROI, RITnet output,
+  # metric, QC threshold, or final schema. One producer overlaps video decode/ROI/
+  # preprocessing with DirectML. Two CPU workers summarize already-returned maps.
+  # At most two ~113 MiB five-output batches may remain pending, which is bounded
+  # for the 16 GiB AMD workstation while allowing GPU/CPU overlap.
+  summary_workers: 2
+  max_pending_summaries: 2
+  # Checkpoint every 128 source eye rows instead of every fixed-b16 inference call.
+  # A crash can at worst redo this small tail; final completion remains independently
+  # hashed and validated.
+  checkpoint_rows: 128
+  progress_every_batches: 100
+
 formal:
   focuswave_release: "v3.1.3"
   min_subject_number: 31
