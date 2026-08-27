@@ -59,6 +59,11 @@ def load_source_frames(path: Path, subject: str) -> list[dict[str, str]]:
         if key in seen:
             raise ValueError(f"duplicate frame coverage source key: {key}")
         seen.add(key)
+        selected = _int(row.get("selected_eye_count"), "selected_eye_count")
+        if selected not in (0, 1, 2):
+            raise ValueError(
+                f"selected_eye_count must be 0,1,2 for formal eye selection; key={key}, got={selected}"
+            )
     return rows
 
 
@@ -86,10 +91,7 @@ def build_fixed_qc_anchor_keys(
         for index in (0, len(ordered) // 2, len(ordered) - 1):
             anchors.add((phase, segment, _int(ordered[index].get("frame_idx"), "frame_idx")))
 
-        timed = [
-            (row, _float_or_none(row.get("video_time_ms")))
-            for row in ordered
-        ]
+        timed = [(row, _float_or_none(row.get("video_time_ms"))) for row in ordered]
         timed = [(row, value) for row, value in timed if value is not None]
         if timed:
             next_target = timed[0][1]
@@ -151,6 +153,21 @@ def build_frame_coverage(
         eyes = source_eyes.get(key, {})
         finals = final_eyes.get(key, {})
 
+        selected_eye_count = _int(frame_row.get("selected_eye_count"), "selected_eye_count")
+        if selected_eye_count not in (0, 1, 2):
+            raise ValueError(f"invalid selected_eye_count at {key}: {selected_eye_count}")
+        if len(eyes) != selected_eye_count:
+            raise ValueError(
+                "frames.csv selected_eye_count does not match eyes.csv row coverage: "
+                f"key={key}, frame_selected={selected_eye_count}, eye_rows={len(eyes)}, "
+                f"eyes={sorted(eyes)}"
+            )
+        if set(finals) - set(eyes):
+            raise ValueError(
+                f"final eye rows exist without matching source eye rows at {key}: "
+                f"{sorted(set(finals) - set(eyes))}"
+            )
+
         def status_for(eye: str) -> tuple[str, str | None]:
             if eye not in eyes:
                 return "not_detected", None
@@ -164,10 +181,11 @@ def build_frame_coverage(
         left_status, left_reason = status_for("frame_left")
         right_status, right_reason = status_for("frame_right")
         success_count = int(left_status == "success") + int(right_status == "success")
-        selected_eye_count = _int(frame_row.get("selected_eye_count"), "selected_eye_count")
         source_status = str(frame_row.get("status") or "")
 
         if source_status == "video_read_failed":
+            if selected_eye_count != 0:
+                raise ValueError(f"video_read_failed frame cannot have selected eyes: {key}")
             coverage_status = "video_read_failed"
         elif selected_eye_count == 0:
             coverage_status = "yolo_no_eye"
