@@ -81,6 +81,10 @@ fullclass:
   low_max_probability_threshold: null
   qc_anomaly_max_per_reason: 20
   qc_image_max_count: 200
+  # Pixel-level evidence is intentionally sparse. At most one fixed-b16 batch of
+  # representative successful QC eyes keeps uint8 hard labels plus float16
+  # entropy maps and the real-video valid-pixel mask for retrospective checking.
+  qc_pixel_evidence_max_eyes: 16
   qc_artifact_budget_bytes: 268435456
   final_output_limit_bytes: 1073741824
 
