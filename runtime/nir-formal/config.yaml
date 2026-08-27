@@ -58,17 +58,15 @@ fullclass:
     expand_vertical_each_side: 0.45
     padding_mode: "replicate"
   qc_interval_sec: 30
-  qc_boundary_band_px: 5
-  low_max_probability_threshold: null
-  # Fixed timeline anchors remain mandatory. Anomaly examples are now bounded to
-  # a human-reviewable sample rather than filling 200 files per subject.
+  # Fixed timeline anchors remain mandatory. Anomaly examples are bounded to a
+  # human-reviewable sample rather than filling the output directory.
   qc_anomaly_max_per_reason: 5
   qc_image_max_count: 80
   qc_pixel_evidence_max_eyes: 16
   qc_artifact_budget_bytes: 268435456
   final_output_limit_bytes: 1073741824
 
-  # Throughput-only scheduling; does not change ROI/model/class definitions.
+  # Throughput/recovery scheduling only; these do not change scientific values.
   summary_workers: 2
   max_pending_summaries: 2
   checkpoint_rows: 128
