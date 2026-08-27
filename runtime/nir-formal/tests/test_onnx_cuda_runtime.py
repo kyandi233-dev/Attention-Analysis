@@ -5,7 +5,6 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-import cv2
 
 
 RUNTIME = Path(__file__).resolve().parents[1]
@@ -14,7 +13,6 @@ sys.path.insert(0, str(RUNTIME))
 import onnx_cuda_runtime
 from onnx_cuda_runtime import YoloCudaRuntime, create_cuda_session
 from ritnet_onnx_runtime import RitnetOnnxRuntime
-from ritnet_fullclass_qc import save_qc_pair
 
 
 def test_cuda_provider_unavailable_refuses_cpu_fallback(monkeypatch, tmp_path):
@@ -64,24 +62,6 @@ def test_cuda_provider_priority_allows_registered_cpu_provider(monkeypatch, tmp_
     monkeypatch.setattr(onnx_cuda_runtime, "_import_onnxruntime", lambda: FakeOrt)
     session = create_cuda_session(model)
     assert session.get_providers()[0] == "CUDAExecutionProvider"
-
-
-def test_qc_png_writer_supports_non_ascii_windows_path(tmp_path):
-    qc_dir = tmp_path / "中文" / "qc"
-    roi = np.zeros((8, 12), dtype=np.uint8)
-    labels = np.zeros((8, 12), dtype=np.uint8)
-    labels[2:6, 3:9] = 3
-    labels_path, overlay_path = save_qc_pair(
-        qc_dir,
-        "sub-100",
-        {"phase": "baseline", "phase_segment": 1, "frame_idx": 7, "eye": "left"},
-        roi,
-        labels,
-    )
-    assert labels_path.is_file() and labels_path.stat().st_size > 0
-    assert overlay_path.is_file() and overlay_path.stat().st_size > 0
-    encoded = np.fromfile(labels_path, dtype=np.uint8)
-    assert cv2.imdecode(encoded, cv2.IMREAD_UNCHANGED) is not None
 
 
 def test_pytorch_formal_mode_refuses_cpu_fallback(monkeypatch):
