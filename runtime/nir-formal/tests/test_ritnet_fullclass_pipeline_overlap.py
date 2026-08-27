@@ -55,7 +55,7 @@ def test_next_prepared_batch_keeps_fixed_16_row_order_and_skips_failed_roi_from_
     assert end is None
 
 
-def test_summarize_outputs_preserves_failed_rows_and_scientific_metrics():
+def test_summarize_outputs_preserves_failed_rows_and_scientific_metrics_without_sparse_qc_work():
     labels = _labels()
     probability = np.zeros((1, 4, 400, 640), dtype=np.float32)
     probability[:, 0] = 0.50
@@ -82,25 +82,24 @@ def test_summarize_outputs_preserves_failed_rows_and_scientific_metrics():
     completed, timing = _summarize_outputs(
         prepared=prepared,
         outputs=outputs,
-        boundary_band_px=5,
-        low_max_probability_threshold=None,
     )
 
     assert [ordinal for ordinal, _ in completed] == [0, 1]
     assert completed[0][1]["ritnet_status"] == "success"
     assert completed[0][1]["hard_pupil_pixels"] > 0
-    # All four soft-class fractions remain cohort outputs.
     assert completed[0][1]["soft_background_fraction"] == pytest.approx(0.50)
     assert completed[0][1]["soft_sclera_fraction"] == pytest.approx(0.30)
     assert completed[0][1]["soft_iris_fraction"] == pytest.approx(0.15)
     assert completed[0][1]["soft_pupil_fraction"] == pytest.approx(0.05)
-    # Cohort production retains only cheap ocular means needed by temporal QC;
-    # whole/boundary percentile distributions are deliberately sparse-QC-only.
     assert completed[0][1]["ocular_max_probability_mean"] == pytest.approx(0.9)
     assert completed[0][1]["ocular_top1_top2_margin_mean"] == pytest.approx(0.7)
     assert completed[0][1]["ocular_entropy_mean"] == pytest.approx(0.3)
+    # Production cohort rows intentionally do not compute sparse-QC-only
+    # whole/boundary distributions or threshold fractions.
     assert "whole_max_probability_mean" not in completed[0][1]
     assert "boundary_entropy_p95" not in completed[0][1]
+    assert completed[0][1].get("uncertainty_boundary_band_px") in (None, "")
+    assert completed[0][1].get("low_max_probability_threshold") in (None, "")
     assert completed[1][1]["ritnet_status"] == "failed"
     assert completed[1][1]["ritnet_failure_reason"] == "roi_invalid:test"
     assert timing["hard_metric_ms"] >= 0.0
