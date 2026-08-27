@@ -56,7 +56,10 @@ def _key_from_row(row: Mapping[str, Any]) -> tuple[str, int, int, str]:
 
 
 def _scientific_identity(identity: Mapping[str, Any]) -> dict[str, Any]:
-    return {key: identity.get(key) for key in SCIENTIFIC_IDENTITY_KEYS}
+    missing = [key for key in SCIENTIFIC_IDENTITY_KEYS if key not in identity]
+    if missing:
+        raise ValueError(f"workstore identity missing scientific keys: {missing}")
+    return {key: identity[key] for key in SCIENTIFIC_IDENTITY_KEYS}
 
 
 def resume_identity_compatible(
@@ -74,7 +77,12 @@ def resume_identity_compatible(
         return False
     if stored_identity.get("core_version") not in RESUME_COMPATIBLE_STORED_CORE_VERSIONS:
         return False
-    return _scientific_identity(stored_identity) == _scientific_identity(current_identity)
+    try:
+        stored_science = _scientific_identity(stored_identity)
+        current_science = _scientific_identity(current_identity)
+    except ValueError:
+        return False
+    return stored_science == current_science
 
 
 class FullClassWorkStore:
