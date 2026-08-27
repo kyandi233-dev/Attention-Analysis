@@ -248,7 +248,15 @@ def crop_fixed_aspect_gray(
         crop = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
     crop = np.ascontiguousarray(crop, dtype=np.uint8)
 
-    if geometry.padding_mode == PADDING_MODE_REPLICATE:
+    padding = (
+        geometry.pad_top,
+        geometry.pad_bottom,
+        geometry.pad_left,
+        geometry.pad_right,
+    )
+    if any(padding):
+        if geometry.padding_mode != PADDING_MODE_REPLICATE:
+            raise ValueError(f"unsupported padding mode: {geometry.padding_mode}")
         crop = cv2.copyMakeBorder(
             crop,
             geometry.pad_top,
@@ -257,7 +265,7 @@ def crop_fixed_aspect_gray(
             geometry.pad_right,
             borderType=cv2.BORDER_REPLICATE,
         )
-    else:
+    elif geometry.padding_mode != PADDING_MODE_REPLICATE:
         raise ValueError(f"unsupported padding mode: {geometry.padding_mode}")
 
     expected_shape = (geometry.height, geometry.width)
@@ -289,6 +297,9 @@ def valid_source_analysis_mask(
         raise ValueError("analysis mask output size must be positive")
     if output_width * ASPECT_HEIGHT_UNIT != output_height * ASPECT_WIDTH_UNIT:
         raise ValueError("analysis mask output must preserve exact 8:5 aspect ratio")
+
+    if not any((geometry.pad_left, geometry.pad_top, geometry.pad_right, geometry.pad_bottom)):
+        return np.ones((output_height, output_width), dtype=bool)
 
     pre = np.zeros((geometry.height, geometry.width), dtype=np.uint8)
     y1 = int(geometry.pad_top)
