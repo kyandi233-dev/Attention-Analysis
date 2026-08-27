@@ -5,6 +5,7 @@ import csv
 import json
 from collections import defaultdict
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -196,9 +197,16 @@ def resolve_source_video(
     }
 
 
-def load_source_context(run_dir: Path, config_path: Path) -> SourceFormalContext:
-    run_dir = Path(run_dir).resolve()
-    config_path = Path(config_path).resolve()
+@lru_cache(maxsize=16)
+def _load_source_context_cached(run_dir: Path, config_path: Path) -> SourceFormalContext:
+    """Load one immutable formal source identity once per Python process.
+
+    The canonical single-subject entrypoint performs a strict preflight before
+    calling the numeric core. Both stages need the same source context, including
+    the expensive source-video SHA256. The historical source is immutable during
+    one final run, so reusing the validated context avoids hashing a large AVI a
+    second time without weakening cross-process integrity checks.
+    """
     validation = validate_completion(run_dir)
     if not validation.valid or not validation.marker:
         raise RuntimeError(
@@ -253,3 +261,9 @@ def load_source_context(run_dir: Path, config_path: Path) -> SourceFormalContext
         frame_rows=frame_rows,
         source_identity=source_identity,
     )
+
+
+def load_source_context(run_dir: Path, config_path: Path) -> SourceFormalContext:
+    run_dir = Path(run_dir).resolve()
+    config_path = Path(config_path).resolve()
+    return _load_source_context_cached(run_dir, config_path)
