@@ -8,7 +8,6 @@ from typing import Any
 
 import cv2
 import numpy as np
-import onnxruntime as ort
 
 FIXED_BATCH_SIZE = 16
 INPUT_WIDTH = 640
@@ -40,6 +39,17 @@ def _parse_device_id(device: str | int) -> int:
 
 
 def _create_cuda_session(weights: Path, device_id: int):
+    # Keep onnxruntime-gpu a true runtime dependency. Generic CI can import and
+    # test the platform-neutral scheduling/metric code without a CUDA wheel;
+    # actual session creation still fails closed unless CUDAExecutionProvider is
+    # installed and active on the NVIDIA workstation.
+    try:
+        import onnxruntime as ort
+    except ImportError as exc:
+        raise RuntimeError(
+            "onnxruntime-gpu is required to create the final CUDA RITnet session"
+        ) from exc
+
     available = ort.get_available_providers()
     if "CUDAExecutionProvider" not in available:
         raise RuntimeError(
