@@ -129,6 +129,10 @@ def _trusted_class_probability(class_probability: np.ndarray) -> np.ndarray:
     return np.asarray(array, dtype=np.float32)
 
 
+def _derived_descriptor(value: Any, metric: str) -> bool:
+    return getattr(value, "ritnet_derived_uncertainty_metric", None) == metric
+
+
 def boundary_band_mask(
     labels: np.ndarray,
     band_px: int = DEFAULT_BOUNDARY_BAND_PX,
@@ -199,8 +203,29 @@ def _masked_mean(values: np.ndarray, mask: np.ndarray) -> float | None:
     selected = np.asarray(values)[mask]
     if selected.size == 0:
         return None
-    # Match the previous distribution_summary mean semantics exactly.
     return float(np.mean(selected.astype(np.float64, copy=False)))
+
+
+def _compact_derived_ocular_means(
+    probabilities: np.ndarray,
+    ocular_domain: np.ndarray,
+) -> tuple[float | None, float | None, float | None, np.ndarray | None]:
+    """Compute only the three required ocular means, never full 400x640 maps."""
+    count = int(ocular_domain.sum())
+    if count <= 0:
+        return None, None, None, None
+    selected = np.ascontiguousarray(probabilities[:, ocular_domain], dtype=np.float32)
+    top = np.partition(selected, kth=2, axis=0)
+    top1 = top[3]
+    margin = top[3] - top[2]
+    safe = np.maximum(selected, np.float32(1e-12))
+    entropy = -np.sum(selected * np.log(safe), axis=0)
+    return (
+        float(np.mean(top1.astype(np.float64, copy=False))),
+        float(np.mean(margin.astype(np.float64, copy=False))),
+        float(np.mean(entropy.astype(np.float64, copy=False))),
+        top1,
+    )
 
 
 def summarize_uncertainty(
@@ -208,9 +233,9 @@ def summarize_uncertainty(
     labels: np.ndarray,
     valid_source_mask: np.ndarray,
     class_probability: np.ndarray,
-    max_probability: np.ndarray,
-    top1_top2_margin: np.ndarray,
-    entropy: np.ndarray,
+    max_probability: Any,
+    top1_top2_margin: Any,
+    entropy: Any,
     boundary_band_px: int = DEFAULT_BOUNDARY_BAND_PX,
     low_max_probability_threshold: float | None = None,
     inputs_validated: bool = False,
@@ -221,16 +246,24 @@ def summarize_uncertainty(
     contract for validation and sparse QC. ``inputs_validated=True`` is the
     production cohort fast path: it preserves all four soft-class fractions and
     the three ocular means consumed by temporal QC, but deliberately skips every
-    percentile and the boundary-band construction. Those skipped fields are QC
-    descriptors, not primary scientific class/geometry variables.
+    percentile and the boundary-band construction. Compact two-output runtime
+    descriptors are reduced directly from ocular class probabilities without
+    creating full max/margin/entropy maps on CPU.
     """
+    compact_derived = False
     if inputs_validated:
         labels = _trusted_labels(labels)
         valid = _trusted_valid_source_mask(valid_source_mask)
         probabilities = _trusted_class_probability(class_probability)
-        max_probability = _trusted_map("max_probability", max_probability)
-        top1_top2_margin = _trusted_map("top1_top2_margin", top1_top2_margin)
-        entropy = _trusted_map("entropy", entropy)
+        compact_derived = (
+            _derived_descriptor(max_probability, "max_probability")
+            and _derived_descriptor(top1_top2_margin, "top1_top2_margin")
+            and _derived_descriptor(entropy, "entropy")
+        )
+        if not compact_derived:
+            max_probability = _trusted_map("max_probability", max_probability)
+            top1_top2_margin = _trusted_map("top1_top2_margin", top1_top2_margin)
+            entropy = _trusted_map("entropy", entropy)
     else:
         labels = _validate_labels(labels)
         valid = _validate_valid_source_mask(valid_source_mask)
@@ -256,9 +289,17 @@ def summarize_uncertainty(
     ocular_domain = (labels != 0) if full_source_domain else ((labels != 0) & valid)
 
     if inputs_validated:
-        # Cohort production deliberately keeps only uncertainty values already
-        # used by temporal QC. This removes 9 percentile calls and one boundary
-        # dilation per eye while preserving every hard/soft class and geometry.
+        ocular_count = int(ocular_domain.sum())
+        if compact_derived:
+            max_mean, margin_mean, entropy_mean, ocular_top1 = _compact_derived_ocular_means(
+                probabilities, ocular_domain
+            )
+        else:
+            max_mean = _masked_mean(max_probability, ocular_domain)
+            margin_mean = _masked_mean(top1_top2_margin, ocular_domain)
+            entropy_mean = _masked_mean(entropy, ocular_domain)
+            ocular_top1 = max_probability[ocular_domain] if ocular_count else None
+
         result: dict[str, Any] = {
             "uncertainty_algorithm_version": COHORT_UNCERTAINTY_ALGORITHM_VERSION,
             "uncertainty_domain_version": COHORT_UNCERTAINTY_DOMAIN_VERSION,
@@ -268,11 +309,11 @@ def summarize_uncertainty(
             "soft_sclera_fraction": float(soft[1]),
             "soft_iris_fraction": float(soft[2]),
             "soft_pupil_fraction": float(soft[3]),
-            "uncertainty_ocular_pixel_count": int(ocular_domain.sum()),
+            "uncertainty_ocular_pixel_count": ocular_count,
             "uncertainty_boundary_pixel_count": None,
-            "ocular_max_probability_mean": _masked_mean(max_probability, ocular_domain),
-            "ocular_top1_top2_margin_mean": _masked_mean(top1_top2_margin, ocular_domain),
-            "ocular_entropy_mean": _masked_mean(entropy, ocular_domain),
+            "ocular_max_probability_mean": max_mean,
+            "ocular_top1_top2_margin_mean": margin_mean,
+            "ocular_entropy_mean": entropy_mean,
             "low_max_probability_threshold": None,
             "whole_low_max_probability_fraction": None,
             "ocular_low_max_probability_fraction": None,
@@ -283,9 +324,10 @@ def summarize_uncertainty(
             if not np.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
                 raise ValueError("low max-probability threshold must be in [0,1]")
             result["low_max_probability_threshold"] = threshold
-            count = int(ocular_domain.sum())
             result["ocular_low_max_probability_fraction"] = (
-                float(np.mean(max_probability[ocular_domain] < threshold)) if count else None
+                float(np.mean(ocular_top1 < threshold))
+                if ocular_top1 is not None and ocular_top1.size
+                else None
             )
         return result
 
