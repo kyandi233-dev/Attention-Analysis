@@ -7,7 +7,7 @@ from ritnet_fullclass_io import csv_fieldnames, iter_csv
 from ritnet_fullclass_schema import EYE_METRIC_FIELDS, FRAME_COVERAGE_FIELDS
 
 
-def test_complete_checkpoint_serializes_plain_csv_and_coverage_without_runtime(monkeypatch, tmp_path):
+def test_complete_checkpoint_serializes_plain_csv_and_carries_rows_without_runtime(monkeypatch, tmp_path):
     run_dir = tmp_path / "sub-034_formal_source"
     run_dir.mkdir()
     model = tmp_path / "model.onnx"
@@ -139,11 +139,18 @@ def test_complete_checkpoint_serializes_plain_csv_and_coverage_without_runtime(m
     assert csv_fieldnames(core.eye_metrics) == EYE_METRIC_FIELDS
     assert csv_fieldnames(core.frame_coverage) == FRAME_COVERAGE_FIELDS
 
-    eye_rows = list(iter_csv(core.eye_metrics))
-    coverage_rows = list(iter_csv(core.frame_coverage))
-    assert len(eye_rows) == 1
-    assert len(coverage_rows) == 1
-    assert eye_rows[0]["subject"] == "sub-034"
-    assert eye_rows[0]["temporal_reset_reason"] == "first_observation"
-    assert coverage_rows[0]["coverage_status"] == "single_eye_success"
-    assert coverage_rows[0]["fixed_qc_anchor"] == "True"
+    assert len(core.eye_metric_rows) == 1
+    assert len(core.frame_coverage_rows) == 1
+    assert core.eye_metric_rows[0]["subject"] == "sub-034"
+    assert core.eye_metric_rows[0]["temporal_reset_reason"] == "first_observation"
+    assert core.frame_coverage_rows[0]["coverage_status"] == "single_eye_success"
+    assert core.frame_coverage_rows[0]["fixed_qc_anchor"] is True
+
+    # Disk serialization is an independent final artifact contract; the runner
+    # no longer reparses these files merely to feed QC.
+    disk_eye_rows = list(iter_csv(core.eye_metrics))
+    disk_coverage_rows = list(iter_csv(core.frame_coverage))
+    assert len(disk_eye_rows) == len(core.eye_metric_rows)
+    assert len(disk_coverage_rows) == len(core.frame_coverage_rows)
+    assert disk_eye_rows[0]["subject"] == core.eye_metric_rows[0]["subject"]
+    assert disk_coverage_rows[0]["coverage_status"] == core.frame_coverage_rows[0]["coverage_status"]
