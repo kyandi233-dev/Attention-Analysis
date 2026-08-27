@@ -16,6 +16,8 @@
 | `nir_behavior_alignment.py` | **历史 prototype、可执行** | 旧 production-based NIR × Behavior schema-v2 对齐；不再是当前正式主分析入口 |
 | `build_stimulus_visual_table.py` | **当前** | 重建正式 SART 画面并生成视觉协变量/报告 PNG |
 | `rgb_analysis.py` | **当前，共享 RGB** | RGB audit / timeline / Motion / Pose / Face sampling 与 QC 入口 |
+| `multimodal_pupil_audit.py` | **当前，Issue #22 validation-only** | 只读 NIR–RGB 时间配对、pupil-only/Face+Pose nuisance 审计与身份 provenance 摘要；可通过 `--repeat-registry` 接入外部非 PII 重复被试 registry |
+| `multimodal_pupil_correction_pilot.py` | **当前，Issue #22 validation-only** | 比较 M0–M3 的 NIR YOLO eye-bbox / RGB 几何校正候选；只使用无标签测量学指标，默认 baseline-only fit，不读取 Behavior/Probe/ML outcome |
 | `face_formal_dryrun_sample.py` | **当前，共享 RGB** | timestamp-driven 15 Hz representative Face dry-run sampling |
 | `face_formal_dryrun_directml_v02.py` | **当前，AMD** | direct-AVI + prefetch + RetinaFace B8 + multitask DirectML dry-run runner |
 | `face_derive_tracking_eyelid_v02.py` | **当前，共享 RGB** | window-aware primary tracking + EAR / aperture-iris / eyeBlink derived |
