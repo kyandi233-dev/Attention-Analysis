@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 
-EYE_METRICS_SCHEMA_VERSION = 4
+EYE_METRICS_SCHEMA_VERSION = 5
 FRAME_COVERAGE_SCHEMA_VERSION = 2
 
 IDENTITY_FIELDS = (
@@ -25,6 +25,7 @@ IDENTITY_FIELDS = (
 )
 
 SOURCE_YOLO_FIELDS = (
+    "source_detection_source",
     "source_frame_status",
     "source_eye_status",
     "source_redetect_reason",
