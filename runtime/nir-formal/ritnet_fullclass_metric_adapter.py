@@ -1,10 +1,11 @@
-"""Map audited native-640 hard-label metrics into the fixed final schema.
+"""Lean final hard-label metrics for the production RITnet cohort.
 
-The underlying geometry implementation remains ``ritnet_native_metrics`` to
-avoid duplicating contour/ellipse mathematics. Final scientific metrics are
-computed only on pixels backed by real source-video content; replicate padding
-is retained for RITnet input context but excluded from analysis denominators and
-geometry. Padding overlap is preserved separately as QC evidence.
+Four-class hard segmentation remains intact. Production geometry is deliberately
+pupil-only: the project has direct visual evidence that RITnet iris/ocular
+segmentation can fragment under glasses/reflections, so iris ellipse/PIR and
+ocular-shape geometry are not defensible primary measurements. Artificial
+padding remains excluded from scientific denominators and is preserved as QC
+facts.
 """
 from __future__ import annotations
 
@@ -13,46 +14,17 @@ from typing import Any
 import cv2
 import numpy as np
 
-from ritnet_native_metrics import summarize_fullclass_native, validate_native_labels
+from ritnet_native_metrics import _component_metrics, _ellipse_geometry, validate_native_labels
 
 
-ANALYSIS_DOMAIN_VERSION = "source-backed-output-mask-v1"
+ANALYSIS_DOMAIN_VERSION = "source-backed-output-mask-v2-pupil-geometry-only"
 CLASS_NAMES = {
     0: "background",
     1: "sclera",
     2: "iris",
     3: "pupil",
 }
-
-DIRECT_MAP = {
-    "native_pupil_component_count": "pupil_component_count",
-    "native_pupil_largest_component_fraction": "pupil_largest_component_fraction",
-    "native_iris_outer_component_count": "iris_outer_component_count",
-    "native_iris_outer_largest_component_fraction": "iris_outer_largest_component_fraction",
-    "native_ocular_component_count": "ocular_component_count",
-    "native_ocular_largest_component_fraction": "ocular_largest_component_fraction",
-    "native_pupil_to_iris_diameter_ratio": "pupil_to_iris_diameter_ratio",
-    "native_pupil_to_iris_ellipse_area_ratio": "pupil_to_iris_ellipse_area_ratio",
-    "native_pupil_to_iris_contour_area_ratio": "pupil_to_iris_contour_area_ratio",
-    "native_pupil_center_offset_px": "pupil_center_offset_px",
-    "native_pupil_center_offset_norm": "pupil_center_offset_norm",
-    "native_pupil_center_in_iris_outer": "pupil_center_in_iris_outer",
-    "native_iris_diameter_gt_pupil_diameter": "iris_diameter_gt_pupil_diameter",
-    "native_pir_finite": "pir_finite",
-    "native_iris_outer_fill_ratio": "iris_outer_fill_ratio",
-    "native_ocular_bbox_width": "ocular_bbox_width",
-    "native_ocular_bbox_height": "ocular_bbox_height",
-    "native_ocular_aperture_height_median": "ocular_aperture_height_median",
-    "native_ocular_aperture_height_p90": "ocular_aperture_height_p90",
-    "native_ocular_aperture_ratio_median": "ocular_aperture_ratio_median",
-    "native_ocular_aperture_ratio_p90": "ocular_aperture_ratio_p90",
-    "native_ocular_whole_mask_touches_edge": "ocular_whole_mask_touches_edge",
-    "diagnostic_pupil_fragmented": "qc_pupil_fragmented",
-    "diagnostic_iris_fragmented": "qc_iris_outer_fragmented",
-    "diagnostic_ocular_fragmented": "qc_ocular_fragmented",
-}
-
-GEOMETRY_SUFFIXES = (
+PUPIL_GEOMETRY_SUFFIXES = (
     "found",
     "fit_valid",
     "center_x",
@@ -83,12 +55,15 @@ def _validate_analysis_mask(valid_source_mask: np.ndarray | None) -> np.ndarray:
 
 
 def _touches_internal_valid_boundary(structure: np.ndarray, valid: np.ndarray) -> bool:
-    """Whether a source-backed structure touches an internal padding boundary."""
     if valid.all() or not structure.any():
         return False
     invalid = (~valid).astype(np.uint8)
-    adjacent_to_invalid = cv2.dilate(invalid, np.ones((3, 3), dtype=np.uint8), iterations=1).astype(bool)
-    return bool((structure & valid & adjacent_to_invalid).any())
+    adjacent = cv2.dilate(
+        invalid,
+        np.ones((3, 3), dtype=np.uint8),
+        iterations=1,
+    ).astype(bool)
+    return bool((structure & valid & adjacent).any())
 
 
 def summarize_final_hard_metrics(
@@ -98,78 +73,72 @@ def summarize_final_hard_metrics(
     labels = validate_native_labels(labels)
     valid = _validate_analysis_mask(valid_source_mask)
     full_source_domain = bool(valid.all())
-    valid_count = valid.size if full_source_domain else int(valid.sum())
+    valid_count = int(valid.size if full_source_domain else valid.sum())
 
-    # Most formal eye crops are fully backed by the source AVI. In that common
-    # case the already-audited native summary is exactly the final hard-metric
-    # domain, so do not allocate a second 400x640 label copy and four duplicate
-    # class masks merely to prove that artificial-border counts are zero.
-    if full_source_domain:
-        native = summarize_fullclass_native(labels)
-    else:
-        invalid = ~valid
-        observed_labels = labels.copy()
-        observed_labels[invalid] = 0
-        native = summarize_fullclass_native(observed_labels)
-
-    result: dict[str, Any] = {target: native[source] for source, target in DIRECT_MAP.items()}
-    for final_prefix, native_prefix in (
-        ("pupil", "native_pupil"),
-        ("iris_outer", "native_iris_outer"),
-    ):
-        for suffix in GEOMETRY_SUFFIXES:
-            result[f"{final_prefix}_{suffix}"] = native[f"{native_prefix}_{suffix}"]
-
-    if full_source_domain:
-        for name in CLASS_NAMES.values():
-            result[f"hard_{name}_pixels"] = int(native[f"native_{name}_pixels"])
-            result[f"hard_{name}_fraction"] = float(native[f"native_{name}_fraction"])
-        result["hard_iris_outer_pixels"] = int(native["native_iris_outer_pixels"])
-        result["hard_iris_outer_fraction"] = float(native["native_iris_outer_fraction"])
-        result["hard_ocular_pixels"] = int(native["native_ocular_pixels"])
-        result["hard_ocular_fraction"] = float(native["native_ocular_fraction"])
-        class_masks = None
-    else:
-        class_masks = {class_id: (labels == class_id) for class_id in CLASS_NAMES}
-        for class_id, name in CLASS_NAMES.items():
-            count = int((class_masks[class_id] & valid).sum())
-            result[f"hard_{name}_pixels"] = count
-            result[f"hard_{name}_fraction"] = float(count / valid_count)
-
-        iris_outer = class_masks[2] | class_masks[3]
-        ocular = class_masks[1] | iris_outer
-        for name, mask in (("iris_outer", iris_outer), ("ocular", ocular)):
-            count = int((mask & valid).sum())
-            result[f"hard_{name}_pixels"] = count
-            result[f"hard_{name}_fraction"] = float(count / valid_count)
-
-    if sum(result[f"hard_{name}_pixels"] for name in CLASS_NAMES.values()) != valid_count:
+    # Four-class information is preserved exactly. In the common all-valid case
+    # this is one cheap bincount over uint8 labels; padded eyes count only pixels
+    # backed by the original source video.
+    observed = labels.reshape(-1) if full_source_domain else labels[valid]
+    counts_array = np.bincount(observed, minlength=4)
+    if int(counts_array[:4].sum()) != valid_count:
         raise AssertionError("valid-domain hard class counts do not sum to valid pixel count")
+
+    result: dict[str, Any] = {}
+    for class_id, name in CLASS_NAMES.items():
+        count = int(counts_array[class_id])
+        result[f"hard_{name}_pixels"] = count
+        result[f"hard_{name}_fraction"] = float(count / valid_count)
+
+    iris_outer_count = int(counts_array[2] + counts_array[3])
+    ocular_count = int(valid_count - counts_array[0])
+    result["hard_iris_outer_pixels"] = iris_outer_count
+    result["hard_iris_outer_fraction"] = float(iris_outer_count / valid_count)
+    result["hard_ocular_pixels"] = ocular_count
+    result["hard_ocular_fraction"] = float(ocular_count / valid_count)
+
+    # Pupil is the only geometric structure retained in the formal NIR cohort.
+    # Iris hard/soft class information remains available, but no iris ellipse or
+    # pupil-to-iris ratio is manufactured from fragmented iris masks.
+    pupil = labels == 3
+    pupil_analysis = pupil if full_source_domain else (pupil & valid)
+    pupil_geom, _ = _ellipse_geometry(pupil_analysis)
+    pupil_components, pupil_largest_fraction = _component_metrics(pupil_analysis)
+    result["pupil_component_count"] = int(pupil_components)
+    result["pupil_largest_component_fraction"] = pupil_largest_fraction
+    result["qc_pupil_fragmented"] = bool(pupil_components > 1)
+    for suffix in PUPIL_GEOMETRY_SUFFIXES:
+        result[f"pupil_{suffix}"] = pupil_geom[suffix]
 
     result.update(
         {
             "analysis_domain_version": ANALYSIS_DOMAIN_VERSION,
-            "analysis_valid_pixel_count": int(valid_count),
+            "analysis_valid_pixel_count": valid_count,
             "analysis_valid_pixel_fraction": float(valid_count / valid.size),
         }
     )
 
     if full_source_domain:
-        for name in ("pupil", "iris_outer", "ocular"):
-            result[f"{name}_predicted_in_padding_pixels"] = 0
-            result[f"{name}_touches_valid_domain_edge"] = False
-    else:
-        assert class_masks is not None
-        invalid = ~valid
-        iris_outer = class_masks[2] | class_masks[3]
-        ocular = class_masks[1] | iris_outer
-        structures = {
-            "pupil": class_masks[3],
-            "iris_outer": iris_outer,
-            "ocular": ocular,
-        }
-        for name, mask in structures.items():
-            result[f"{name}_predicted_in_padding_pixels"] = int((mask & invalid).sum())
-            result[f"{name}_touches_valid_domain_edge"] = _touches_internal_valid_boundary(mask, valid)
+        result.update(
+            {
+                "pupil_predicted_in_padding_pixels": 0,
+                "iris_outer_predicted_in_padding_pixels": 0,
+                "ocular_predicted_in_padding_pixels": 0,
+                "pupil_touches_valid_domain_edge": False,
+                "iris_outer_touches_valid_domain_edge": False,
+                "ocular_touches_valid_domain_edge": False,
+            }
+        )
+        return result
 
+    invalid = ~valid
+    iris_outer = labels >= 2
+    ocular = labels != 0
+    structures = {
+        "pupil": pupil,
+        "iris_outer": iris_outer,
+        "ocular": ocular,
+    }
+    for name, mask in structures.items():
+        result[f"{name}_predicted_in_padding_pixels"] = int((mask & invalid).sum())
+        result[f"{name}_touches_valid_domain_edge"] = _touches_internal_valid_boundary(mask, valid)
     return result
