@@ -1,17 +1,13 @@
-"""Atomic deterministic small-artifact I/O for final full-class outputs."""
+"""Atomic deterministic artifact I/O for final full-class outputs."""
 from __future__ import annotations
 
 import csv
 import gzip
-import io
 import json
 import os
 import uuid
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping
-
-
-GZIP_COMPRESSLEVEL = 6
 
 
 def atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
@@ -30,66 +26,52 @@ def atomic_write_json(path: Path, payload: Mapping[str, Any]) -> None:
             temp.unlink()
 
 
-def atomic_write_csv_gz(
+def atomic_write_csv(
     path: Path,
     rows: Iterable[Mapping[str, Any]],
     fieldnames: tuple[str, ...] | list[str],
 ) -> int:
-    """Write deterministic gzip CSV and atomically replace destination."""
+    """Write a UTF-8 CSV and atomically replace the destination.
+
+    Final eye/frame tables are intentionally plain CSV. Gzip previously added
+    avoidable CPU work and made manual inspection/recovery harder; the lean
+    scalar schema is already bounded by the per-subject output-size contract.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     count = 0
-    raw = None
-    gzip_file = None
-    text = None
     try:
-        raw = temp.open("wb")
-        gzip_file = gzip.GzipFile(
-            filename="",
-            mode="wb",
-            fileobj=raw,
-            compresslevel=GZIP_COMPRESSLEVEL,
-            mtime=0,
-        )
-        text = io.TextIOWrapper(gzip_file, encoding="utf-8", newline="")
-        writer = csv.DictWriter(text, fieldnames=list(fieldnames), extrasaction="raise")
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(dict(row))
-            count += 1
-        text.flush()
-        gzip_file.flush()
-        text.detach()
-        text = None
-        gzip_file.close()
-        gzip_file = None
-        raw.flush()
-        os.fsync(raw.fileno())
-        raw.close()
-        raw = None
+        with temp.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(fieldnames), extrasaction="raise")
+            writer.writeheader()
+            for row in rows:
+                writer.writerow(dict(row))
+                count += 1
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(temp, path)
         return count
     finally:
-        if text is not None:
-            try:
-                text.close()
-            except Exception:
-                pass
-        if gzip_file is not None:
-            try:
-                gzip_file.close()
-            except Exception:
-                pass
-        if raw is not None:
-            try:
-                raw.close()
-            except Exception:
-                pass
         if temp.exists():
             temp.unlink()
 
 
+def iter_csv(path: Path) -> Iterator[dict[str, str]]:
+    with Path(path).open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            yield dict(row)
+
+
+def csv_fieldnames(path: Path) -> tuple[str, ...]:
+    with Path(path).open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        return tuple(reader.fieldnames or ())
+
+
+# Legacy read-only helpers are retained solely so older completed .csv.gz
+# artifacts remain inspectable. No current formal writer produces gzip CSV.
 def iter_csv_gz(path: Path) -> Iterator[dict[str, str]]:
     with gzip.open(Path(path), "rt", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
