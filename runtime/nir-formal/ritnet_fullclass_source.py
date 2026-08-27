@@ -198,25 +198,23 @@ def resolve_source_video(
 
 
 def _completion_yolo_batch(completion: dict[str, Any]) -> int | None:
-    """Return an explicitly recorded historical YOLO batch, or None for legacy markers."""
+    """Return historical YOLO batch only as optional provenance."""
     value = completion.get("yolo_batch_size")
     if value is None or str(value).strip() == "":
         return None
     parsed = int(value)
-    if parsed <= 0:
-        return None
-    return parsed
+    return parsed if parsed > 0 else None
 
 
 @lru_cache(maxsize=16)
 def _load_source_context_cached(run_dir: Path, config_path: Path) -> SourceFormalContext:
-    """Load one immutable formal source identity once per Python process.
+    """Load and freeze the historical source actually used by the old formal run.
 
-    The canonical single-subject entrypoint performs a strict preflight before
-    calling the numeric core. Both stages need the same source context, including
-    the expensive source-video SHA256. The historical source is immutable during
-    one final run, so reusing the validated context avoids hashing a large AVI a
-    second time without weakening cross-process integrity checks.
+    Final full-class analysis reuses the historical YOLO bbox rows as data. It
+    must not retroactively reject a valid historical run merely because old
+    completion markers did not record later provenance fields such as YOLO batch
+    size or YOLO model SHA256. Those fields are recorded when available and left
+    explicitly absent when unavailable.
     """
     validation = validate_completion(run_dir)
     if not validation.valid or not validation.marker:
@@ -227,14 +225,8 @@ def _load_source_context_cached(run_dir: Path, config_path: Path) -> SourceForma
     config = load_config(config_path)
     subject = normalize_subject(completion.get("subject") or run_dir.name.split("_formal_", 1)[0])
 
-    configured_yolo_batch = int(config.get("yolo", {}).get("batch_size", 8))
     source_yolo_batch = _completion_yolo_batch(completion)
-    if source_yolo_batch is not None and source_yolo_batch != configured_yolo_batch:
-        raise RuntimeError(
-            f"source formal YOLO batch {source_yolo_batch} != configured production batch {configured_yolo_batch}"
-        )
-    if not completion.get("yolo_model_sha256"):
-        raise RuntimeError("source completion lacks yolo_model_sha256")
+    source_yolo_model_sha256 = completion.get("yolo_model_sha256") or None
 
     video, video_resolution = resolve_source_video(
         completion=completion,
@@ -254,7 +246,8 @@ def _load_source_context_cached(run_dir: Path, config_path: Path) -> SourceForma
         "source_eyes_sha256": sha256_file(eyes_path),
         "source_frames_sha256": sha256_file(frames_path),
         "source_video_sha256": video_resolution["content_sha256"],
-        "source_yolo_model_sha256": completion.get("yolo_model_sha256"),
+        "source_yolo_model_sha256": source_yolo_model_sha256,
+        "source_yolo_model_sha256_recorded": source_yolo_model_sha256 is not None,
         "source_yolo_batch_size": source_yolo_batch,
         "source_yolo_batch_size_recorded": source_yolo_batch is not None,
         "source_focuswave_release": completion.get("focuswave_release"),
