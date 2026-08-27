@@ -1,14 +1,20 @@
 """Numeric core of the final <=1 GiB RITnet full-class workflow.
 
-This module is intentionally not the user-facing entry point yet. It produces
-fixed-schema numeric artifacts using historical YOLO boxes + original AVI, exact
-1.6 padded ROIs, the final five-output RITnet adapter, compact online uncertainty
-summaries and gap-safe temporal facts. QC/integrity orchestration is layered on
-before the canonical entry is switched to this engine.
+This module produces fixed-schema numeric artifacts using historical YOLO boxes +
+original AVI, exact 1.6 padded ROIs, the final five-output RITnet adapter, compact
+online uncertainty summaries and gap-safe temporal facts.
+
+The production loop is deliberately pipelined: source decode/ROI/preprocessing of
+batch N+1 overlaps DirectML inference of batch N, while CPU metric reduction of
+batch N-1 overlaps both. This changes scheduling only; scientific inputs, model
+outputs, metrics and persisted schema remain unchanged.
 """
 from __future__ import annotations
 
 import subprocess
+import time
+from collections import deque
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterator, Mapping
@@ -51,8 +57,12 @@ from ritnet_label_store import sha256_file
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
-CORE_VERSION = "fullclass-final-core-v5-source-provenance"
+CORE_VERSION = "fullclass-final-core-v6-overlapped-pipeline"
 VIDEO_SEEK_GAP_THRESHOLD = 64
+DEFAULT_CHECKPOINT_ROWS = 128
+DEFAULT_PROGRESS_EVERY_BATCHES = 100
+DEFAULT_SUMMARY_WORKERS = 2
+DEFAULT_MAX_PENDING_SUMMARIES = 2
 
 
 @dataclass(frozen=True)
@@ -67,6 +77,15 @@ class CoreArtifacts:
     fixed_anchor_keys: frozenset[tuple[str, int, int]]
     source_context: SourceFormalContext
     work_identity: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class PreparedBatch:
+    items: list[dict[str, Any]]
+    successful_indices: tuple[int, ...]
+    tensor: Any | None
+    valid_batch_size: int
+    timing: dict[str, float]
 
 
 def resolve_package_path(value: str | Path) -> Path:
@@ -235,7 +254,11 @@ def _prepared_items(
     current_frame: int | None = None
     try:
         for target_frame, group in _group_remaining_rows(rows, start_ordinal):
-            if current_frame is None or target_frame < current_frame or target_frame - current_frame > VIDEO_SEEK_GAP_THRESHOLD:
+            if (
+                current_frame is None
+                or target_frame < current_frame
+                or target_frame - current_frame > VIDEO_SEEK_GAP_THRESHOLD
+            ):
                 cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
                 current_frame = target_frame
             frame = None
@@ -317,6 +340,109 @@ def _prepared_items(
         cap.release()
 
 
+def _next_prepared_batch(
+    *,
+    item_iterator: Iterator[dict[str, Any]],
+    runtime: RitnetFullClassFinalRuntime,
+) -> PreparedBatch | None:
+    """Decode/crop and preprocess one fixed-b16 batch on the producer thread."""
+    stage_started = time.perf_counter()
+    items: list[dict[str, Any]] = []
+    for _ in range(runtime.FIXED_BATCH_SIZE):
+        try:
+            items.append(next(item_iterator))
+        except StopIteration:
+            break
+    if not items:
+        return None
+
+    source_prepare_ms = (time.perf_counter() - stage_started) * 1000.0
+    successful_indices = tuple(
+        index for index, item in enumerate(items) if item["roi"] is not None
+    )
+    tensor = None
+    valid_batch_size = 0
+    preprocess_ms = 0.0
+    if successful_indices:
+        rois = [items[index]["roi"] for index in successful_indices]
+        tensor, valid_batch_size, prep_timing = runtime.prepare_batch(rois)
+        preprocess_ms = float(prep_timing.get("preprocess_ms", 0.0))
+
+    return PreparedBatch(
+        items=items,
+        successful_indices=successful_indices,
+        tensor=tensor,
+        valid_batch_size=int(valid_batch_size),
+        timing={
+            "source_prepare_ms": float(source_prepare_ms),
+            "preprocess_ms": float(preprocess_ms),
+            "producer_total_ms": float((time.perf_counter() - stage_started) * 1000.0),
+        },
+    )
+
+
+def _summarize_outputs(
+    *,
+    prepared: PreparedBatch,
+    outputs: dict[str, Any] | None,
+    boundary_band_px: int,
+    low_max_probability_threshold: float | None,
+) -> tuple[list[tuple[int, dict[str, Any]]], dict[str, float]]:
+    """Reduce one already-inferred batch on a CPU worker while GPU advances."""
+    summary_started = time.perf_counter()
+    hard_ms = 0.0
+    uncertainty_ms = 0.0
+    inferred: dict[int, dict[str, Any]] = {}
+
+    if prepared.successful_indices:
+        if outputs is None:
+            raise RuntimeError("successful prepared batch is missing RITnet outputs")
+        for output_index, item_index in enumerate(prepared.successful_indices):
+            labels = outputs["labels"][output_index]
+            valid_source_mask = prepared.items[item_index].get("valid_source_mask")
+            if valid_source_mask is None:
+                raise RuntimeError(
+                    "successful final RITnet item is missing valid_source_mask; refusing to compute "
+                    "scientific hard metrics over synthetic padding"
+                )
+
+            started = time.perf_counter()
+            hard = summarize_final_hard_metrics(
+                labels,
+                valid_source_mask=valid_source_mask,
+            )
+            hard_ms += (time.perf_counter() - started) * 1000.0
+
+            started = time.perf_counter()
+            uncertainty = summarize_uncertainty(
+                labels=labels,
+                valid_source_mask=valid_source_mask,
+                class_probability=outputs["class_probability"][output_index],
+                max_probability=outputs["max_probability"][output_index],
+                top1_top2_margin=outputs["top1_top2_margin"][output_index],
+                entropy=outputs["entropy"][output_index],
+                boundary_band_px=boundary_band_px,
+                low_max_probability_threshold=low_max_probability_threshold,
+            )
+            uncertainty_ms += (time.perf_counter() - started) * 1000.0
+            inferred[item_index] = {**hard, **uncertainty}
+
+    completed: list[tuple[int, dict[str, Any]]] = []
+    for index, item in enumerate(prepared.items):
+        row = dict(item["base"])
+        if index in inferred:
+            row["ritnet_status"] = "success"
+            row["ritnet_failure_reason"] = None
+            row.update(inferred[index])
+        completed.append((int(item["ordinal"]), row))
+
+    return completed, {
+        "hard_metric_ms": float(hard_ms),
+        "uncertainty_ms": float(uncertainty_ms),
+        "summary_total_ms": float((time.perf_counter() - summary_started) * 1000.0),
+    }
+
+
 def _complete_batch(
     *,
     items: list[dict[str, Any]],
@@ -324,6 +450,7 @@ def _complete_batch(
     boundary_band_px: int,
     low_max_probability_threshold: float | None,
 ) -> list[tuple[int, dict[str, Any]]]:
+    """Synchronous compatibility wrapper retained for focused unit tests."""
     successful_indices = [index for index, item in enumerate(items) if item["roi"] is not None]
     inferred: dict[int, dict[str, Any]] = {}
     if successful_indices:
@@ -398,7 +525,59 @@ def _work_identity(
         "frame_coverage_schema_version": FRAME_COVERAGE_SCHEMA_VERSION,
         "qc_boundary_band_px": int(full_cfg.get("qc_boundary_band_px", 5)),
         "low_max_probability_threshold": full_cfg.get("low_max_probability_threshold"),
+        "pipeline_overlap_enabled": True,
+        "checkpoint_rows": int(full_cfg.get("checkpoint_rows", DEFAULT_CHECKPOINT_ROWS)),
+        "summary_workers": int(full_cfg.get("summary_workers", DEFAULT_SUMMARY_WORKERS)),
+        "max_pending_summaries": int(
+            full_cfg.get("max_pending_summaries", DEFAULT_MAX_PENDING_SUMMARIES)
+        ),
     }
+
+
+def _accumulate_timing(total: dict[str, float], values: Mapping[str, Any]) -> None:
+    for key, value in values.items():
+        if isinstance(value, (int, float)):
+            total[key] = total.get(key, 0.0) + float(value)
+
+
+def _flush_checkpoint(
+    store: FullClassWorkStore,
+    buffer: list[tuple[int, dict[str, Any]]],
+) -> float:
+    if not buffer:
+        return 0.0
+    started = time.perf_counter()
+    store.append_rows(buffer)
+    buffer.clear()
+    return (time.perf_counter() - started) * 1000.0
+
+
+def _report_progress(
+    *,
+    subject: str,
+    start_ordinal: int,
+    processed_session: int,
+    total_rows: int,
+    batch_count: int,
+    wall_started: float,
+    timing_total: Mapping[str, float],
+) -> None:
+    elapsed = max(1e-9, time.perf_counter() - wall_started)
+    completed_total = start_ordinal + processed_session
+    rate = processed_session / elapsed if processed_session else 0.0
+    remaining = max(0, total_rows - completed_total)
+    eta_sec = remaining / rate if rate > 0 else float("inf")
+    eta_text = f"{eta_sec / 60.0:.1f}m" if eta_sec != float("inf") else "?"
+    dml_ms = timing_total.get("gpu_and_transfer_ms", 0.0)
+    summary_ms = timing_total.get("summary_total_ms", 0.0)
+    producer_ms = timing_total.get("producer_total_ms", 0.0)
+    print(
+        f"[FULLCLASS] {subject} batch={batch_count} "
+        f"eyes={completed_total}/{total_rows} "
+        f"rate={rate:.2f} eyes/s ETA={eta_text} "
+        f"stage_ms(prod={producer_ms:.0f},dml={dml_ms:.0f},summary={summary_ms:.0f})",
+        flush=True,
+    )
 
 
 def run_numeric_core(
@@ -439,31 +618,129 @@ def run_numeric_core(
     threshold_value = final_cfg.get("low_max_probability_threshold")
     threshold = None if threshold_value is None else float(threshold_value)
 
+    checkpoint_rows = int(final_cfg.get("checkpoint_rows", DEFAULT_CHECKPOINT_ROWS))
+    progress_every = int(final_cfg.get("progress_every_batches", DEFAULT_PROGRESS_EVERY_BATCHES))
+    if checkpoint_rows < runtime.FIXED_BATCH_SIZE:
+        raise ValueError(f"fullclass.checkpoint_rows must be >= {runtime.FIXED_BATCH_SIZE}")
+    if progress_every <= 0:
+        raise ValueError("fullclass.progress_every_batches must be positive")
+    summary_workers = int(final_cfg.get("summary_workers", DEFAULT_SUMMARY_WORKERS))
+    max_pending_summaries = int(
+        final_cfg.get("max_pending_summaries", DEFAULT_MAX_PENDING_SUMMARIES)
+    )
+    if summary_workers <= 0:
+        raise ValueError("fullclass.summary_workers must be positive")
+    if max_pending_summaries <= 0:
+        raise ValueError("fullclass.max_pending_summaries must be positive")
+    if max_pending_summaries < summary_workers:
+        raise ValueError("fullclass.max_pending_summaries must be >= summary_workers")
+
     with FullClassWorkStore(workstore_path, identity=identity) as store:
         start_ordinal = store.validate_prefix(context.eye_rows)
-        pending: list[dict[str, Any]] = []
-        for item in _prepared_items(context=context, start_ordinal=start_ordinal):
-            pending.append(item)
-            if len(pending) < runtime.FIXED_BATCH_SIZE:
-                continue
-            store.append_rows(
-                _complete_batch(
-                    items=pending,
+        total_rows = len(context.eye_rows)
+        item_iterator = _prepared_items(context=context, start_ordinal=start_ordinal)
+        checkpoint_buffer: list[tuple[int, dict[str, Any]]] = []
+        timing_total: dict[str, float] = {}
+        processed_session = 0
+        batch_count = 0
+        wall_started = time.perf_counter()
+        pending_summaries: deque[Future] = deque()
+
+        def collect_summary(future: Future) -> None:
+            nonlocal processed_session
+            rows, timing = future.result()
+            checkpoint_buffer.extend(rows)
+            processed_session += len(rows)
+            _accumulate_timing(timing_total, timing)
+            if len(checkpoint_buffer) >= checkpoint_rows:
+                sqlite_ms = _flush_checkpoint(store, checkpoint_buffer)
+                timing_total["sqlite_ms"] = timing_total.get("sqlite_ms", 0.0) + sqlite_ms
+
+        try:
+            with ThreadPoolExecutor(max_workers=1, thread_name_prefix="nir-prep") as prep_pool, ThreadPoolExecutor(
+                max_workers=summary_workers, thread_name_prefix="nir-summary"
+            ) as summary_pool:
+                next_prepared = prep_pool.submit(
+                    _next_prepared_batch,
+                    item_iterator=item_iterator,
                     runtime=runtime,
-                    boundary_band_px=boundary_band_px,
-                    low_max_probability_threshold=threshold,
                 )
-            )
-            pending = []
-        if pending:
-            store.append_rows(
-                _complete_batch(
-                    items=pending,
-                    runtime=runtime,
-                    boundary_band_px=boundary_band_px,
-                    low_max_probability_threshold=threshold,
-                )
-            )
+
+                while True:
+                    prepared = next_prepared.result()
+                    if prepared is None:
+                        break
+                    batch_count += 1
+                    _accumulate_timing(timing_total, prepared.timing)
+
+                    # Prepare N+1 while DirectML runs N.
+                    next_prepared = prep_pool.submit(
+                        _next_prepared_batch,
+                        item_iterator=item_iterator,
+                        runtime=runtime,
+                    )
+
+                    outputs = None
+                    infer_timing: dict[str, Any] = {}
+                    if prepared.successful_indices:
+                        if prepared.tensor is None:
+                            raise RuntimeError(
+                                "prepared batch has successful items but no inference tensor"
+                            )
+                        outputs, infer_timing = runtime.infer_prepared(
+                            prepared.tensor,
+                            prepared.valid_batch_size,
+                        )
+                        _accumulate_timing(timing_total, infer_timing)
+
+                    # CPU summaries run independently from DirectML. Keep only a
+                    # small bounded number of large five-output batches resident
+                    # in host RAM, and always collect them in source order.
+                    pending_summaries.append(
+                        summary_pool.submit(
+                            _summarize_outputs,
+                            prepared=prepared,
+                            outputs=outputs,
+                            boundary_band_px=boundary_band_px,
+                            low_max_probability_threshold=threshold,
+                        )
+                    )
+                    if len(pending_summaries) >= max_pending_summaries:
+                        collect_summary(pending_summaries.popleft())
+
+                    if batch_count % progress_every == 0:
+                        while pending_summaries and pending_summaries[0].done():
+                            collect_summary(pending_summaries.popleft())
+                        _report_progress(
+                            subject=context.subject,
+                            start_ordinal=start_ordinal,
+                            processed_session=processed_session,
+                            total_rows=total_rows,
+                            batch_count=batch_count,
+                            wall_started=wall_started,
+                            timing_total=timing_total,
+                        )
+
+                while pending_summaries:
+                    collect_summary(pending_summaries.popleft())
+
+                sqlite_ms = _flush_checkpoint(store, checkpoint_buffer)
+                timing_total["sqlite_ms"] = timing_total.get("sqlite_ms", 0.0) + sqlite_ms
+        finally:
+            close = getattr(item_iterator, "close", None)
+            if callable(close):
+                close()
+
+        _report_progress(
+            subject=context.subject,
+            start_ordinal=start_ordinal,
+            processed_session=processed_session,
+            total_rows=total_rows,
+            batch_count=batch_count,
+            wall_started=wall_started,
+            timing_total=timing_total,
+        )
+
         stored_rows = store.validate_prefix(context.eye_rows)
         if stored_rows != len(context.eye_rows):
             raise RuntimeError(f"numeric workstore incomplete: {stored_rows}/{len(context.eye_rows)}")
