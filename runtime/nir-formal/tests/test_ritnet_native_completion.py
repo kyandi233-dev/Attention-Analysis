@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from ritnet_label_store import RitnetLabelStore, canonical_digest, sha256_file
-from ritnet_native_completion import verify_fullclass_completion
+from ritnet_native_completion import FULLCLASS_VERSION, verify_fullclass_completion
 
 
 def atomicish_json(path: Path, value) -> None:
@@ -19,7 +19,11 @@ def build_artifacts(tmp_path: Path) -> tuple[Path, dict]:
     store_root = tmp_path / "sub-031_labels"
     store = RitnetLabelStore(
         store_root,
-        identity={"resume_identity_digest": canonical_digest(identity)},
+        identity={
+            "resume_identity_digest": canonical_digest(identity),
+            "subject": "sub-031",
+            "extension_version": FULLCLASS_VERSION,
+        },
         eye_mapping={"frame_left": 0, "frame_right": 1},
         chunk_rows=2,
     )
@@ -40,10 +44,17 @@ def build_artifacts(tmp_path: Path) -> tuple[Path, dict]:
 
     output_csv = tmp_path / "out.csv"
     with output_csv.open("w", encoding="utf-8-sig", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["native_label_row_ordinal", "frame_idx", "eye"])
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=["subject", "native_label_row_ordinal", "frame_idx", "eye"],
+        )
         writer.writeheader()
-        writer.writerow({"native_label_row_ordinal": 0, "frame_idx": 100, "eye": "frame_left"})
-        writer.writerow({"native_label_row_ordinal": 1, "frame_idx": 101, "eye": "frame_right"})
+        writer.writerow(
+            {"subject": "sub-031", "native_label_row_ordinal": 0, "frame_idx": 100, "eye": "frame_left"}
+        )
+        writer.writerow(
+            {"subject": "sub-031", "native_label_row_ordinal": 1, "frame_idx": 101, "eye": "frame_right"}
+        )
 
     qc_index = tmp_path / "qc_index.csv"
     with qc_index.open("w", encoding="utf-8-sig", newline="") as handle:
@@ -59,8 +70,9 @@ def build_artifacts(tmp_path: Path) -> tuple[Path, dict]:
     completion = tmp_path / "completion.json"
     marker = {
         "schema_version": 2,
-        "extension_version": "ritnet-fullclass-v2-native640",
+        "extension_version": FULLCLASS_VERSION,
         "status": "complete",
+        "subject": "sub-031",
         "resume_identity": identity,
         "resume_identity_digest": canonical_digest(identity),
         "label_store_identity_digest": store.identity_digest,
@@ -103,17 +115,36 @@ def test_completion_detects_csv_mutation(tmp_path):
     completion, identity = build_artifacts(tmp_path)
     marker = json.loads(completion.read_text(encoding="utf-8"))
     output = Path(marker["output_csv"])
-    output.write_text(output.read_text(encoding="utf-8-sig") + "2,102,frame_left\n", encoding="utf-8")
+    output.write_text(
+        output.read_text(encoding="utf-8-sig") + "sub-031,2,102,frame_left\n",
+        encoding="utf-8",
+    )
     result = verify_fullclass_completion(completion, expected_identity=identity)
     assert result.valid is False
     assert any("hash mismatch" in error or "CSV" in error for error in result.errors)
+
+
+def test_completion_detects_wrong_subject_inside_csv(tmp_path):
+    completion, identity = build_artifacts(tmp_path)
+    marker = json.loads(completion.read_text(encoding="utf-8"))
+    output = Path(marker["output_csv"])
+    text = output.read_text(encoding="utf-8-sig").replace("sub-031,1,101", "sub-999,1,101")
+    output.write_text(text, encoding="utf-8-sig")
+    marker["output_csv_sha256"] = sha256_file(output)
+    atomicish_json(completion, marker)
+    result = verify_fullclass_completion(completion, expected_identity=identity)
+    assert result.valid is False
+    assert any("subject mismatch" in error for error in result.errors)
 
 
 def test_completion_detects_qc_index_mutation(tmp_path):
     completion, identity = build_artifacts(tmp_path)
     marker = json.loads(completion.read_text(encoding="utf-8"))
     qc_index = Path(marker["qc_index"])
-    qc_index.write_text(qc_index.read_text(encoding="utf-8-sig") + "101,frame_right,manual\n", encoding="utf-8")
+    qc_index.write_text(
+        qc_index.read_text(encoding="utf-8-sig") + "101,frame_right,manual\n",
+        encoding="utf-8",
+    )
     result = verify_fullclass_completion(completion, expected_identity=identity)
     assert result.valid is False
     assert any("qc_index" in error for error in result.errors)
