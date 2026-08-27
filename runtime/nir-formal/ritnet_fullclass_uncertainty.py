@@ -35,6 +35,16 @@ def _validate_labels(labels: np.ndarray) -> np.ndarray:
     return np.ascontiguousarray(array)
 
 
+def _trusted_labels(labels: np.ndarray) -> np.ndarray:
+    """Shape/dtype-only view for outputs already validated by the batch runtime."""
+    array = np.asarray(labels)
+    if array.shape != (LABEL_HEIGHT, LABEL_WIDTH) or array.dtype != np.uint8:
+        raise ValueError(
+            f"labels must be uint8 {(LABEL_HEIGHT, LABEL_WIDTH)}, got {array.shape} {array.dtype}"
+        )
+    return np.ascontiguousarray(array)
+
+
 def _validate_valid_source_mask(valid_source_mask: np.ndarray) -> np.ndarray:
     mask = np.asarray(valid_source_mask)
     if mask.shape != (LABEL_HEIGHT, LABEL_WIDTH):
@@ -45,6 +55,17 @@ def _validate_valid_source_mask(valid_source_mask: np.ndarray) -> np.ndarray:
         raise TypeError(f"valid_source_mask must be bool, got {mask.dtype}")
     if not mask.any():
         raise ValueError("valid_source_mask contains no source-backed pixels")
+    return np.ascontiguousarray(mask)
+
+
+def _trusted_valid_source_mask(valid_source_mask: np.ndarray) -> np.ndarray:
+    mask = np.asarray(valid_source_mask)
+    if mask.shape != (LABEL_HEIGHT, LABEL_WIDTH):
+        raise ValueError(
+            f"valid_source_mask must have shape {(LABEL_HEIGHT, LABEL_WIDTH)}, got {mask.shape}"
+        )
+    if mask.dtype != np.bool_:
+        raise TypeError(f"valid_source_mask must be bool, got {mask.dtype}")
     return np.ascontiguousarray(mask)
 
 
@@ -60,6 +81,15 @@ def _validate_map(name: str, values: np.ndarray, *, lower: float, upper: float) 
     maximum = float(array.max()) if array.size else upper
     if minimum < lower - 1e-6 or maximum > upper + 1e-6:
         raise ValueError(f"{name} outside expected range [{lower},{upper}]: {minimum}..{maximum}")
+    return np.asarray(array, dtype=np.float32)
+
+
+def _trusted_map(name: str, values: np.ndarray) -> np.ndarray:
+    array = np.asarray(values)
+    if array.shape != (LABEL_HEIGHT, LABEL_WIDTH):
+        raise ValueError(f"{name} shape mismatch: {array.shape}")
+    if not np.issubdtype(array.dtype, np.floating):
+        raise TypeError(f"{name} must be floating point, got {array.dtype}")
     return np.asarray(array, dtype=np.float32)
 
 
@@ -86,18 +116,31 @@ def _validate_class_probability(class_probability: np.ndarray) -> np.ndarray:
     return np.asarray(array, dtype=np.float32)
 
 
+def _trusted_class_probability(class_probability: np.ndarray) -> np.ndarray:
+    array = np.asarray(class_probability)
+    expected = (4, LABEL_HEIGHT, LABEL_WIDTH)
+    if array.shape != expected:
+        raise ValueError(f"class_probability shape mismatch: expected={expected}, got={array.shape}")
+    if not np.issubdtype(array.dtype, np.floating):
+        raise TypeError(f"class_probability must be floating point, got {array.dtype}")
+    return np.asarray(array, dtype=np.float32)
+
+
 def boundary_band_mask(
     labels: np.ndarray,
     band_px: int = DEFAULT_BOUNDARY_BAND_PX,
     valid_source_mask: np.ndarray | None = None,
+    *,
+    inputs_validated: bool = False,
 ) -> np.ndarray:
     """Return a class-boundary band without letting synthetic padding create boundaries.
 
-    When a source-valid mask is supplied, a class transition counts as a real
-    segmentation boundary only if both adjacent pixels are backed by the AVI.
-    The dilated band is then intersected with that same source-valid domain.
+    ``inputs_validated`` is an internal production fast path. It may only be used
+    after the fixed-b16 runtime has already validated labels/maps and the source
+    mask has already passed the hard-metric domain check. Public/default calls
+    retain the original fail-closed validation behavior.
     """
-    labels = _validate_labels(labels)
+    labels = _trusted_labels(labels) if inputs_validated else _validate_labels(labels)
     band_px = int(band_px)
     if band_px < 0:
         raise ValueError("boundary band must be non-negative")
@@ -112,7 +155,11 @@ def boundary_band_mask(
         boundary[:-1, :] |= vertical
         valid = None
     else:
-        valid = _validate_valid_source_mask(valid_source_mask)
+        valid = (
+            _trusted_valid_source_mask(valid_source_mask)
+            if inputs_validated
+            else _validate_valid_source_mask(valid_source_mask)
+        )
         horizontal = (labels[:, 1:] != labels[:, :-1]) & valid[:, 1:] & valid[:, :-1]
         boundary[:, 1:] |= horizontal
         boundary[:, :-1] |= horizontal
@@ -161,26 +208,33 @@ def summarize_uncertainty(
     entropy: np.ndarray,
     boundary_band_px: int = DEFAULT_BOUNDARY_BAND_PX,
     low_max_probability_threshold: float | None = None,
+    inputs_validated: bool = False,
 ) -> dict[str, Any]:
     """Reduce one eye's temporary probability/uncertainty maps to scalar evidence.
 
-    The four soft class fractions and all whole/ocular/boundary uncertainty
-    summaries are computed only from source-backed AVI pixels. Replicate padding
-    may influence the neural network context, but its pixels never enter these
-    final numeric summaries.
+    The optional ``inputs_validated`` fast path is for the production engine only:
+    the fixed-b16 runtime has already performed finite/range/probability-mass and
+    label-domain checks over the batch, and hard metrics have already validated
+    the source mask. Default callers still execute all original validation.
     """
-    labels = _validate_labels(labels)
-    valid = _validate_valid_source_mask(valid_source_mask)
-    probabilities = _validate_class_probability(class_probability)
-    max_probability = _validate_map("max_probability", max_probability, lower=0.0, upper=1.0)
-    top1_top2_margin = _validate_map("top1_top2_margin", top1_top2_margin, lower=0.0, upper=1.0)
-    entropy = _validate_map("entropy", entropy, lower=0.0, upper=log(4.0))
+    if inputs_validated:
+        labels = _trusted_labels(labels)
+        valid = _trusted_valid_source_mask(valid_source_mask)
+        probabilities = _trusted_class_probability(class_probability)
+        max_probability = _trusted_map("max_probability", max_probability)
+        top1_top2_margin = _trusted_map("top1_top2_margin", top1_top2_margin)
+        entropy = _trusted_map("entropy", entropy)
+    else:
+        labels = _validate_labels(labels)
+        valid = _validate_valid_source_mask(valid_source_mask)
+        probabilities = _validate_class_probability(class_probability)
+        max_probability = _validate_map("max_probability", max_probability, lower=0.0, upper=1.0)
+        top1_top2_margin = _validate_map("top1_top2_margin", top1_top2_margin, lower=0.0, upper=1.0)
+        entropy = _validate_map("entropy", entropy, lower=0.0, upper=log(4.0))
 
     full_source_domain = bool(valid.all())
     valid_count = valid.size if full_source_domain else int(valid.sum())
     if full_source_domain:
-        # Avoid four boolean-index copies when every output pixel is backed by
-        # the original AVI. NumPy keeps the same float32 mean semantics here.
         soft = probabilities.mean(axis=(1, 2))
     else:
         soft = np.asarray(
@@ -196,6 +250,7 @@ def summarize_uncertainty(
         labels,
         boundary_band_px,
         valid_source_mask=None if full_source_domain else valid,
+        inputs_validated=inputs_validated,
     )
     domains: dict[str, np.ndarray | None] = {
         "whole": whole_domain,
