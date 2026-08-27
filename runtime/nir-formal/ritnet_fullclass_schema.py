@@ -1,9 +1,9 @@
 """Fixed lean schema for the final NIR RITnet full-class workflow.
 
 Four-class hard/soft segmentation, pupil geometry, source/ROI provenance and
-compact temporal/model-QC facts are retained. Expensive or scientifically weak
-iris ellipse/PIR/OAR fields and obsolete empty uncertainty distributions are not
-part of the production cohort schema.
+compact temporal/model-QC facts are retained. Scientifically weak iris geometry,
+PIR/OAR, obsolete uncertainty distributions and dead compatibility groups are
+not part of the production cohort schema.
 """
 from __future__ import annotations
 
@@ -87,13 +87,11 @@ ANALYSIS_DOMAIN_FIELDS = (
     "ocular_touches_valid_domain_edge",
 )
 
-# Connected-component QC is retained only for the pupil.
 COMPONENT_FIELDS = (
     "pupil_component_count",
     "pupil_largest_component_fraction",
 )
 
-# Formal NIR geometry is pupil-only. Iris remains available as a hard/soft class.
 GEOMETRY_FIELDS = tuple(
     f"pupil_{suffix}"
     for suffix in (
@@ -113,10 +111,6 @@ GEOMETRY_FIELDS = tuple(
     )
 )
 
-# Retained as named compatibility groups for callers; intentionally empty in v6.
-RELATION_FIELDS: tuple[str, ...] = ()
-OAR_FIELDS: tuple[str, ...] = ()
-
 ATOMIC_QC_FIELDS = (
     "qc_pupil_fragmented",
 )
@@ -132,13 +126,11 @@ UNCERTAINTY_BASE_FIELDS = (
     "uncertainty_ocular_pixel_count",
 )
 
-# Cohort production only needs these three scalar uncertainty summaries.
-UNCERTAINTY_DISTRIBUTION_FIELDS = (
+UNCERTAINTY_MEAN_FIELDS = (
     "ocular_max_probability_mean",
     "ocular_top1_top2_margin_mean",
     "ocular_entropy_mean",
 )
-UNCERTAINTY_THRESHOLD_FIELDS: tuple[str, ...] = ()
 
 TEMPORAL_FIELDS = (
     "temporal_qc_version",
@@ -167,12 +159,9 @@ EYE_METRIC_FIELDS = (
     *ANALYSIS_DOMAIN_FIELDS,
     *COMPONENT_FIELDS,
     *GEOMETRY_FIELDS,
-    *RELATION_FIELDS,
-    *OAR_FIELDS,
     *ATOMIC_QC_FIELDS,
     *UNCERTAINTY_BASE_FIELDS,
-    *UNCERTAINTY_DISTRIBUTION_FIELDS,
-    *UNCERTAINTY_THRESHOLD_FIELDS,
+    *UNCERTAINTY_MEAN_FIELDS,
     *TEMPORAL_FIELDS,
 )
 
