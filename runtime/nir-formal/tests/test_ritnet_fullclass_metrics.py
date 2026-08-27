@@ -19,6 +19,9 @@ from ritnet_fullclass_metrics import summarize_fullclass, summarize_fullclass_fr
 from ritnet_fullclass_qc import build_qc_anchor_frames, qc_image_paths, render_qc_images
 
 
+# These 320x160 helper tests are retained as regression coverage for historical
+# metric/QC utility functions. They do not define the current production
+# full-class geometry, which is covered by test_ritnet_native_metrics.py.
 def synthetic_labels() -> np.ndarray:
     labels = np.zeros((160, 320), dtype=np.uint8)
     cv2.ellipse(labels, (160, 80), (120, 48), 0, 0, 360, 1, -1)
@@ -41,7 +44,7 @@ def source_pupil_from_reference(reference: dict) -> dict[str, str]:
     }
 
 
-def test_fullclass_counts_geometry_and_normalization():
+def test_historical_helper_counts_geometry_and_normalization():
     labels = synthetic_labels()
     probs = np.full(labels.shape, 0.9, dtype=np.float32)
     result = summarize_fullclass(labels, probs, analysis_size=(320, 160))
@@ -64,32 +67,32 @@ def test_fullclass_counts_geometry_and_normalization():
     assert result["pupil_confidence"] > 0.89
 
 
-def test_fast_path_reuses_source_pupil_without_changing_normalized_geometry():
+def test_historical_helper_can_reuse_source_pupil_for_regression_only():
     labels = synthetic_labels()
     probs = np.full(labels.shape, 0.9, dtype=np.float32)
     reference = summarize_fullclass(labels, probs, analysis_size=(320, 160))
     source = source_pupil_from_reference(reference)
-    fast = summarize_fullclass_from_source(labels, source, analysis_size=(320, 160))
+    replay = summarize_fullclass_from_source(labels, source, analysis_size=(320, 160))
 
-    assert fast["pupil_fit_valid"] is True
-    assert fast["iris_outer_fit_valid"] is True
-    assert fast["normalization_valid"] is True
+    assert replay["pupil_fit_valid"] is True
+    assert replay["iris_outer_fit_valid"] is True
+    assert replay["normalization_valid"] is True
     assert np.isclose(
-        fast["pupil_to_iris_diameter_ratio"],
+        replay["pupil_to_iris_diameter_ratio"],
         reference["pupil_to_iris_diameter_ratio"],
         rtol=0,
         atol=1e-6,
     )
     assert np.isclose(
-        fast["pupil_to_iris_ellipse_area_ratio"],
+        replay["pupil_to_iris_ellipse_area_ratio"],
         reference["pupil_to_iris_ellipse_area_ratio"],
         rtol=0,
         atol=1e-6,
     )
-    assert np.isclose(fast["pupil_confidence"], 0.9, atol=1e-6)
+    assert np.isclose(replay["pupil_confidence"], 0.9, atol=1e-6)
 
 
-def test_fullclass_empty_pupil_is_not_normalizable():
+def test_historical_helper_empty_pupil_is_not_normalizable():
     labels = synthetic_labels()
     labels[labels == 3] = 2
     probs = np.zeros(labels.shape, dtype=np.float32)
@@ -101,7 +104,7 @@ def test_fullclass_empty_pupil_is_not_normalizable():
     assert result["pupil_to_iris_diameter_ratio"] is None
 
 
-def test_fast_path_missing_source_pupil_is_not_normalizable():
+def test_historical_helper_missing_source_pupil_is_not_normalizable():
     labels = synthetic_labels()
     source = {
         "ritnet_found": "False",
@@ -120,15 +123,17 @@ def test_fast_path_missing_source_pupil_is_not_normalizable():
     assert result["pupil_to_iris_diameter_ratio"] is None
 
 
-def test_subject_number_is_present_in_every_subject_artifact_filename(tmp_path):
+def test_subject_number_is_present_in_every_canonical_subject_artifact_filename(tmp_path):
     paths = subject_output_paths(tmp_path, "sub-31")
-    expected_files = {"csv", "summary", "manifest", "completion", "qc_index"}
+    expected_files = {"csv", "summary", "manifest", "completion", "qc_index", "labels_dir"}
     assert expected_files.issubset(paths)
-    for key in expected_files:
+    for key in {"csv", "summary", "manifest", "completion", "qc_index"}:
         assert paths[key].name.startswith("sub-031_")
-        assert "v1-2-fast-qc" in paths[key].name
+        assert "v2-native640" in paths[key].name
     assert paths["qc_dir"].name.startswith("sub-031_")
-    assert "v1-2-fast-qc" in paths["qc_dir"].name
+    assert "v2-native640" in paths["qc_dir"].name
+    assert paths["labels_dir"].name.startswith("sub-031_")
+    assert "v2-native640" in paths["labels_dir"].name
 
 
 def test_qc_anchor_sampling_keeps_phase_boundaries_and_sparse_stride():
