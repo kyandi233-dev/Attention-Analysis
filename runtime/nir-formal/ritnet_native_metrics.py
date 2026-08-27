@@ -33,13 +33,10 @@ def validate_native_labels(labels: np.ndarray) -> np.ndarray:
         raise TypeError(
             f"native RITnet labels must be uint8; got {array.dtype}"
         )
-    unique = np.unique(array)
-    invalid = unique[~np.isin(unique, CLASS_IDS)]
-    if invalid.size:
-        raise ValueError(
-            "native RITnet labels contain values outside {0,1,2,3}: "
-            + ",".join(map(str, invalid.tolist()))
-        )
+    # uint8 guarantees the lower bound. A single max reduction is sufficient to
+    # prove the frozen {0,1,2,3} class domain and is cheaper than unique+isin.
+    if array.size and int(array.max()) > CLASS_PUPIL:
+        raise ValueError("native RITnet labels contain values outside {0,1,2,3}")
     return np.ascontiguousarray(array)
 
 
@@ -48,7 +45,7 @@ def _binary(mask: np.ndarray) -> np.ndarray:
 
 
 def _whole_mask_touches_edge(mask: np.ndarray) -> bool:
-    if mask.size == 0 or not mask.any():
+    if mask.size == 0:
         return False
     return bool(
         mask[0, :].any()
@@ -60,7 +57,7 @@ def _whole_mask_touches_edge(mask: np.ndarray) -> bool:
 
 def _contours(mask: np.ndarray) -> list[np.ndarray]:
     contours, _ = cv2.findContours(
-        _binary(mask) * 255,
+        _binary(mask),
         cv2.RETR_EXTERNAL,
         cv2.CHAIN_APPROX_SIMPLE,
     )
@@ -145,8 +142,9 @@ def _ellipse_geometry(mask: np.ndarray) -> tuple[dict[str, Any], np.ndarray | No
 
 
 def _ocular_aperture_metrics(mask: np.ndarray) -> dict[str, Any]:
-    ys, xs = np.nonzero(mask)
-    if xs.size == 0:
+    row_present = np.any(mask, axis=1)
+    col_present = np.any(mask, axis=0)
+    if not col_present.any():
         return {
             "bbox_width": None,
             "bbox_height": None,
@@ -157,20 +155,23 @@ def _ocular_aperture_metrics(mask: np.ndarray) -> dict[str, Any]:
             "whole_mask_touches_edge": False,
         }
 
-    x_min, x_max = int(xs.min()), int(xs.max())
-    y_min, y_max = int(ys.min()), int(ys.max())
+    xs = np.flatnonzero(col_present)
+    ys = np.flatnonzero(row_present)
+    x_min, x_max = int(xs[0]), int(xs[-1])
+    y_min, y_max = int(ys[0]), int(ys[-1])
     width = x_max - x_min + 1
     height = y_max - y_min + 1
     left = x_min + int(round(0.10 * max(0, width - 1)))
     right = x_min + int(round(0.90 * max(0, width - 1)))
 
-    heights: list[int] = []
-    for x in range(left, right + 1):
-        column_y = np.flatnonzero(mask[:, x])
-        if column_y.size:
-            heights.append(int(column_y[-1] - column_y[0] + 1))
-
-    if heights:
+    # Compute every central column's top/bottom visible ocular pixel in one
+    # vectorized pass instead of up to hundreds of Python flatnonzero calls.
+    central = np.asarray(mask[:, left : right + 1], dtype=bool)
+    occupied = np.any(central, axis=0)
+    if occupied.any():
+        top = np.argmax(central, axis=0)
+        bottom = central.shape[0] - 1 - np.argmax(central[::-1, :], axis=0)
+        heights = (bottom - top + 1)[occupied]
         height_median = float(np.median(heights))
         height_p90 = float(np.percentile(heights, 90))
         ratio_median = float(height_median / width) if width else None
@@ -250,20 +251,21 @@ def summarize_fullclass_native(
     eyes.csv pupil geometry is accepted by this function.
     """
     labels = validate_native_labels(labels)
-    masks = {class_id: labels == class_id for class_id in CLASS_IDS}
-    counts = {class_id: int(mask.sum()) for class_id, mask in masks.items()}
+    counts_array = np.bincount(labels.reshape(-1), minlength=len(CLASS_IDS))
+    counts = {class_id: int(counts_array[class_id]) for class_id in CLASS_IDS}
     total = NATIVE_LABEL_WIDTH * NATIVE_LABEL_HEIGHT
-    if sum(counts.values()) != total:
+    if int(counts_array.sum()) != total:
         raise AssertionError("RITnet class counts do not sum to 256000 pixels")
 
-    iris_outer = masks[CLASS_IRIS] | masks[CLASS_PUPIL]
-    ocular = masks[CLASS_SCLERA] | iris_outer
-    iris_outer_pixels = int(iris_outer.sum())
-    ocular_pixels = int(ocular.sum())
+    pupil = labels == CLASS_PUPIL
+    iris_outer = labels >= CLASS_IRIS
+    ocular = labels != CLASS_BACKGROUND
+    iris_outer_pixels = int(counts[CLASS_IRIS] + counts[CLASS_PUPIL])
+    ocular_pixels = int(total - counts[CLASS_BACKGROUND])
 
-    pupil_geom, _ = _ellipse_geometry(masks[CLASS_PUPIL])
+    pupil_geom, _ = _ellipse_geometry(pupil)
     iris_geom, iris_contour = _ellipse_geometry(iris_outer)
-    pupil_components, pupil_largest_fraction = _component_metrics(masks[CLASS_PUPIL])
+    pupil_components, pupil_largest_fraction = _component_metrics(pupil)
     iris_components, iris_largest_fraction = _component_metrics(iris_outer)
     ocular_components, ocular_largest_fraction = _component_metrics(ocular)
     aperture = _ocular_aperture_metrics(ocular)
