@@ -18,13 +18,28 @@ from ritnet_fullclass_schema import (
 def test_final_schemas_are_unique_and_versioned():
     assert len(EYE_METRIC_FIELDS) == len(set(EYE_METRIC_FIELDS))
     assert len(FRAME_COVERAGE_FIELDS) == len(set(FRAME_COVERAGE_FIELDS))
-    assert EYE_METRICS_SCHEMA_VERSION == 5
+    assert EYE_METRICS_SCHEMA_VERSION == 6
     assert FRAME_COVERAGE_SCHEMA_VERSION == 2
     assert "source_detection_source" in SOURCE_YOLO_FIELDS
     assert "source_detection_source" in EYE_METRIC_FIELDS
     assert "source_pupil_confidence" not in EYE_METRIC_FIELDS
     assert "pupil_confidence" not in EYE_METRIC_FIELDS
     assert "soft_class_fraction_domain_version" in UNCERTAINTY_BASE_FIELDS
+
+
+def test_v6_keeps_four_classes_and_pupil_geometry_without_iris_fit_or_pir():
+    for name in ("background", "sclera", "iris", "pupil"):
+        assert f"hard_{name}_pixels" in EYE_METRIC_FIELDS
+        assert f"hard_{name}_fraction" in EYE_METRIC_FIELDS
+        assert f"soft_{name}_fraction" in EYE_METRIC_FIELDS
+    assert "pupil_geom_mean_diameter" in EYE_METRIC_FIELDS
+    assert "pupil_center_x" in EYE_METRIC_FIELDS
+    assert "iris_outer_fit_valid" not in EYE_METRIC_FIELDS
+    assert "pupil_to_iris_diameter_ratio" not in EYE_METRIC_FIELDS
+    assert "ocular_aperture_ratio_median" not in EYE_METRIC_FIELDS
+    assert "boundary_entropy_p95" not in EYE_METRIC_FIELDS
+    assert "whole_max_probability_p50" not in EYE_METRIC_FIELDS
+    assert "ocular_entropy_mean" in EYE_METRIC_FIELDS
 
 
 def test_analysis_domain_qc_facts_are_persisted_by_final_schema():
