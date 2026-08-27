@@ -1,4 +1,4 @@
-"""Produce bounded frame-level QC images and an integrity-ready QC index."""
+"""Produce bounded frame-level QC images and integrity-ready sparse pixel evidence."""
 from __future__ import annotations
 
 import csv
@@ -27,11 +27,14 @@ from ritnet_fullclass_roi import (
     PADDING_MODE_REPLICATE,
     crop_fixed_aspect_gray,
     fixed_aspect_roi_geometry,
+    valid_source_analysis_mask,
 )
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
 QC_INDEX_SCHEMA_VERSION = 1
+QC_PIXEL_EVIDENCE_VERSION = "qc-hardlabel-entropy-sourcevalid-v1"
+QC_PIXEL_EVIDENCE_NAME = "qc_pixel_evidence.npz"
 QC_VIDEO_SEEK_GAP_THRESHOLD = 64
 QC_FRAME_GROUP_MAX = 16
 QC_INDEX_FIELDS = (
@@ -59,11 +62,16 @@ class QCArtifacts:
     qc_dir: Path
     images_dir: Path
     index_path: Path
+    pixel_evidence_path: Path
     selected_count: int
     saved_image_count: int
     skipped_for_budget_count: int
+    pixel_evidence_requested_count: int
+    pixel_evidence_saved_count: int
+    pixel_evidence_skipped_for_budget_count: int
     image_bytes: int
     index_bytes: int
+    pixel_evidence_bytes: int
     total_qc_bytes: int
 
 
@@ -139,10 +147,10 @@ def _prepare_eye_rois(
     frame: np.ndarray,
     eye_rows: Mapping[str, Mapping[str, Any]],
     config: Mapping[str, Any],
-) -> list[tuple[str, np.ndarray]]:
+) -> list[tuple[str, np.ndarray, np.ndarray]]:
     height, width = frame.shape[:2]
     roi_cfg = _roi_config(config)
-    prepared: list[tuple[str, np.ndarray]] = []
+    prepared: list[tuple[str, np.ndarray, np.ndarray]] = []
     for eye in ("frame_left", "frame_right"):
         row = eye_rows.get(eye)
         if not row or str(row.get("ritnet_status") or "").strip().lower() != "success":
@@ -161,7 +169,13 @@ def _prepare_eye_rois(
             padding_mode=roi_cfg["padding_mode"],
         )
         _assert_geometry_matches_metric(geometry, row)
-        prepared.append((eye, crop_fixed_aspect_gray(frame, geometry)))
+        prepared.append(
+            (
+                eye,
+                crop_fixed_aspect_gray(frame, geometry),
+                valid_source_analysis_mask(geometry),
+            )
+        )
     return prepared
 
 
@@ -176,9 +190,9 @@ def _prepare_eye_overlays(
     prepared = _prepare_eye_rois(frame=frame, eye_rows=eye_rows, config=config)
     if not prepared:
         return {}
-    labels, _timing = runtime.infer_labels_batch([roi for _eye, roi in prepared])
+    labels, _timing = runtime.infer_labels_batch([roi for _eye, roi, _valid in prepared])
     overlays: dict[str, np.ndarray] = {}
-    for index, (eye, roi) in enumerate(prepared):
+    for index, (eye, roi, _valid) in enumerate(prepared):
         _labels_color, overlay = render_qc_images(roi, labels[index])
         overlays[eye] = overlay
     return overlays
@@ -249,6 +263,103 @@ def _read_qc_frame(
     return None, None
 
 
+def _select_pixel_evidence_eye_keys(
+    *,
+    selections: list[QCSelection],
+    eyes_by_key: Mapping[tuple[str, int, int], Mapping[str, Mapping[str, Any]]],
+    max_eyes: int,
+) -> dict[tuple[str, int, int, str], tuple[str, ...]]:
+    """Choose a deterministic, anomaly-first subset of successful QC eyes."""
+    max_eyes = int(max_eyes)
+    if not 0 <= max_eyes <= FIXED_BATCH_SIZE:
+        raise ValueError(
+            f"qc_pixel_evidence_max_eyes must be 0..{FIXED_BATCH_SIZE}; got {max_eyes}"
+        )
+    if max_eyes == 0:
+        return {}
+
+    candidates: list[tuple[int, int, str, int, str, tuple[str, ...]]] = []
+    seen: set[tuple[str, int, int, str]] = set()
+    for selection in selections:
+        rows = eyes_by_key.get(selection.key, {})
+        anomaly = any(reason != "fixed_anchor" for reason in selection.reasons)
+        preferred = set(selection.eyes) if anomaly and selection.eyes else None
+        for eye in ("frame_left", "frame_right"):
+            row = rows.get(eye)
+            if not row or str(row.get("ritnet_status") or "").strip().lower() != "success":
+                continue
+            if preferred is not None and eye not in preferred:
+                continue
+            key = (*selection.key, eye)
+            if key in seen:
+                continue
+            seen.add(key)
+            candidates.append(
+                (
+                    0 if anomaly else 1,
+                    selection.frame_idx,
+                    selection.phase,
+                    selection.phase_segment,
+                    eye,
+                    selection.reasons,
+                )
+            )
+
+    candidates.sort(key=lambda item: (item[0], item[1], item[2], item[3], item[4]))
+    selected: dict[tuple[str, int, int, str], tuple[str, ...]] = {}
+    for _priority, frame_idx, phase, segment, eye, reasons in candidates[:max_eyes]:
+        selected[(phase, segment, frame_idx, eye)] = tuple(reasons)
+    return selected
+
+
+def _encode_pixel_evidence(
+    *,
+    subject: str,
+    records: list[dict[str, Any]],
+    labels: np.ndarray,
+    entropy: np.ndarray,
+) -> bytes:
+    """Encode pickle-free sparse hard-label/entropy evidence as compressed NPZ."""
+    count = len(records)
+    labels = np.asarray(labels)
+    entropy = np.asarray(entropy)
+    expected = (count, 400, 640)
+    if labels.shape != expected or labels.dtype != np.uint8:
+        raise ValueError(f"pixel evidence labels must be {expected} uint8; got {labels.shape} {labels.dtype}")
+    if entropy.shape != expected or not np.issubdtype(entropy.dtype, np.floating):
+        raise ValueError(f"pixel evidence entropy must be floating {expected}; got {entropy.shape} {entropy.dtype}")
+    if count and int(labels.max()) > 3:
+        raise ValueError("pixel evidence labels contain values outside {0,1,2,3}")
+    if not np.isfinite(entropy).all():
+        raise ValueError("pixel evidence entropy contains non-finite values")
+
+    valid_masks = (
+        np.stack([np.asarray(record["valid_source_mask"], dtype=bool) for record in records], axis=0)
+        if count
+        else np.empty(expected, dtype=bool)
+    )
+    if valid_masks.shape != expected or valid_masks.dtype != np.bool_:
+        raise ValueError("pixel evidence valid-source masks have invalid shape/dtype")
+    if count and not np.all(valid_masks.reshape(count, -1).any(axis=1)):
+        raise ValueError("pixel evidence contains an eye with no source-backed pixels")
+
+    buffer = io.BytesIO()
+    np.savez_compressed(
+        buffer,
+        version=np.asarray(QC_PIXEL_EVIDENCE_VERSION),
+        subject=np.asarray(subject),
+        labels=np.ascontiguousarray(labels),
+        entropy=np.ascontiguousarray(entropy, dtype=np.float16),
+        valid_source_mask=np.ascontiguousarray(valid_masks),
+        phase=np.asarray([record["phase"] for record in records], dtype=np.str_),
+        phase_segment=np.asarray([record["phase_segment"] for record in records], dtype=np.int32),
+        frame_idx=np.asarray([record["frame_idx"] for record in records], dtype=np.int64),
+        eye=np.asarray([record["eye"] for record in records], dtype=np.str_),
+        reasons=np.asarray([";".join(record["reasons"]) for record in records], dtype=np.str_),
+    )
+    return buffer.getvalue()
+
+
 def _index_rows(
     *,
     subject: str,
@@ -293,20 +404,24 @@ def produce_qc_artifacts(
     frame_coverage_path: Path,
     device: str = "0",
 ) -> QCArtifacts:
-    """Create bounded composite QC images plus ``qc_index.csv``.
+    """Create bounded composite QC plus a tiny pixel-level retrospective sample.
 
-    This is a second sparse RITnet pass over selected QC eyes only. YOLO is never
-    rerun: boxes come exclusively from final ``eye_metrics`` provenance. QC eyes
-    are packed across frames into fixed-b16 calls, but request only the hard
-    ``labels`` ONNX output because probability/uncertainty maps are not needed to
-    render QC overlays. Every ROI geometry is reproduced and checked against
-    saved provenance before an overlay is accepted.
+    Composite images remain the primary human-readable QC. They use a sparse
+    second RITnet pass packed across frames and request only hard labels. At most
+    one additional fixed-b16 call is reserved for anomaly-first pixel evidence;
+    that file keeps hard labels, entropy and the real-video valid-pixel mask but
+    never writes four-class probability maps.
     """
     final_cfg = config.get("fullclass")
     if not isinstance(final_cfg, Mapping):
         raise ValueError("config.fullclass must be a mapping")
     image_limit = int(final_cfg.get("qc_image_max_count", 200))
     anomaly_limit = int(final_cfg.get("qc_anomaly_max_per_reason", 20))
+    pixel_limit = int(final_cfg.get("qc_pixel_evidence_max_eyes", 16))
+    if not 0 <= pixel_limit <= FIXED_BATCH_SIZE:
+        raise ValueError(
+            f"qc_pixel_evidence_max_eyes must be 0..{FIXED_BATCH_SIZE}; got {pixel_limit}"
+        )
     budget = int(final_cfg.get("qc_artifact_budget_bytes", 268435456))
     if budget <= 0:
         raise ValueError("qc_artifact_budget_bytes must be positive")
@@ -331,11 +446,22 @@ def produce_qc_artifacts(
             raise ValueError(f"duplicate eye metric QC key: {key + (eye,)}")
         eyes_by_key[key][eye] = row
 
+    pixel_eye_keys = _select_pixel_evidence_eye_keys(
+        selections=selections,
+        eyes_by_key=eyes_by_key,
+        max_eyes=pixel_limit,
+    )
+
     subject_dir = Path(subject_dir)
     qc_dir = subject_dir / "qc"
     images_dir = qc_dir / "images"
     index_path = qc_dir / "qc_index.csv"
-    if index_path.exists() or (images_dir.exists() and any(images_dir.iterdir())):
+    pixel_evidence_path = qc_dir / QC_PIXEL_EVIDENCE_NAME
+    if (
+        index_path.exists()
+        or pixel_evidence_path.exists()
+        or (images_dir.exists() and any(images_dir.iterdir()))
+    ):
         raise RuntimeError(
             "QC output already exists; completion orchestration must strict-skip a valid run "
             "or explicitly handle an incomplete run before producing new QC artifacts"
@@ -355,6 +481,8 @@ def produce_qc_artifacts(
     model = _resolve_package_path(config["models"]["ritnet_fullclass_final"]).resolve()
     runtime: RitnetFullClassFinalRuntime | None = None
     encoded_images: list[tuple[QCSelection, Path, bytes, dict[str, Any]]] = []
+    evidence_records: list[dict[str, Any]] = []
+    evidence_seen: set[tuple[str, int, int, str]] = set()
     image_bytes = 0
     skipped_budget = 0
     current_frame: int | None = None
@@ -390,13 +518,27 @@ def produce_qc_artifacts(
                 )
                 if frame is None:
                     continue
-                for eye, roi in _prepare_eye_rois(
+                for eye, roi, valid_mask in _prepare_eye_rois(
                     frame=frame,
                     eye_rows=metrics,
                     config=config,
                 ):
                     batch_targets.append((work_index, eye, roi))
                     batch_rois.append(roi)
+                    eye_key = (*selection.key, eye)
+                    if eye_key in pixel_eye_keys and eye_key not in evidence_seen:
+                        evidence_seen.add(eye_key)
+                        evidence_records.append(
+                            {
+                                "phase": selection.phase,
+                                "phase_segment": selection.phase_segment,
+                                "frame_idx": selection.frame_idx,
+                                "eye": eye,
+                                "reasons": pixel_eye_keys[eye_key],
+                                "roi": roi,
+                                "valid_source_mask": valid_mask,
+                            }
+                        )
 
             if batch_rois:
                 if len(batch_rois) > FIXED_BATCH_SIZE:
@@ -465,6 +607,36 @@ def produce_qc_artifacts(
     finally:
         cap.release()
 
+    if evidence_records:
+        if runtime is None:
+            raise AssertionError("pixel evidence was collected without a RITnet runtime")
+        if len(evidence_records) > FIXED_BATCH_SIZE:
+            raise AssertionError("pixel evidence exceeded one fixed-b16 inference")
+        evidence_outputs, _timing = runtime.infer_batch(
+            [record["roi"] for record in evidence_records]
+        )
+        evidence_labels = np.asarray(evidence_outputs["labels"])
+        evidence_entropy = np.asarray(evidence_outputs["entropy"])
+    else:
+        evidence_labels = np.empty((0, 400, 640), dtype=np.uint8)
+        evidence_entropy = np.empty((0, 400, 640), dtype=np.float32)
+
+    evidence_saved_count = len(evidence_records)
+
+    def evidence_payload_for(count: int) -> bytes:
+        return _encode_pixel_evidence(
+            subject=subject,
+            records=evidence_records[:count],
+            labels=evidence_labels[:count],
+            entropy=evidence_entropy[:count],
+        )
+
+    pixel_payload = evidence_payload_for(evidence_saved_count)
+    pixel_skipped_budget = 0
+
+    # The image index and sparse pixel file share the same QC byte budget. Drop
+    # nonmandatory anomaly images first; if still necessary, trim pixel evidence
+    # but retain at least one successful eye when any evidence was reproducible.
     while True:
         index_rows = _index_rows(
             subject=subject,
@@ -472,7 +644,7 @@ def produce_qc_artifacts(
             encoded_images=encoded_images,
         )
         index_payload = _encode_index(index_rows)
-        total = image_bytes + len(index_payload)
+        total = image_bytes + len(index_payload) + len(pixel_payload)
         if total <= budget:
             break
         removable = next(
@@ -483,27 +655,40 @@ def produce_qc_artifacts(
             ),
             None,
         )
-        if removable is None:
-            raise RuntimeError(
-                "mandatory fixed QC images plus qc_index exceed qc_artifact_budget_bytes; "
-                f"budget={budget}, attempted={total}"
-            )
-        _selection, _path, payload, _facts = encoded_images.pop(removable)
-        image_bytes -= len(payload)
-        skipped_budget += 1
+        if removable is not None:
+            _selection, _path, payload, _facts = encoded_images.pop(removable)
+            image_bytes -= len(payload)
+            skipped_budget += 1
+            continue
+        minimum_evidence = 1 if evidence_records else 0
+        if evidence_saved_count > minimum_evidence:
+            evidence_saved_count -= 1
+            pixel_skipped_budget += 1
+            pixel_payload = evidence_payload_for(evidence_saved_count)
+            continue
+        raise RuntimeError(
+            "mandatory fixed QC plus minimum sparse pixel evidence exceed "
+            f"qc_artifact_budget_bytes; budget={budget}, attempted={total}"
+        )
 
     for _selection, path, payload, _facts in encoded_images:
         _atomic_write_bytes(path, payload)
     _atomic_write_bytes(index_path, index_payload)
+    _atomic_write_bytes(pixel_evidence_path, pixel_payload)
 
     return QCArtifacts(
         qc_dir=qc_dir,
         images_dir=images_dir,
         index_path=index_path,
+        pixel_evidence_path=pixel_evidence_path,
         selected_count=len(selections),
         saved_image_count=len(index_rows),
         skipped_for_budget_count=skipped_budget,
+        pixel_evidence_requested_count=len(pixel_eye_keys),
+        pixel_evidence_saved_count=evidence_saved_count,
+        pixel_evidence_skipped_for_budget_count=pixel_skipped_budget,
         image_bytes=image_bytes,
         index_bytes=len(index_payload),
-        total_qc_bytes=image_bytes + len(index_payload),
+        pixel_evidence_bytes=len(pixel_payload),
+        total_qc_bytes=image_bytes + len(index_payload) + len(pixel_payload),
     )
