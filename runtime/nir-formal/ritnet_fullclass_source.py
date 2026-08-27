@@ -197,6 +197,17 @@ def resolve_source_video(
     }
 
 
+def _completion_yolo_batch(completion: dict[str, Any]) -> int | None:
+    """Return an explicitly recorded historical YOLO batch, or None for legacy markers."""
+    value = completion.get("yolo_batch_size")
+    if value is None or str(value).strip() == "":
+        return None
+    parsed = int(value)
+    if parsed <= 0:
+        return None
+    return parsed
+
+
 @lru_cache(maxsize=16)
 def _load_source_context_cached(run_dir: Path, config_path: Path) -> SourceFormalContext:
     """Load one immutable formal source identity once per Python process.
@@ -217,8 +228,8 @@ def _load_source_context_cached(run_dir: Path, config_path: Path) -> SourceForma
     subject = normalize_subject(completion.get("subject") or run_dir.name.split("_formal_", 1)[0])
 
     configured_yolo_batch = int(config.get("yolo", {}).get("batch_size", 8))
-    source_yolo_batch = int(completion.get("yolo_batch_size", -1))
-    if source_yolo_batch != configured_yolo_batch:
+    source_yolo_batch = _completion_yolo_batch(completion)
+    if source_yolo_batch is not None and source_yolo_batch != configured_yolo_batch:
         raise RuntimeError(
             f"source formal YOLO batch {source_yolo_batch} != configured production batch {configured_yolo_batch}"
         )
@@ -245,6 +256,7 @@ def _load_source_context_cached(run_dir: Path, config_path: Path) -> SourceForma
         "source_video_sha256": video_resolution["content_sha256"],
         "source_yolo_model_sha256": completion.get("yolo_model_sha256"),
         "source_yolo_batch_size": source_yolo_batch,
+        "source_yolo_batch_size_recorded": source_yolo_batch is not None,
         "source_focuswave_release": completion.get("focuswave_release"),
         "source_expected_frames": completion.get("expected_frames"),
         "source_phases": completion.get("phases"),
