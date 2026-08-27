@@ -209,11 +209,11 @@ def _masked_mean(values: np.ndarray, mask: np.ndarray) -> float | None:
 def _compact_derived_ocular_means(
     probabilities: np.ndarray,
     ocular_domain: np.ndarray,
-) -> tuple[float | None, float | None, float | None, np.ndarray | None]:
+) -> tuple[float | None, float | None, float | None]:
     """Compute only the three required ocular means, never full 400x640 maps."""
     count = int(ocular_domain.sum())
     if count <= 0:
-        return None, None, None, None
+        return None, None, None
     selected = np.ascontiguousarray(probabilities[:, ocular_domain], dtype=np.float32)
     top = np.partition(selected, kth=2, axis=0)
     top1 = top[3]
@@ -224,7 +224,6 @@ def _compact_derived_ocular_means(
         float(np.mean(top1.astype(np.float64, copy=False))),
         float(np.mean(margin.astype(np.float64, copy=False))),
         float(np.mean(entropy.astype(np.float64, copy=False))),
-        top1,
     )
 
 
@@ -244,11 +243,10 @@ def summarize_uncertainty(
 
     Default/public calls retain the complete whole/ocular/boundary percentile
     contract for validation and sparse QC. ``inputs_validated=True`` is the
-    production cohort fast path: it preserves all four soft-class fractions and
-    the three ocular means consumed by temporal QC, but deliberately skips every
-    percentile and the boundary-band construction. Compact two-output runtime
-    descriptors are reduced directly from ocular class probabilities without
-    creating full max/margin/entropy maps on CPU.
+    production cohort fast path: it returns only fields present in the final
+    cohort schema—four soft-class fractions, the ocular pixel count and three
+    ocular uncertainty means. No boundary/percentile/threshold placeholders are
+    created in checkpoint payloads.
     """
     compact_derived = False
     if inputs_validated:
@@ -291,45 +289,27 @@ def summarize_uncertainty(
     if inputs_validated:
         ocular_count = int(ocular_domain.sum())
         if compact_derived:
-            max_mean, margin_mean, entropy_mean, ocular_top1 = _compact_derived_ocular_means(
+            max_mean, margin_mean, entropy_mean = _compact_derived_ocular_means(
                 probabilities, ocular_domain
             )
         else:
             max_mean = _masked_mean(max_probability, ocular_domain)
             margin_mean = _masked_mean(top1_top2_margin, ocular_domain)
             entropy_mean = _masked_mean(entropy, ocular_domain)
-            ocular_top1 = max_probability[ocular_domain] if ocular_count else None
 
-        result: dict[str, Any] = {
+        return {
             "uncertainty_algorithm_version": COHORT_UNCERTAINTY_ALGORITHM_VERSION,
             "uncertainty_domain_version": COHORT_UNCERTAINTY_DOMAIN_VERSION,
             "soft_class_fraction_domain_version": SOFT_CLASS_FRACTION_DOMAIN_VERSION,
-            "uncertainty_boundary_band_px": None,
             "soft_background_fraction": float(soft[0]),
             "soft_sclera_fraction": float(soft[1]),
             "soft_iris_fraction": float(soft[2]),
             "soft_pupil_fraction": float(soft[3]),
             "uncertainty_ocular_pixel_count": ocular_count,
-            "uncertainty_boundary_pixel_count": None,
             "ocular_max_probability_mean": max_mean,
             "ocular_top1_top2_margin_mean": margin_mean,
             "ocular_entropy_mean": entropy_mean,
-            "low_max_probability_threshold": None,
-            "whole_low_max_probability_fraction": None,
-            "ocular_low_max_probability_fraction": None,
-            "boundary_low_max_probability_fraction": None,
         }
-        if low_max_probability_threshold is not None:
-            threshold = float(low_max_probability_threshold)
-            if not np.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
-                raise ValueError("low max-probability threshold must be in [0,1]")
-            result["low_max_probability_threshold"] = threshold
-            result["ocular_low_max_probability_fraction"] = (
-                float(np.mean(ocular_top1 < threshold))
-                if ocular_top1 is not None and ocular_top1.size
-                else None
-            )
-        return result
 
     whole_domain = None if full_source_domain else valid
     boundary_domain = boundary_band_mask(
