@@ -46,6 +46,11 @@ with its validator reason and must not trigger deletion or a queue launch.
   `a00dd08` provenance was requested from the later `4d55514` checkout. The
   result-affecting source set is identical after canonical source newline
   hashing; the marker remains `complete`.
+- After committing the repair, the canonical one-subject launcher was run with
+  `--output <formal-output-root> --subjects sub-056 --device 0` and emitted
+  `skipped_valid_completion`. It selected exactly one validated historical
+  source, did not enter the numeric core or YOLO, and only refreshed the normal
+  batch selection summary at the output root.
 
 ## Remaining execution condition
 
