@@ -172,7 +172,7 @@ def test_complete_batch_maps_success_outputs_and_keeps_failed_row_in_order():
     assert completed[1][1]["ritnet_status"] == "failed"
     assert completed[2][1]["ritnet_status"] == "success"
     assert completed[0][1]["hard_pupil_pixels"] > 0
-    assert completed[0][1]["ocular_max_probability_mean"] == 0.9
+    assert completed[0][1]["ocular_max_probability_mean"] == pytest.approx(0.9)
     assert completed[0][1]["soft_pupil_fraction"] == np.float32(0.05)
 
 
