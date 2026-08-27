@@ -4,7 +4,7 @@ import csv
 
 import pytest
 
-from ritnet_fullclass_source import load_source_eye_rows
+from ritnet_fullclass_source import _completion_yolo_batch, load_source_eye_rows
 
 
 FIELDS = [
@@ -55,3 +55,15 @@ def test_source_eye_loader_requires_final_source_columns(tmp_path):
         writer.writerow({"frame_idx": 1, "eye": "frame_left"})
     with pytest.raises(ValueError, match="missing final-source columns"):
         load_source_eye_rows(path, "sub-031")
+
+
+def test_legacy_completion_without_yolo_batch_is_explicitly_unrecorded():
+    assert _completion_yolo_batch({}) is None
+    assert _completion_yolo_batch({"yolo_batch_size": None}) is None
+    assert _completion_yolo_batch({"yolo_batch_size": ""}) is None
+    assert _completion_yolo_batch({"yolo_batch_size": -1}) is None
+
+
+def test_recorded_completion_yolo_batch_is_preserved():
+    assert _completion_yolo_batch({"yolo_batch_size": 8}) == 8
+    assert _completion_yolo_batch({"yolo_batch_size": "16"}) == 16
