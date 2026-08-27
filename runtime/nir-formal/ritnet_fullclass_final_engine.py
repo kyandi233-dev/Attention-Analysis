@@ -78,6 +78,8 @@ class CoreArtifacts:
     workstore: Path
     eye_row_count: int
     frame_row_count: int
+    eye_metric_rows: tuple[dict[str, Any], ...]
+    frame_coverage_rows: tuple[dict[str, Any], ...]
     fixed_anchor_keys: frozenset[tuple[str, int, int]]
     source_context: SourceFormalContext
     work_identity: dict[str, Any]
@@ -707,6 +709,8 @@ def run_numeric_core(
         workstore=workstore_path,
         eye_row_count=len(numeric_rows),
         frame_row_count=len(coverage_rows),
+        eye_metric_rows=tuple(numeric_rows),
+        frame_coverage_rows=tuple(coverage_rows),
         fixed_anchor_keys=fixed_anchor_keys,
         source_context=context,
         work_identity=identity,
