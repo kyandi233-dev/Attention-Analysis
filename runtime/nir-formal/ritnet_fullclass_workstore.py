@@ -40,9 +40,14 @@ class FullClassWorkStore:
         self.identity = dict(identity)
         self.identity_digest = identity_digest(self.identity)
         self.connection = sqlite3.connect(str(self.path))
-        self.connection.execute("PRAGMA synchronous=FULL")
-        self.connection.execute("PRAGMA journal_mode=DELETE")
+        # This database is only an interruption-recovery checkpoint. Final CSV,
+        # manifest and completion artifacts are independently hashed/validated.
+        # WAL + NORMAL avoids forcing a full durable fsync after every 16-eye GPU
+        # batch while preserving atomic SQLite transactions and crash recovery.
+        self.connection.execute("PRAGMA journal_mode=WAL")
+        self.connection.execute("PRAGMA synchronous=NORMAL")
         self.connection.execute("PRAGMA foreign_keys=ON")
+        self.connection.execute("PRAGMA temp_store=MEMORY")
         self._initialize()
 
     def _initialize(self) -> None:
