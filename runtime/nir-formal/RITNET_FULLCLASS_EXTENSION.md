@@ -1,39 +1,64 @@
-# RITnet Full-Class Extension：v1.2 历史路径与 v2-native640 原生证据链
+# RITnet Full-Class：唯一正式完整证据版
 
-## 当前原则
+## 1. 当前唯一正式口径
 
-`ritnet-fullclass-v1.2-fast-qc` 已经产生过历史结果，因此保持原文件名、旧 320×160 指标逻辑和旧 runner，不覆盖、不删除。新的正式补全路径独立命名为：
+当前 RITnet full-class 只保留一条正式生产路径：
 
 ```text
 ritnet-fullclass-v2-native640
 schema_version = 2
 ```
 
-v2 的目标不是单纯把 `analysis_size` 改成 `(640,400)`，而是把 RITnet 四分类 hard label（硬分类标签）变成可恢复的原始证据层，再从同一张 640×400 label 派生 pupil/iris 几何、PIR、OAR 与原子 QC 事实。数据层级固定为：
+这里的 `v2-native640` 是当前正式数据 Schema 的版本标识，不代表还有一套并行生产版。历史上已经生成的旧 full-class 文件可以留作 provenance（来源追踪）和历史比较，但**不再作为可执行的当前分析路径，也不再写成“v1.2/v2 双轨”**。
+
+当前正式流程固定为：
 
 ```text
-原始证据：v2 native label store
-派生数值：v2 CSV
-人工查看：稀疏 QC PNG + qc_index.csv
+既有 formal eyes.csv 中保存的 frame_idx + YOLO ROI
+→ 从原视频按 ROI 重新裁眼睛，不重跑 YOLO
+→ 官方 RITnet 网络语义 + 冻结权重
+→ 项目 DirectML/ONNX 适配
+→ 保存每个眼 ROI 的 uint8 400×640 四分类 hard label
+→ 同一张 hard label 派生 pupil / iris / ocular 几何与原子 QC 事实
+→ 概率摘要随 label chunk 同步 checkpoint
+→ 稀疏 QC
+→ manifest + completion + SHA256 完整性证明
 ```
 
-因此不能再把 CSV 称为“完整、可逆的分割数据”。真正可逆的是 label store。
+因此，正式数据层固定为：
 
-## 上游官方内容与 Attention-Analysis 自己增加的内容
+```text
+原始可重算证据：400×640 hard-label store
+派生数值：full-class CSV
+人工检查：QC PNG + qc_index.csv
+完整性证明：store manifest + run manifest + completion + SHA256
+```
 
-“native”只表示 **640×400 RITnet hard-label 坐标系**，不表示“RITnet 官方自带变量”。来源必须分成三层：
+CSV 不是不可逆的“原始分割数据”；真正能让后续修改几何算法而不重跑 RITnet 的是完整 hard-label store。
 
-| 层级 | 当前内容 | 性质 |
+---
+
+## 2. 哪些是 RITnet 官方内容，哪些是本项目后来增加的
+
+`native_*` 的 `native` 只表示**在 640×400 RITnet hard-label 坐标系中保存或测量**，绝不表示“RITnet 官方自带字段”。来源必须严格区分：
+
+| 来源层 | 内容 | 性质 |
 |---|---|---|
-| RITnet 上游官方 | `DenseNet2D` 网络定义；`best_model.pkl` 冻结权重；四分类语义 background/sclera/iris/pupil；gamma=0.8、CLAHE(1.5, 8×8)、Normalize([0.5],[0.5])；网络 logits | 上游方法/权重 |
-| 本项目确定性运行适配 | 复用保存的 YOLO ROI；ROI 拉伸到 640×400；fixed-b16 FP32 ONNX；DirectML；logits 后 `ArgMax` 生成 `labels_u8`；`Softmax` 后取 class-3 生成 `pupil_probability` | 不改权重，但属于项目自己的 runtime/ONNX 输出接口 |
-| 本项目派生记录 | pixel count/fraction、轮廓、ellipse、PIR、center offset、component、edge、OAR、概率摘要、`gate_*`/`diagnostic_*`、label store、QC、manifest/completion/hash | 全部是项目后处理/审计记录，不是上游 RITnet 原生字段 |
+| RITnet 上游官方 | `DenseNet2D` 网络定义、`best_model.pkl` 冻结权重、四分类语义 background/sclera/iris/pupil、网络 logits、gamma=0.8、CLAHE(1.5, 8×8)、Normalize([0.5],[0.5])；官方测试时也会对 logits 做 argmax | 官方方法/权重/任务语义 |
+| Attention-Analysis 确定性运行适配 | 复用 YOLO ROI、ROI resize 到 640×400、fixed-b16 FP32 ONNX、DirectML、在 logits 后加 `ArgMax` 输出 `labels_u8`、`Softmax/Gather` 提取 class-3 `pupil_probability` | 项目自己的运行接口，不是官方 ONNX 原生接口 |
+| Attention-Analysis 派生记录 | pixel count/fraction、连通分量、最大主体比例、edge、ellipse、PIR、中心偏移、OAR、概率摘要、`gate_*`、`diagnostic_*`、label store、QC、manifest/completion/hash | 全部是本项目后处理与审计记录 |
 
-上游 RITnet 的测试代码本身也会对网络输出做 `argmax` 得到 hard prediction 并保存 `.npy`，因此四分类 hard segmentation 与官方任务语义一致；但当前 AMD ONNX 的 `labels_u8`/`pupil_probability` 两个命名输出仍是本项目为了 DirectML 增加的确定性接口，不能写成“官方 ONNX 原生输出”。
+必须使用的准确表述是：
 
-## v2 原生几何
+> 四分类分割的网络结构、权重、类别语义和官方预处理来自 RITnet；`labels_u8` 与 `pupil_probability` 是 Attention-Analysis 为 DirectML 推理增加的确定性 ONNX 接口；所有几何、PIR、OAR、QC 和完整性记录均为项目派生。
 
-v2 不调用 `summarize_fullclass_from_source(...)`，也不把 label 缩到 320×160。每一行严格要求：
+上游权重记录中的 `f0864e...` 是 Git blob SHA-1，因此字段名固定为 `official_weights_git_blob_sha1`。实际运行 `.onnx` 与 `.onnx.data` 分别记录文件内容 SHA256。
+
+---
+
+## 3. 400×640 hard label 是正式证据源
+
+每一个 eye row 都必须保存：
 
 ```text
 labels.shape == (400, 640)
@@ -41,18 +66,25 @@ labels.dtype == uint8
 unique(labels) ⊆ {0,1,2,3}
 ```
 
-同一张 label 同时建立：
+类别固定为：
 
 ```text
-background = labels == 0
-sclera     = labels == 1
-iris       = labels == 2
+0 background
+1 sclera
+2 iris
+3 pupil
+```
+
+同一张 label 构造：
+
+```text
 pupil      = labels == 3
+iris       = labels == 2
 iris_outer = iris | pupil
 ocular     = sclera | iris | pupil
 ```
 
-然后 pupil 与 `iris_outer` 分别取最大外轮廓并用 `cv2.fitEllipse` 拟合。新的 native PIR 为：
+pupil 与 `iris_outer` 分别从各自最大外轮廓执行 `cv2.fitEllipse`。正式 PIR（pupil-to-iris ratio，瞳孔-虹膜直径比）为：
 
 ```text
 sqrt(pupil_axis_a * pupil_axis_b)
@@ -60,24 +92,30 @@ sqrt(pupil_axis_a * pupil_axis_b)
 sqrt(iris_axis_a * iris_axis_b)
 ```
 
-四条轴均来自同一张 640×400 label。旧 `eyes.csv` 中的 pupil 几何仍原样保留在 source 字段中，只作为历史 reference，不参与 native PIR。
+四条轴必须来自**同一张 400×640 label**。既有 `eyes.csv` 中过去的 pupil 几何仍可作为 source provenance 保存，但不得参与当前 PIR 计算。
 
-### 640×400 不是“无畸变源坐标”
+---
 
-源 YOLO ROI 会通过 `cv2.INTER_LINEAR` 调整到固定 640×400。如果源 ROI 的宽高比不同，`scale_x != scale_y`，几何会发生非等比例拉伸。因此 v2 每行保存：
+## 4. 640×400 是模型坐标，不是无畸变源坐标
+
+YOLO ROI 会通过 `cv2.INTER_LINEAR` resize 到固定 640×400。源 ROI 宽高比不一致时会产生非等比例缩放，因此每一行必须同时记录：
 
 ```text
+source_frame_width / source_frame_height
 source_roi_width / source_roi_height
+ritnet_input_width / ritnet_input_height
 roi_to_ritnet_scale_x / roi_to_ritnet_scale_y
 roi_to_ritnet_aspect_scale_ratio
 geometry_coordinate_system = ritnet_native_label
 ```
 
-native PIR 明确是 **模型坐标系测量**，不能在没有验证的情况下宣称对源像素几何完全不变。由于完整 hard label 和变换比例都已保存，后续若要把轮廓映回 source ROI 坐标，可以直接下游重算，不需要再次跑 RITnet。
+所以 `native_pupil_to_iris_diameter_ratio` 是**模型坐标系几何量**，不能未经验证就声称与 source-pixel（源像素）几何完全等价。因为完整 label 和缩放关系已经落盘，后续可以把 mask/轮廓映回 source ROI 再重算，不需要再次执行 RITnet。
 
-## 全量 label store 与恢复
+---
 
-每个被试独立产生：
+## 5. 全量 label store、概率 checkpoint 与严格恢复
+
+每个被试产生独立 store：
 
 ```text
 sub-031_ritnet_fullclass_v2-native640_labels/
@@ -89,7 +127,7 @@ sub-031_ritnet_fullclass_v2-native640_labels/
 └── store_manifest.json
 ```
 
-初始 `chunk_rows=128`，但目前标记为 **provisional**，必须在 `sub-031` 上完成压缩率、磁盘吞吐和总速度实测后才能冻结。每个 chunk 无损保存：
+每个 chunk 无损保存：
 
 ```text
 labels                         uint8 [N,400,640]
@@ -100,51 +138,62 @@ pupil_probability_available    uint8 [N]
 pupil_probability_stats        float32 [N,6]
 ```
 
-概率摘要也随 chunk 保存，是因为如果程序在最终 CSV 生成前中断，仅凭 hard label 无法重新得到已经传回 CPU 的 pupil probability 摘要。这样恢复时已提交 chunk 不需要再次执行 RITnet。
+概率摘要必须随 chunk checkpoint（检查点保存），因为 hard label 无法反推出 class-3 Softmax 概率；如果只把概率摘要放在最终 CSV，中断后仍会迫使已经完成的 ROI 重跑 RITnet。
 
-chunk 流程为：
+chunk 提交流程固定为：
 
 ```text
-校验 shape/dtype/value domain
-→ 在目标 chunks 目录写临时文件
+shape/dtype/value-domain 校验
+→ 临时 NPZ
 → flush + fsync
-→ 重新打开临时 NPZ 做结构校验
+→ 重新打开做结构校验
 → SHA256
-→ os.replace 原子 rename
-→ 原子更新 index / chunk manifest / store manifest
+→ os.replace 原子提交
+→ 原子更新 label_index / chunk_manifest / store_manifest
 ```
 
-如果断电恰好发生在 chunk rename 之后、metadata 更新之前，恢复器会根据已提交 chunk 内的 ordinal/frame/eye_code 重建索引并接续；不会删除这个 chunk。若发现真实缺块、哈希错误、shape/dtype/value-domain 错误，则拒绝拼接。
+**已提交 NPZ chunk 是恢复事实源。** 如果断电发生在 chunk rename 成功之后、CSV metadata 提交之前，恢复器根据 chunk 内的 `row_ordinal/frame_idx/eye_code` 重建索引，不删除、不重新推理该 chunk。真实缺块、SHA256 错误、shape/dtype/value-domain 错误则拒绝继续。
 
-## CSV 事务与字段
+已经 finalized（完成）的 store 在内容没有变化时重新打开必须是 byte-stable（字节稳定）：不得把 `complete` 改回 `running`，不得改变 `store_manifest.json` 的 SHA256。
 
-CSV 每次运行先写新的：
+当前默认 `chunk_rows=128` 只影响存储打包，不改变科学数值；正式全量前仍要用 AMD 的 `sub-031` 实测压缩率和吞吐。如需调整，只能在正式 cohort 开始前冻结。
+
+---
+
+## 6. CSV 事务、字段和可重算性
+
+每次运行先创建新的：
 
 ```text
 .<final-name>.<uuid>.partial
 ```
 
-恢复时把已提交 label chunks 重新派生为一份新的 partial CSV，再继续处理未提交 ordinal；最后只有在 label store、行数、主键和 CSV↔index 完全一致后才 `os.replace` 为正式 v2 CSV。异常留下的 partial 只是诊断物，不作为正式结果。
+恢复时，已经提交的 label chunks 会重新派生一份 partial CSV，然后继续未完成 ordinal。只有同时满足 label store、行数、主键和 CSV↔index 一致性后才 `os.replace` 成正式 CSV。
 
-v2 CSV 包含以下类别：
+正式 CSV 至少包含：
 
-- label 定位：`native_label_*`；
-- 源视频/ROI 与坐标映射：`source_frame_*`、`source_roi_*`、`roi_to_ritnet_*`、`geometry_*`；
-- 四分类像素数/比例与 `iris_outer`、`ocular`；
-- pupil / iris_outer / ocular 连通分量；
-- whole-mask edge 与 largest-contour edge 分开记录；
-- pupil 与 iris_outer 的 native ellipse 几何；
-- diameter/ellipse-area/contour-area PIR、中心偏移与空间关系；
+- `native_label_*`：label 定位与 Schema；
+- source frame/ROI 与 ROI→RITnet 坐标映射；
+- background/sclera/iris/pupil/iris_outer/ocular pixel count 与 fraction；
+- pupil、iris_outer、ocular 连通分量及最大主体比例；
+- whole-mask edge 与 largest-contour edge 分离记录；
+- pupil 与 iris_outer 的 ellipse 几何；
+- diameter/ellipse-area/contour-area PIR；
+- pupil–iris 中心偏移与空间关系；
 - OAR（ocular aperture ratio，眼球可见开口比例）median/p90；
 - class-3 pupil probability 在 argmax pupil mask 内的 mean/median/p05/p95/min/max；
 - `gate_*` 与 `diagnostic_*` 原子事实；
-- provenance/version/runtime 字段。
+- model/runtime/preprocessing/geometry/version provenance。
 
-没有 pupil argmax 像素时，probability map 仍可标记 `available=True`，但“在 pupil mask 内的均值”等条件统计量为 null；不能再用 `0.0` 混淆“没有 pupil mask”和“模型置信度为 0”。
+如果 hard label 中没有 pupil 像素，probability map 仍可记录 `available=True`，但“pupil mask 内统计量”必须为 null/NaN，不能写 0.0 混淆“没有条件像素”和“概率等于零”。
 
-## gate、OAR 与置信度解释
+---
 
-v2 不生成未经批准的 `native_primary_valid`，也不设置新的 confidence cutoff。只保存可重建的原子事实，例如：
+## 7. OAR、QC 与 gate 的正式解释
+
+OAR 基于 `sclera | iris | pupil` 的可见眼球 mask，只是项目派生的几何开口量。它**不是** EAR（Eye Aspect Ratio，基于眼睑关键点的眼睛纵横比），也不是已经验证的 blink/closed/PERCLOS 标签。目前不设置未经验证的 blink cutoff。
+
+正式 full-class 也不定义新的总 `primary_valid`。只保存可以事后重建筛选规则的原子事实，例如：
 
 ```text
 gate_pupil_fit_valid
@@ -162,59 +211,67 @@ diagnostic_iris_fragmented
 diagnostic_ocular_fragmented
 ```
 
-`legacy_v1_strict_valid` 只用于敏感性/reference：它把旧逻辑应用到 native640 几何上，**不是**旧 v1.2 320×160 输出的逐行 bit-identical（逐位完全相同）复现。
+当前正式 ONNX 提供 hard label 与 class-3 pupil probability。四分类平均 confidence、entropy 等没有正式可验证接口时不伪造；如以后新增 all-class probability 输出，必须先单独完成 ONNX/DirectML parity（等价性）与性能验证，再升级 Schema。
 
-OAR 是基于 `sclera | iris | pupil` 可见眼球 mask 的几何开口指标，不是 EAR（Eye Aspect Ratio，眼睛纵横比 landmark 指标），也不是已经验证的 blink/closed/PERCLOS 标签。完整 label 已保存，因此以后如需改用最大主体而不是 whole mask 计算 OAR，可以直接派生，不必重跑模型。
+---
 
-当前 production ONNX 只提供 hard label 与 class-3 pupil probability。四分类平均置信度、top-1 mean、entropy mean 不会伪造。`export_ritnet_batch_variants.py --evidence-summary` 可以生成独立 `*-evidence.onnx` 候选接口，但在 DirectML parity 和性能验证通过前，正式 v2 CSV 固定记录：
+## 8. manifest、completion 与强 provenance
+
+正式入口强制：
 
 ```text
-native_allclass_confidence_available = false
-native_allclass_confidence_unavailable_reason = ...
+Git working tree 必须干净
+source video 必须计算内容 SHA256
+禁止 --allow-model-mismatch
 ```
 
-## manifest / completion
+manifest 记录 Git commit/branch、config snapshot+SHA256、source eyes SHA256、video identity、ONNX SHA256、`.onnx.data` SHA256、上游仓库/commit/权重 Git blob SHA-1、预处理来源、label store、几何定义和置信度定义。
 
-manifest 记录 Git commit/branch、config snapshot+SHA256、source eyes SHA256、video identity、ONNX SHA256、`.onnx.data` SHA256、上游仓库/commit/权重 Git blob SHA1、预处理每一步来源、label store、几何和置信度数学定义。
-
-注意：上游 `best_model.pkl` 当前记录的 `f086...` 是 **Git blob SHA-1**，不是 SHA256，因此字段名固定为 `official_weights_git_blob_sha1`，不再使用含糊的 `official_weights_blob_sha`。
-
-completion 只有在以下同时满足时才写 `status=complete`：
+completion 只有在以下全部通过后才允许写 `status=complete`：
 
 ```text
 processed_rows == expected_rows
 stored_label_rows == expected_rows
 label index ordinal 连续且 frame/eye 唯一
 CSV key 与 label index 顺序完全一致
-所有 chunk 存在且 SHA256 正确
+所有 committed chunks 存在且 SHA256 正确
 所有 label 均为 uint8 400×640 且值域仅 0/1/2/3
-CSV / index / chunk-manifest / store-manifest / summary / manifest 哈希重新核验通过
+store_manifest 仍为 complete 且内嵌 index/manifest SHA256 正确
+CSV / label_index / chunk_manifest / store_manifest / summary / manifest / qc_index
+    的 SHA256 在 store 恢复检查之后重新核验通过
 ```
 
-completion 自己不对自己做 hash；它作为最后写入的顶层证明文件，保存其他最终 artifact 的 SHA256。
+completion 自己不对自己做 hash；它是最后写入的顶层证明文件。
 
-## 当前执行入口与验收顺序
+---
 
-旧入口继续保留：
+## 9. 唯一正式运行入口
+
+用户只使用下面两个入口：
 
 ```text
-run_ritnet_fullclass_extension.py
-run_ritnet_fullclass_batch.py
+run_ritnet_fullclass_extension.py      # 单个 formal run
+run_ritnet_fullclass_batch.py          # 批量
 ```
 
-v2 使用独立入口：
+文件名中带 `native` 的模块只是当前实现内部文件，不是第二套用户生产路径。历史 fast/320×160 runner 已从正式入口移除。
 
-```text
-run_ritnet_fullclass_native_extension.py
-run_ritnet_fullclass_native_batch.py
-```
-
-正式 44 人重跑前的顺序固定为：
+每次开始：
 
 ```powershell
-python -m pytest tests -q
+conda activate "D:\CondaEnvs\nir-amd"
+cd "D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-amd-DirectML\runtime\nir-formal"
 
-python run_ritnet_fullclass_native_batch.py `
+git status --short --branch
+git pull --ff-only
+python -m pytest tests -q
+python run_pipeline.py check-env
+```
+
+先对 AMD 本机 `sub-031` 做选择检查：
+
+```powershell
+python run_ritnet_fullclass_batch.py `
   --output "D:\_AttentionData\Beijing-NIR\amd-directml" `
   --subjects "sub-031" `
   --device 0 `
@@ -222,4 +279,21 @@ python run_ritnet_fullclass_native_batch.py `
   --dry-run
 ```
 
-然后只做 `sub-031` bounded smoke / 压缩率 / throughput / 中断恢复 / DirectML parity 检查。通过后再冻结 chunk 参数并决定是否开始剩余 44 人；当前代码和文档都不应自动启动全量重跑。
+确认选择正确后，先跑 `sub-031`，检查：DirectML provider、完整行数、label store、completion、恢复、磁盘占用、压缩率、吞吐和抽样 QC。只有这些通过后才冻结 chunk 参数并开始 AMD 当前 cohort。
+
+正式入口会自动启用 source-video SHA256，并拒绝 dirty Git worktree 或 model mismatch，因此不要再添加旧版 `--postprocess-workers`、`--validate-pupil` 或 `--allow-model-mismatch` 参数。
+
+---
+
+## 10. 当前尚不能伪称已经验证的内容
+
+代码完整性与 CPU 单元测试可以在仓库中定义，但以下结论必须由 AMD 本机实际运行后才能确认：
+
+- DirectML 端到端执行；
+- 当前 ONNX 与 `.onnx.data` 的实机加载；
+- `sub-031` 全量结果与 QC；
+- `chunk_rows=128` 的实际压缩率/吞吐；
+- 中断恢复的本机文件系统行为；
+- AMD 当前 cohort 全量完成。
+
+这些是**运行验收项**，不是另一套版本。正式方法本身只有本文件描述的一套。
