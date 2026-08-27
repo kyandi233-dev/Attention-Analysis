@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from ritnet_label_store import RitnetLabelStore, canonical_digest, sha256_file
-from ritnet_native_completion import verify_native_completion
+from ritnet_native_completion import verify_fullclass_completion
 
 
 def atomicish_json(path: Path, value) -> None:
@@ -44,6 +44,13 @@ def build_artifacts(tmp_path: Path) -> tuple[Path, dict]:
         writer.writeheader()
         writer.writerow({"native_label_row_ordinal": 0, "frame_idx": 100, "eye": "frame_left"})
         writer.writerow({"native_label_row_ordinal": 1, "frame_idx": 101, "eye": "frame_right"})
+
+    qc_index = tmp_path / "qc_index.csv"
+    with qc_index.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["frame_idx", "eye", "reason"])
+        writer.writeheader()
+        writer.writerow({"frame_idx": 100, "eye": "frame_left", "reason": "anchor"})
+
     summary = tmp_path / "summary.json"
     manifest = tmp_path / "manifest.json"
     atomicish_json(summary, {"rows": 2})
@@ -71,6 +78,7 @@ def build_artifacts(tmp_path: Path) -> tuple[Path, dict]:
         "store_manifest": str(store.store_manifest_path),
         "summary": str(summary),
         "manifest": str(manifest),
+        "qc_index": str(qc_index),
         "label_store_root": str(store_root),
         "output_csv_sha256": sha256_file(output_csv),
         "label_index_sha256": sha256_file(store.index_path),
@@ -78,6 +86,7 @@ def build_artifacts(tmp_path: Path) -> tuple[Path, dict]:
         "store_manifest_sha256": sha256_file(store.store_manifest_path),
         "summary_sha256": sha256_file(summary),
         "manifest_sha256": sha256_file(manifest),
+        "qc_index_sha256": sha256_file(qc_index),
         "artifact_hashes_verified_at_utc": "2026-08-27T00:00:00+00:00",
     }
     atomicish_json(completion, marker)
@@ -86,7 +95,7 @@ def build_artifacts(tmp_path: Path) -> tuple[Path, dict]:
 
 def test_completion_verifies_full_artifact_chain(tmp_path):
     completion, identity = build_artifacts(tmp_path)
-    result = verify_native_completion(completion, expected_identity=identity)
+    result = verify_fullclass_completion(completion, expected_identity=identity)
     assert result.valid, result.errors
 
 
@@ -95,9 +104,19 @@ def test_completion_detects_csv_mutation(tmp_path):
     marker = json.loads(completion.read_text(encoding="utf-8"))
     output = Path(marker["output_csv"])
     output.write_text(output.read_text(encoding="utf-8-sig") + "2,102,frame_left\n", encoding="utf-8")
-    result = verify_native_completion(completion, expected_identity=identity)
+    result = verify_fullclass_completion(completion, expected_identity=identity)
     assert result.valid is False
     assert any("hash mismatch" in error or "CSV" in error for error in result.errors)
+
+
+def test_completion_detects_qc_index_mutation(tmp_path):
+    completion, identity = build_artifacts(tmp_path)
+    marker = json.loads(completion.read_text(encoding="utf-8"))
+    qc_index = Path(marker["qc_index"])
+    qc_index.write_text(qc_index.read_text(encoding="utf-8-sig") + "101,frame_right,manual\n", encoding="utf-8")
+    result = verify_fullclass_completion(completion, expected_identity=identity)
+    assert result.valid is False
+    assert any("qc_index" in error for error in result.errors)
 
 
 def test_completion_detects_chunk_corruption(tmp_path):
@@ -106,6 +125,6 @@ def test_completion_detects_chunk_corruption(tmp_path):
     chunk = Path(marker["label_store_root"]) / "chunks" / "chunk-000000.npz"
     with chunk.open("ab") as handle:
         handle.write(b"oops")
-    result = verify_native_completion(completion, expected_identity=identity)
+    result = verify_fullclass_completion(completion, expected_identity=identity)
     assert result.valid is False
-    assert any("label-store" in error for error in result.errors)
+    assert any("label-store" in error or "hash mismatch" in error for error in result.errors)
