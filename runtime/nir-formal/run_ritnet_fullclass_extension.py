@@ -36,6 +36,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-dir", type=Path, required=True, help="Completed historical formal run directory")
     parser.add_argument("--config", type=Path, default=PACKAGE_ROOT / "config.yaml")
     parser.add_argument("--device", default="0", help="DirectML device id")
+    parser.add_argument(
+        "--source-selection-reason",
+        default="direct_single_subject_run",
+        help="Provenance reason for choosing this historical formal source run",
+    )
+    parser.add_argument(
+        "--source-alternative-run",
+        action="append",
+        default=[],
+        help="Alternative validated historical run considered by the batch selector; repeatable",
+    )
     return parser.parse_args()
 
 
@@ -143,10 +154,16 @@ def main() -> int:
     )
     final_cfg = core.source_context.config.get("fullclass", {})
     output_limit = int(final_cfg.get("final_output_limit_bytes", 1073741824))
+    source_selection = {
+        "reason": str(args.source_selection_reason),
+        "selected_run_dir": str(run_dir),
+        "alternatives": [str(Path(value).expanduser()) for value in args.source_alternative_run],
+    }
     completion = finalize_subject(
         core=core,
         qc=qc,
         output_limit_bytes=output_limit,
+        source_selection=source_selection,
     )
     validation = validate_final_completion(
         core.subject_dir,
