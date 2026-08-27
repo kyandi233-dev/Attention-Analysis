@@ -64,10 +64,11 @@ class _DerivedUncertaintyBatch:
         if self._metric == "max_probability":
             return np.ascontiguousarray(np.max(probability, axis=0), dtype=np.float32)
         if self._metric == "top1_top2_margin":
-            # Four classes only: kth=2 places the two largest values at indices
-            # 2 and 3, with index 2 the second-largest and index 3 the largest.
-            top2 = np.partition(probability, kth=2, axis=0)
-            return np.ascontiguousarray(top2[3] - top2[2], dtype=np.float32)
+            # Four classes only. Sorting four values per pixel gives the same top1
+            # and top2 values as the frozen torch.topk export, independent of tie
+            # class ordering because only the probability values enter the margin.
+            top = np.sort(probability, axis=0)
+            return np.ascontiguousarray(top[3] - top[2], dtype=np.float32)
 
         # Exact export definition:
         # -sum(p * log(clamp(p, min=1e-12)), dim=class)
