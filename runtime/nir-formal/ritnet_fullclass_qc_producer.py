@@ -8,13 +8,12 @@ import os
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import Any, Iterator, Mapping, Sequence
 
 import cv2
 import numpy as np
 
 from ritnet_fullclass_final_runtime import FIXED_BATCH_SIZE, RitnetFullClassFinalRuntime
-from ritnet_fullclass_io import iter_csv
 from ritnet_fullclass_qc import (
     QC_SELECTION_VERSION,
     QCSelection,
@@ -400,17 +399,14 @@ def produce_qc_artifacts(
     subject_dir: Path,
     source_video: Path,
     config: Mapping[str, Any],
-    eye_metrics_path: Path,
-    frame_coverage_path: Path,
+    eye_metric_rows: Sequence[Mapping[str, Any]],
+    frame_coverage_rows: Sequence[Mapping[str, Any]],
     device: str = "0",
 ) -> QCArtifacts:
     """Create bounded composite QC plus a tiny pixel-level retrospective sample.
 
-    Composite images remain the primary human-readable QC. They use a sparse
-    second RITnet pass packed across frames and request only hard labels. At most
-    one additional fixed-b16 call is reserved for anomaly-first pixel evidence;
-    that file keeps hard labels, entropy and the real-video valid-pixel mask but
-    never writes four-class probability maps.
+    The numeric core hands rows directly to QC. This avoids reparsing the freshly
+    written full eye/frame CSV tables solely to select <=80 QC frames.
     """
     final_cfg = config.get("fullclass")
     if not isinstance(final_cfg, Mapping):
@@ -429,17 +425,15 @@ def produce_qc_artifacts(
     if roi_cfg["padding_mode"] != PADDING_MODE_REPLICATE:
         raise ValueError("final QC reproduction requires replicate artificial padding")
 
-    coverage_rows = list(iter_csv(frame_coverage_path))
-    eye_rows = list(iter_csv(eye_metrics_path))
     selections = build_qc_selections(
-        frame_coverage_rows=coverage_rows,
-        eye_metric_rows=eye_rows,
+        frame_coverage_rows=frame_coverage_rows,
+        eye_metric_rows=eye_metric_rows,
         anomaly_limit_per_reason_per_phase=anomaly_limit,
         max_image_count=image_limit,
     )
-    coverage_by_key = {_frame_key(row): row for row in coverage_rows}
+    coverage_by_key = {_frame_key(row): row for row in frame_coverage_rows}
     eyes_by_key: dict[tuple[str, int, int], dict[str, Mapping[str, Any]]] = {}
-    for row in eye_rows:
+    for row in eye_metric_rows:
         key = _frame_key(row)
         eye = str(row.get("eye") or "")
         if eye in eyes_by_key.setdefault(key, {}):
@@ -634,9 +628,6 @@ def produce_qc_artifacts(
     pixel_payload = evidence_payload_for(evidence_saved_count)
     pixel_skipped_budget = 0
 
-    # The image index and sparse pixel file share the same QC byte budget. Drop
-    # nonmandatory anomaly images first; if still necessary, trim pixel evidence
-    # but retain at least one successful eye when any evidence was reproducible.
     while True:
         index_rows = _index_rows(
             subject=subject,
