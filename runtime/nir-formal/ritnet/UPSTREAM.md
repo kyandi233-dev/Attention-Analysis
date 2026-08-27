@@ -59,13 +59,13 @@ runtime/nir-formal/models/ritnet-b16-fp32.onnx.data
 f0864e6651f578525a9101c7ca787e23d2d201d7
 ```
 
-该 blob 与上游 commit `6431c57...` 完全一致。注意它是 Git blob SHA-1，不是运行模型文件的 SHA256；正式 `.onnx` 与 `.onnx.data` 的内容 SHA256 以 `runtime/nir-formal/SHA256SUMS.txt` 和每次 v2 manifest 为准。
+该 blob 与上游 commit `6431c57...` 完全一致。注意它是 Git blob SHA-1，不是运行模型文件的 SHA256。当前正式 `.onnx` 与 `.onnx.data` 的内容 SHA256 均在每次正式 full-class run 的 manifest / resume identity 中现场计算并分别记录；代码身份由 clean working tree（干净工作区）下的 exact Git commit 确定。`SHA256SUMS.txt` 不再作为会随源码修改而失真的静态运行证明。
 
 ## 官方网络输出与本项目 ONNX 接口的边界
 
-上游 `DenseNet2D` 网络的直接输出是四分类 logits。上游 `utils.get_predictions()`/`test.py` 会在推理后对 channel 取最大值得到 hard class prediction，并把预测 label 保存为 `.npy`。因此四分类 hard segmentation 的任务语义来自官方 RITnet。
+上游 `DenseNet2D` 网络的直接输出是四分类 logits（未归一化分类得分）。上游 `utils.get_predictions()` / `test.py` 会在推理后对 channel 取最大值得到 hard class prediction（硬分类预测），并把预测 label 保存为 `.npy`。因此四分类 hard segmentation（硬分割）的任务语义来自官方 RITnet。
 
-AMD 版本为了减少 DirectML→CPU 搬运，在网络 logits 后追加确定性的 ArgMax/Softmax/Gather 后处理节点，正式 production ONNX 暴露：
+AMD 版本为了减少 DirectML→CPU 搬运，在网络 logits 后追加确定性的 ArgMax / Softmax / Gather 后处理节点，正式 production ONNX 暴露：
 
 ```text
 labels_u8  [16,400,640]  # 0 background / 1 sclera / 2 iris / 3 pupil
@@ -92,8 +92,21 @@ runtime/nir-formal/ritnet_fullclass_runtime.py
                     ↓
 Attention-Analysis ONNX/DirectML 适配与固定 ROI 输入接口
                     ↓
-Attention-Analysis 原生 label store 与派生指标
+Attention-Analysis 400×640 hard-label evidence store
+                    ↓
+Attention-Analysis 派生几何 / QC / provenance / completion
 ```
+
+## 当前唯一正式 full-class 口径
+
+当前 full-class 只认 `ritnet-fullclass-v2-native640` 这一套生产 Schema。这里的版本号用于标记当前完整证据结构，并不表示旧 fast/320×160 路径仍是并行正式版本。历史产物可以保留用于 provenance，但当前用户生产入口只有：
+
+```text
+run_ritnet_fullclass_extension.py
+run_ritnet_fullclass_batch.py
+```
+
+`native_*` 仅表示“在 640×400 RITnet hard-label 坐标系中保存或测量”，不表示“RITnet 官方原生变量”。
 
 ## 与历史 `models/external/ritnet/` 的关系
 
@@ -103,4 +116,4 @@ Attention-Analysis 原生 label store 与派生指标
 
 ## 复现原则
 
-正式分析复现时，以本 `runtime/nir-formal/` 中的冻结文件为准，不自动跟随上游仓库未来变化。若未来升级 RITnet、替换权重、修改 `densenet.py` 或更换 ONNX 后处理接口，必须记录新的来源 commit、对应哈希、DirectML parity 和验证结果。
+正式分析复现时，以本 `runtime/nir-formal/` 中的冻结文件、exact Git commit、每次 run 的 config/model/input SHA256 与 completion 验证链为准，不自动跟随上游仓库未来变化。若未来升级 RITnet、替换权重、修改 `densenet.py` 或更换 ONNX 后处理接口，必须升级当前正式 Schema，并记录新的来源 commit、对应哈希、DirectML parity（等价性）和验证结果。
