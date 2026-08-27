@@ -1,11 +1,9 @@
 package:
   name: nir-formal
-  version: 1.0.1
-  purpose: GPU formal NIR analysis runtime; diagnostic runner retained
+  version: 1.1.0
+  purpose: NVIDIA CUDA formal NIR runtime with final <=1 GiB RITnet full-class evidence path
 
 data:
-  # NVIDIA RTX 5060 工作站当前正式数据根固定为 J:/Data。
-  # 不在本分支混入 AMD/E:/F: 机器的数据盘候选，避免跨机配置互相污染。
   roots:
     - "J:/Data"
   subject_pattern: "sub-*_/nir/*_nir.avi"
@@ -17,12 +15,13 @@ models:
   yolo_onnx: "models/nir-eye-yolo26n-best.onnx"
   ritnet_onnx: "models/ritnet-b16-fp32.onnx"
   ritnet_onnx_external_data: "models/ritnet-b16-fp32.onnx.data"
+  # Final full-class ONNX uses the same frozen RITnet weights and five-output graph
+  # as the AMD path. NVIDIA executes it through CUDAExecutionProvider.
+  ritnet_fullclass_final: "models/ritnet-b16-fp32-uncertainty.onnx"
+  ritnet_fullclass_final_external_data: "models/ritnet-b16-fp32-uncertainty.onnx.data"
 
 inference:
-  # Preserve the frozen CUDA/PyTorch baseline by default. Select ort-cuda
-  # explicitly only after parity and speed validation on the target NVIDIA GPU.
   backend: pytorch-cuda
-  # Validated YOLO scheduling batch for the formal NVIDIA run.
   yolo_batch_size: 8
 
 yolo:
@@ -30,16 +29,15 @@ yolo:
   imgsz: 640
   nms_iou: 0.70
   max_det: 20
+  batch_size: 8
 
-# Tracking remains available for diagnostic reproduction, but formal analysis
-# defaults to per-frame YOLO because KCF/CSRT were slower on the target RTX host.
 tracking:
   method: none
   redetect_interval: 10
   center_jump_width_fraction: 0.50
 
+# Historical formal ROI. Final full-class uses the independent frozen contract below.
 roi:
-  # Stable analysis coordinate system used for pupil ellipse outputs.
   width: 320
   height: 160
   expand_horizontal_each_side: 0.30
@@ -52,6 +50,24 @@ ritnet:
   batch_size: 16
   precision: fp32
   pupil_confidence_min: null
+
+fullclass:
+  output_dirname: "ritnet-fullclass-final"
+  roi:
+    target_width: 640
+    target_height: 400
+    aspect_ratio: 1.6
+    expand_horizontal_each_side: 0.30
+    expand_vertical_each_side: 0.45
+    padding_mode: "replicate"
+  qc_interval_sec: 30
+  qc_boundary_band_px: 5
+  low_max_probability_threshold: null
+  qc_anomaly_max_per_reason: 20
+  qc_image_max_count: 200
+  qc_pixel_evidence_max_eyes: 16
+  qc_artifact_budget_bytes: 268435456
+  final_output_limit_bytes: 1073741824
 
 formal:
   focuswave_release: "v3.1.3"
@@ -66,10 +82,6 @@ formal:
   practice_trial_duration_ms: 1150
   expected_formal_blocks: 2
 
-# Multi-subject formal batch runner settings.
-# `include: []` means: analyze every discovered subject >= min_subject_number,
-# after applying `exclude`. To run only selected people, list them explicitly,
-# e.g. ["sub-031", "sub-033", "sub-056"].
 batch:
   subjects:
     include: []

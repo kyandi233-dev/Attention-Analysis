@@ -3,3 +3,5 @@ opencv-contrib-python>=4.10
 numpy>=1.26
 pandas>=2.2
 PyYAML>=6.0
+onnx>=1.16
+onnxruntime-gpu>=1.19
