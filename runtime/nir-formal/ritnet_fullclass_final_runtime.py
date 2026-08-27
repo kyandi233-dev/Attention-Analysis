@@ -94,7 +94,10 @@ class RitnetFullClassFinalRuntime:
             raise ValueError(f"RITnet ROI must be 2-D grayscale or BGR, got {image.shape}")
         if image.dtype != np.uint8:
             image = np.asarray(np.clip(image, 0, 255), dtype=np.uint8)
-        image = cv2.resize(image, self.input_size, interpolation=cv2.INTER_LINEAR)
+        if image.shape != (INPUT_HEIGHT, INPUT_WIDTH):
+            image = cv2.resize(image, self.input_size, interpolation=cv2.INTER_LINEAR)
+        else:
+            image = np.ascontiguousarray(image)
         image = cv2.LUT(image, self.gamma_table)
         image = self.clahe.apply(image)
         return np.ascontiguousarray(image, dtype=np.uint8)
@@ -112,13 +115,19 @@ class RitnetFullClassFinalRuntime:
         if padded_count:
             images.extend([images[-1]] * padded_count)
         tensor = np.stack(images, axis=0).astype(np.float32, copy=False)
-        tensor = ((tensor / np.float32(255.0) - np.float32(0.5)) / np.float32(0.5))[:, None, :, :]
+        # Keep the exact upstream arithmetic order while doing it in-place. This
+        # avoids allocating another full fixed-b16 float tensor every batch.
+        tensor /= np.float32(255.0)
+        tensor -= np.float32(0.5)
+        tensor /= np.float32(0.5)
+        tensor = tensor[:, None, :, :]
         tensor = np.ascontiguousarray(tensor, dtype=np.float32)
         expected = (FIXED_BATCH_SIZE, 1, INPUT_HEIGHT, INPUT_WIDTH)
         if tensor.shape != expected or tensor.dtype != np.float32:
             raise RuntimeError(f"prepared RITnet tensor mismatch: {tensor.shape} {tensor.dtype}")
-        if not np.isfinite(tensor).all():
-            raise RuntimeError("prepared RITnet tensor contains non-finite values")
+        # The tensor is deterministically constructed from uint8 input using
+        # finite constants. infer_prepared still validates arbitrary external
+        # tensors, so a second full-array finite scan here is redundant.
         return tensor, valid, {
             "valid_batch_size": valid,
             "padded_count": padded_count,
