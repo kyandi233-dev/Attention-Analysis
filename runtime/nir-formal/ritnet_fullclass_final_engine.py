@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Iterator, Mapping
 
 import cv2
+import numpy as np
 
 from ritnet_fullclass_contract import CLASS_MAPPING
 from ritnet_fullclass_coverage import build_fixed_qc_anchor_keys, build_frame_coverage
@@ -63,6 +64,11 @@ DEFAULT_CHECKPOINT_ROWS = 128
 DEFAULT_PROGRESS_EVERY_BATCHES = 100
 DEFAULT_SUMMARY_WORKERS = 2
 DEFAULT_MAX_PENDING_SUMMARIES = 2
+
+# Most formal eye ROIs are completely inside the AVI. Reusing one immutable
+# full-valid mask avoids allocating/zeroing a new 400x640 bool array per eye.
+FULL_SOURCE_VALID_MASK = np.ones((TARGET_HEIGHT, TARGET_WIDTH), dtype=bool)
+FULL_SOURCE_VALID_MASK.setflags(write=False)
 
 
 @dataclass(frozen=True)
@@ -317,7 +323,14 @@ def _prepared_items(
                         padding_mode=str(roi_cfg["padding_mode"]),
                     )
                     roi = crop_fixed_aspect_gray(frame, geometry)
-                    valid_source_mask = valid_source_analysis_mask(geometry)
+                    has_padding = any(
+                        (geometry.pad_left, geometry.pad_top, geometry.pad_right, geometry.pad_bottom)
+                    )
+                    valid_source_mask = (
+                        valid_source_analysis_mask(geometry)
+                        if has_padding
+                        else FULL_SOURCE_VALID_MASK
+                    )
                     base.update(geometry.as_dict())
                     yield {
                         "ordinal": ordinal,
@@ -423,6 +436,7 @@ def _summarize_outputs(
                 entropy=outputs["entropy"][output_index],
                 boundary_band_px=boundary_band_px,
                 low_max_probability_threshold=low_max_probability_threshold,
+                inputs_validated=True,
             )
             uncertainty_ms += (time.perf_counter() - started) * 1000.0
             inferred[item_index] = {**hard, **uncertainty}
