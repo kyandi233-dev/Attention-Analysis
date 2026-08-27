@@ -1,4 +1,4 @@
-"""Strict completion validation for ritnet-fullclass-v2-native640 artifacts."""
+"""Strict completion verification for the canonical RITnet full-class evidence run."""
 from __future__ import annotations
 
 import csv
@@ -9,8 +9,12 @@ from typing import Any
 
 from ritnet_label_store import RitnetLabelStore, canonical_digest, sha256_file
 
-NATIVE_EXTENSION_SCHEMA_VERSION = 2
-NATIVE_EXTENSION_VERSION = "ritnet-fullclass-v2-native640"
+FULLCLASS_SCHEMA_VERSION = 2
+FULLCLASS_VERSION = "ritnet-fullclass-v2-native640"
+# Compatibility aliases for the implementation module. They are the same
+# canonical version, not a second supported production path.
+NATIVE_EXTENSION_SCHEMA_VERSION = FULLCLASS_SCHEMA_VERSION
+NATIVE_EXTENSION_VERSION = FULLCLASS_VERSION
 
 
 @dataclass(frozen=True)
@@ -37,8 +41,9 @@ def _read_key_rows(path: Path) -> list[tuple[int, int, str]]:
     with path.open(encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
         required = {"native_label_row_ordinal", "frame_idx", "eye"}
-        if not required.issubset(set(reader.fieldnames or [])):
-            raise ValueError(f"CSV missing key columns: {sorted(required - set(reader.fieldnames or []))}")
+        missing = required - set(reader.fieldnames or [])
+        if missing:
+            raise ValueError(f"CSV missing key columns: {sorted(missing)}")
         return [
             (int(row["native_label_row_ordinal"]), int(float(row["frame_idx"])), str(row["eye"]))
             for row in reader
@@ -48,6 +53,10 @@ def _read_key_rows(path: Path) -> list[tuple[int, int, str]]:
 def _read_index_keys(path: Path) -> list[tuple[int, int, str]]:
     with path.open(encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
+        required = {"row_ordinal", "frame_idx", "eye"}
+        missing = required - set(reader.fieldnames or [])
+        if missing:
+            raise ValueError(f"label_index missing key columns: {sorted(missing)}")
         return [
             (int(row["row_ordinal"]), int(row["frame_idx"]), str(row["eye"]))
             for row in reader
@@ -59,6 +68,13 @@ def verify_native_completion(
     *,
     expected_identity: dict[str, Any] | None = None,
 ) -> CompletionVerification:
+    """Verify completion after any label-store recovery has had a chance to run.
+
+    Opening the label store can legitimately rebuild torn CSV metadata from an
+    already committed NPZ chunk. Therefore artifact SHA256 checks happen only
+    after that recovery step. A real recovery intentionally invalidates the old
+    completion marker and forces the caller to finalize a new one.
+    """
     completion_path = Path(completion_path)
     base = completion_path.parent
     errors: list[str] = []
@@ -68,9 +84,9 @@ def verify_native_completion(
     except Exception as exc:
         return CompletionVerification(False, (f"completion unreadable: {exc}",), None)
 
-    if marker.get("schema_version") != NATIVE_EXTENSION_SCHEMA_VERSION:
+    if marker.get("schema_version") != FULLCLASS_SCHEMA_VERSION:
         errors.append("completion schema_version mismatch")
-    if marker.get("extension_version") != NATIVE_EXTENSION_VERSION:
+    if marker.get("extension_version") != FULLCLASS_VERSION:
         errors.append("completion extension_version mismatch")
     if marker.get("status") != "complete":
         errors.append("completion status is not complete")
@@ -87,9 +103,13 @@ def verify_native_completion(
     if expected_identity is not None and identity != expected_identity:
         errors.append("completion resume identity differs from current run identity")
 
-    expected_rows = int(marker.get("expected_rows", -1))
-    processed_rows = int(marker.get("processed_rows", -2))
-    stored_rows = int(marker.get("stored_label_rows", -3))
+    try:
+        expected_rows = int(marker.get("expected_rows", -1))
+        processed_rows = int(marker.get("processed_rows", -2))
+        stored_rows = int(marker.get("stored_label_rows", -3))
+    except (TypeError, ValueError):
+        expected_rows = processed_rows = stored_rows = -1
+        errors.append("completion row counts are not valid integers")
     if expected_rows < 0 or processed_rows != expected_rows or stored_rows != expected_rows:
         errors.append(
             f"row-count mismatch expected={expected_rows} processed={processed_rows} stored={stored_rows}"
@@ -102,6 +122,7 @@ def verify_native_completion(
         "store_manifest": "store_manifest_sha256",
         "summary": "summary_sha256",
         "manifest": "manifest_sha256",
+        "qc_index": "qc_index_sha256",
     }
     resolved: dict[str, Path] = {}
     for path_key, hash_key in artifact_specs.items():
@@ -114,21 +135,19 @@ def verify_native_completion(
         resolved[path_key] = path
         if not path.is_file():
             errors.append(f"missing artifact: {path}")
-            continue
-        if sha256_file(path) != expected_hash:
-            errors.append(f"artifact hash mismatch: {path_key}")
 
+    # Recovery/verification comes before the top-level artifact hash comparison.
     label_root_value = marker.get("label_store_root")
     if label_root_value:
         label_root = _resolve(base, label_root_value)
         try:
-            store_manifest = load_json(label_root / "store_manifest.json")
+            preopen_manifest = load_json(label_root / "store_manifest.json")
             store = RitnetLabelStore(
                 label_root,
-                identity=store_manifest["identity"],
-                eye_mapping=store_manifest["eye_mapping"],
-                chunk_rows=int(store_manifest["chunk_rows"]),
-                compression=str(store_manifest["compression"]),
+                identity=preopen_manifest["identity"],
+                eye_mapping=preopen_manifest["eye_mapping"],
+                chunk_rows=int(preopen_manifest["chunk_rows"]),
+                compression=str(preopen_manifest["compression"]),
             )
             if marker.get("label_store_identity_digest") != store.identity_digest:
                 errors.append("label_store_identity_digest mismatch")
@@ -136,10 +155,29 @@ def verify_native_completion(
             store_report_dict = report.as_dict()
             if not report.valid:
                 errors.extend(f"label-store: {message}" for message in report.errors)
+
+            final_store_manifest = load_json(store.store_manifest_path)
+            if final_store_manifest.get("status") != "complete":
+                errors.append("label store status is not complete")
+            if int(final_store_manifest.get("expected_rows", -1)) != expected_rows:
+                errors.append("label store expected_rows mismatch")
+            if final_store_manifest.get("label_index_sha256") != sha256_file(store.index_path):
+                errors.append("label store embedded label_index_sha256 mismatch")
+            if final_store_manifest.get("chunk_manifest_sha256") != sha256_file(store.chunk_manifest_path):
+                errors.append("label store embedded chunk_manifest_sha256 mismatch")
         except Exception as exc:
             errors.append(f"label-store verification failed: {exc}")
     else:
         errors.append("label_store_root missing")
+
+    # Hash every final artifact only after the store open/recovery step above.
+    for path_key, hash_key in artifact_specs.items():
+        path = resolved.get(path_key)
+        expected_hash = marker.get(hash_key)
+        if path is None or not path.is_file() or not expected_hash:
+            continue
+        if sha256_file(path) != expected_hash:
+            errors.append(f"artifact hash mismatch: {path_key}")
 
     if "output_csv" in resolved and "label_index" in resolved:
         try:
@@ -166,3 +204,8 @@ def verify_native_completion(
             errors.append(f"completion flag {key} is not true")
 
     return CompletionVerification(not errors, tuple(errors), store_report_dict)
+
+
+# Canonical name for new callers. Keep the old function name only as a code-level
+# alias so partially written implementation modules do not become a second path.
+verify_fullclass_completion = verify_native_completion
