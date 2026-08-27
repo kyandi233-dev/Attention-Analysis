@@ -43,6 +43,23 @@ def synthetic_labels():
     return labels
 
 
+class FakeRuntime:
+    def __init__(self, labels):
+        self.labels = np.asarray(labels, dtype=np.uint8)
+
+    def infer_batch(self, rois):
+        count = len(rois)
+        return {
+            "labels": np.stack([self.labels] * count),
+            "soft_class_fraction": np.tile(
+                np.asarray([[0.5, 0.3, 0.15, 0.05]], dtype=np.float32), (count, 1)
+            ),
+            "max_probability": np.full((count, 400, 640), 0.9, dtype=np.float32),
+            "top1_top2_margin": np.full((count, 400, 640), 0.7, dtype=np.float32),
+            "entropy": np.full((count, 400, 640), 0.3, dtype=np.float32),
+        }, {"valid_batch_size": count}
+
+
 def final_roi_config(*, historical_horizontal=9.0, historical_vertical=9.0):
     return {
         "roi": {
@@ -112,19 +129,7 @@ def test_group_remaining_rows_preserves_source_ordinal_groups():
 
 def test_complete_batch_maps_success_outputs_and_keeps_failed_row_in_order():
     labels = synthetic_labels()
-
-    class FakeRuntime:
-        def infer_batch(self, rois):
-            count = len(rois)
-            return {
-                "labels": np.stack([labels] * count),
-                "soft_class_fraction": np.tile(
-                    np.asarray([[0.5, 0.3, 0.15, 0.05]], dtype=np.float32), (count, 1)
-                ),
-                "max_probability": np.full((count, 400, 640), 0.9, dtype=np.float32),
-                "top1_top2_margin": np.full((count, 400, 640), 0.7, dtype=np.float32),
-                "entropy": np.full((count, 400, 640), 0.3, dtype=np.float32),
-            }, {"valid_batch_size": count}
+    valid = np.ones((400, 640), dtype=bool)
 
     good_base = _source_base_row("sub-031", source(10, "frame_left"))
     failed_base = _source_base_row("sub-031", source(10, "frame_right"))
@@ -133,13 +138,23 @@ def test_complete_batch_maps_success_outputs_and_keeps_failed_row_in_order():
     good_base_2 = _source_base_row("sub-031", source(11, "frame_left"))
 
     items = [
-        {"ordinal": 0, "base": good_base, "roi": np.zeros((100, 160), dtype=np.uint8)},
-        {"ordinal": 1, "base": failed_base, "roi": None},
-        {"ordinal": 2, "base": good_base_2, "roi": np.zeros((100, 160), dtype=np.uint8)},
+        {
+            "ordinal": 0,
+            "base": good_base,
+            "roi": np.zeros((100, 160), dtype=np.uint8),
+            "valid_source_mask": valid,
+        },
+        {"ordinal": 1, "base": failed_base, "roi": None, "valid_source_mask": None},
+        {
+            "ordinal": 2,
+            "base": good_base_2,
+            "roi": np.zeros((100, 160), dtype=np.uint8),
+            "valid_source_mask": valid,
+        },
     ]
     completed = _complete_batch(
         items=items,
-        runtime=FakeRuntime(),
+        runtime=FakeRuntime(labels),
         boundary_band_px=5,
         low_max_probability_threshold=None,
     )
@@ -150,3 +165,54 @@ def test_complete_batch_maps_success_outputs_and_keeps_failed_row_in_order():
     assert completed[0][1]["hard_pupil_pixels"] > 0
     assert completed[0][1]["ocular_max_probability_mean"] == 0.9
     assert completed[0][1]["soft_pupil_fraction"] == np.float32(0.05)
+
+
+def test_complete_batch_excludes_padding_from_hard_metrics_but_retains_padding_qc():
+    labels = synthetic_labels()
+    source_pupil_pixels = int((labels == 3).sum())
+    labels[40:60, 10:30] = 3
+
+    valid = np.ones((400, 640), dtype=bool)
+    valid[:, :80] = False
+    base = _source_base_row("sub-031", source(10, "frame_left"))
+    items = [
+        {
+            "ordinal": 0,
+            "base": base,
+            "roi": np.zeros((100, 160), dtype=np.uint8),
+            "valid_source_mask": valid,
+        }
+    ]
+
+    completed = _complete_batch(
+        items=items,
+        runtime=FakeRuntime(labels),
+        boundary_band_px=5,
+        low_max_probability_threshold=None,
+    )
+    row = completed[0][1]
+
+    assert row["hard_pupil_pixels"] == source_pupil_pixels
+    assert row["pupil_predicted_in_padding_pixels"] == 400
+    assert row["analysis_valid_pixel_count"] == int(valid.sum())
+    assert row["analysis_valid_pixel_fraction"] == pytest.approx(float(valid.mean()))
+
+
+def test_complete_batch_refuses_success_without_valid_source_mask():
+    labels = synthetic_labels()
+    base = _source_base_row("sub-031", source(10, "frame_left"))
+    items = [
+        {
+            "ordinal": 0,
+            "base": base,
+            "roi": np.zeros((100, 160), dtype=np.uint8),
+        }
+    ]
+
+    with pytest.raises(RuntimeError, match="valid_source_mask"):
+        _complete_batch(
+            items=items,
+            runtime=FakeRuntime(labels),
+            boundary_band_px=5,
+            low_max_probability_threshold=None,
+        )

@@ -26,8 +26,10 @@ from ritnet_fullclass_roi import (
     TARGET_ASPECT_RATIO,
     TARGET_HEIGHT,
     TARGET_WIDTH,
+    VALID_SOURCE_MASK_VERSION,
     crop_fixed_aspect_gray,
     fixed_aspect_roi_geometry,
+    valid_source_analysis_mask,
 )
 from ritnet_fullclass_schema import (
     EYE_METRIC_FIELDS,
@@ -47,7 +49,7 @@ from ritnet_label_store import sha256_file
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
-CORE_VERSION = "fullclass-final-core-v1"
+CORE_VERSION = "fullclass-final-core-v2-valid-source-hard-domain"
 VIDEO_SEEK_GAP_THRESHOLD = 64
 
 
@@ -254,12 +256,14 @@ def _prepared_items(
                         padding_mode=str(roi_cfg["padding_mode"]),
                     )
                     roi = crop_fixed_aspect_gray(frame, geometry)
+                    valid_source_mask = valid_source_analysis_mask(geometry)
                     base.update(geometry.as_dict())
                     yield {
                         "ordinal": ordinal,
                         "source": source,
                         "base": base,
                         "roi": roi,
+                        "valid_source_mask": valid_source_mask,
                     }
                 except ValueError as exc:
                     base["ritnet_status"] = "failed"
@@ -269,6 +273,7 @@ def _prepared_items(
                         "source": source,
                         "base": base,
                         "roi": None,
+                        "valid_source_mask": None,
                     }
     finally:
         cap.release()
@@ -288,7 +293,16 @@ def _complete_batch(
         outputs, _timing = runtime.infer_batch(rois)
         for output_index, item_index in enumerate(successful_indices):
             labels = outputs["labels"][output_index]
-            hard = summarize_final_hard_metrics(labels)
+            valid_source_mask = items[item_index].get("valid_source_mask")
+            if valid_source_mask is None:
+                raise RuntimeError(
+                    "successful final RITnet item is missing valid_source_mask; refusing to compute "
+                    "scientific hard metrics over synthetic padding"
+                )
+            hard = summarize_final_hard_metrics(
+                labels,
+                valid_source_mask=valid_source_mask,
+            )
             uncertainty = summarize_uncertainty(
                 labels=labels,
                 soft_class_fraction=outputs["soft_class_fraction"][output_index],
@@ -335,6 +349,7 @@ def _work_identity(
         "ritnet_precision": "fp32",
         "class_mapping": {str(key): value for key, value in CLASS_MAPPING.items()},
         "roi_algorithm_version": ROI_ALGORITHM_VERSION,
+        "valid_source_mask_version": VALID_SOURCE_MASK_VERSION,
         "roi_contract": dict(roi_cfg),
         "uncertainty_algorithm_version": UNCERTAINTY_ALGORITHM_VERSION,
         "uncertainty_domain_version": UNCERTAINTY_DOMAIN_VERSION,
