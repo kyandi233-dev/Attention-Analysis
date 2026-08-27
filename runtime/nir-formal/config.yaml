@@ -4,9 +4,6 @@ package:
   purpose: AMD DirectML formal NIR analysis runtime; YOLO b8 + RITnet b16 production path
 
 data:
-  # 正式原始数据位于两个逻辑目录 `正式实验` 与 `Data`。
-  # 两块外接存储设备的 Windows 盘符可能在 E:/ 与 F:/ 之间变化，
-  # 因此同时声明四个候选根；batch discovery 会忽略不存在的路径。
   roots:
     - "E:/正式实验"
     - "F:/正式实验"
@@ -16,17 +13,12 @@ data:
   default_duration_sec: 60
 
 models:
-  # Original fixed-b1 YOLO is retained for diagnostic/reference compatibility.
   yolo: "models/nir-eye-yolo26n-best.onnx"
-  # Formal production path: fixed-b8 YOLO selected by DirectML benchmark.
   yolo_formal: "models/nir-eye-yolo26n-best-b8.onnx"
-  # Historical two-output RITnet interface used by the already-completed formal run.
   ritnet: "models/ritnet-b16-fp32.onnx"
   ritnet_external_data: "models/ritnet-b16-fp32.onnx.data"
   ritnet_reference: "models/ritnet-b16-fp32.onnx"
   ritnet_reference_external_data: "models/ritnet-b16-fp32.onnx.data"
-  # Final full-class interface. Generated from the SAME frozen RITnet weights with
-  # deterministic post-processing outputs for compact all-class uncertainty QC.
   ritnet_fullclass_final: "models/ritnet-b16-fp32-uncertainty.onnx"
   ritnet_fullclass_final_external_data: "models/ritnet-b16-fp32-uncertainty.onnx.data"
 
@@ -37,16 +29,11 @@ yolo:
   max_det: 20
   batch_size: 8
 
-# Tracking remains available only for diagnostic reproduction; formal analysis
-# uses batched fixed-shape YOLO on every frame, with no tracker substitution.
 tracking:
   method: none
   redetect_interval: 10
   center_jump_width_fraction: 0.50
 
-# Historical formal ROI settings. These remain frozen for provenance/reproduction
-# of the already-completed formal producer only. Final full-class does NOT read
-# this block; its ROI contract is independently frozen under `fullclass.roi`.
 roi:
   width: 320
   height: 160
@@ -61,43 +48,29 @@ ritnet:
   precision: fp32
   pupil_confidence_min: null
 
-# Final RITnet full-class contract. Thresholds here are QC facts only; they never
-# rewrite hard labels or silently delete rows. low_max_probability_threshold stays
-# null until sub-031 qualification establishes a defensible descriptive cutoff.
 fullclass:
   output_dirname: "ritnet-fullclass-final"
   roi:
     target_width: 640
     target_height: 400
     aspect_ratio: 1.6
-    # These values intentionally match the historical context expansion today,
-    # but are duplicated here so future changes to the old ROI block cannot
-    # silently change the final scientific contract.
     expand_horizontal_each_side: 0.30
     expand_vertical_each_side: 0.45
     padding_mode: "replicate"
   qc_interval_sec: 30
   qc_boundary_band_px: 5
   low_max_probability_threshold: null
-  qc_anomaly_max_per_reason: 20
-  qc_image_max_count: 200
-  # Pixel-level evidence is intentionally sparse. At most one fixed-b16 batch of
-  # representative successful QC eyes keeps uint8 hard labels plus float16
-  # entropy maps and the real-video valid-pixel mask for retrospective checking.
+  # Fixed timeline anchors remain mandatory. Anomaly examples are now bounded to
+  # a human-reviewable sample rather than filling 200 files per subject.
+  qc_anomaly_max_per_reason: 5
+  qc_image_max_count: 80
   qc_pixel_evidence_max_eyes: 16
   qc_artifact_budget_bytes: 268435456
   final_output_limit_bytes: 1073741824
 
-  # Throughput-only scheduling. These values do not change any ROI, RITnet output,
-  # metric, QC threshold, or final schema. One producer overlaps video decode/ROI/
-  # preprocessing with DirectML. Two CPU workers summarize already-returned maps.
-  # At most two ~113 MiB five-output batches may remain pending, which is bounded
-  # for the 16 GiB AMD workstation while allowing GPU/CPU overlap.
+  # Throughput-only scheduling; does not change ROI/model/class definitions.
   summary_workers: 2
   max_pending_summaries: 2
-  # Checkpoint every 128 source eye rows instead of every fixed-b16 inference call.
-  # A crash can at worst redo this small tail; final completion remains independently
-  # hashed and validated.
   checkpoint_rows: 128
   progress_every_batches: 100
 
@@ -114,9 +87,6 @@ formal:
   practice_trial_duration_ms: 1150
   expected_formal_blocks: 2
 
-# Multi-subject formal batch runner settings.
-# `include: []` means: analyze every discovered subject >= min_subject_number,
-# after applying `exclude`. To run only selected people, list them explicitly.
 batch:
   subjects:
     include: []
