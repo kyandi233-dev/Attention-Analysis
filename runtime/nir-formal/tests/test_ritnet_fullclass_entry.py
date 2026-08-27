@@ -5,25 +5,28 @@ from pathlib import Path
 
 import pytest
 
-import run_ritnet_fullclass_native_extension as implementation
-from run_ritnet_fullclass_extension import (
-    _install_subject_identity_guard,
-    _resolve_source_video,
-)
+from ritnet_fullclass_source import load_source_eye_rows, resolve_source_video
 
 
 FIELDS = [
+    "subject",
+    "phase",
+    "phase_segment",
     "frame_idx",
+    "video_time_ms",
+    "unix_ms",
+    "phase_time_ms",
     "eye",
+    "source",
+    "redetect_reason",
+    "frame_status",
+    "status",
+    "anchor_yolo_confidence",
     "bbox_x1",
     "bbox_y1",
     "bbox_x2",
     "bbox_y2",
-    "anchor_yolo_confidence",
-    "roi_x1",
-    "roi_y1",
-    "roi_x2",
-    "roi_y2",
+    "yolo_batch_size",
 ]
 
 
@@ -34,52 +37,49 @@ def write_eye_rows(path: Path, rows):
         writer.writerows(rows)
 
 
-def valid_row(frame_idx=100, eye="frame_left", x1=10, x2=50):
+def valid_row(frame_idx=100, eye="frame_left", x1=10, x2=50, subject=""):
     return {
+        "subject": subject,
+        "phase": "block1",
+        "phase_segment": 1,
         "frame_idx": frame_idx,
+        "video_time_ms": 1000,
+        "unix_ms": 2000,
+        "phase_time_ms": 500,
         "eye": eye,
+        "source": "yolo",
+        "redetect_reason": "tracker_disabled",
+        "frame_status": "two_eyes",
+        "status": "observed",
+        "anchor_yolo_confidence": 0.8,
         "bbox_x1": x1,
         "bbox_y1": 20,
         "bbox_x2": x2,
         "bbox_y2": 50,
-        "anchor_yolo_confidence": 0.8,
-        "roi_x1": 5,
-        "roi_y1": 10,
-        "roi_x2": 60,
-        "roi_y2": 60,
+        "yolo_batch_size": 8,
     }
 
 
-def test_canonical_entry_backfills_subject_without_modifying_source(tmp_path):
+def test_source_loader_accepts_missing_subject_column_value_without_modifying_source(tmp_path):
     source = tmp_path / "eyes.csv"
     write_eye_rows(source, [valid_row()])
-
     before = source.read_bytes()
-    original = implementation._source_rows
-    try:
-        _install_subject_identity_guard()
-        output_fields, rows = implementation._source_rows(source, "sub-031")
-    finally:
-        implementation._source_rows = original
 
-    assert output_fields[0] == "subject"
-    assert rows[0]["subject"] == "sub-031"
+    fields, rows = load_source_eye_rows(source, "sub-031")
+
+    assert "subject" in fields
+    assert rows[0]["eye"] == "frame_left"
     assert source.read_bytes() == before
 
 
-def test_canonical_entry_rejects_unknown_eye_label(tmp_path):
+def test_source_loader_rejects_unknown_eye_label(tmp_path):
     source = tmp_path / "eyes.csv"
     write_eye_rows(source, [valid_row(eye="left_eye_typo")])
-    original = implementation._source_rows
-    try:
-        _install_subject_identity_guard()
-        with pytest.raises(ValueError, match="unsupported eye label"):
-            implementation._source_rows(source, "sub-031")
-    finally:
-        implementation._source_rows = original
+    with pytest.raises(ValueError, match="unsupported eye label"):
+        load_source_eye_rows(source, "sub-031")
 
 
-def test_canonical_entry_rejects_reversed_pair_identity(tmp_path):
+def test_source_loader_rejects_reversed_pair_identity(tmp_path):
     source = tmp_path / "eyes.csv"
     write_eye_rows(
         source,
@@ -88,16 +88,11 @@ def test_canonical_entry_rejects_reversed_pair_identity(tmp_path):
             valid_row(eye="frame_right", x1=10, x2=50),
         ],
     )
-    original = implementation._source_rows
-    try:
-        _install_subject_identity_guard()
-        with pytest.raises(ValueError, match="identity/order violation"):
-            implementation._source_rows(source, "sub-031")
-    finally:
-        implementation._source_rows = original
+    with pytest.raises(ValueError, match="left/right identity violation"):
+        load_source_eye_rows(source, "sub-031")
 
 
-def test_source_video_rediscovery_accepts_identical_drive_candidates(monkeypatch, tmp_path):
+def test_source_video_rediscovery_accepts_identical_drive_candidates(tmp_path):
     root_a = tmp_path / "E"
     root_b = tmp_path / "F"
     for root in (root_a, root_b):
@@ -105,16 +100,20 @@ def test_source_video_rediscovery_accepts_identical_drive_candidates(monkeypatch
         video.parent.mkdir(parents=True)
         video.write_bytes(b"same-video")
 
-    marker = {"video": "Z:/old/sub-031_/nir/sub-031_nir.avi"}
+    completion = {"video": "Z:/old/sub-031_/nir/sub-031_nir.avi"}
     config = {"data": {"roots": [str(root_a), str(root_b)]}}
-    resolved, info = _resolve_source_video(marker=marker, config=config, subject="sub-031")
+    resolved, info = resolve_source_video(
+        completion=completion,
+        config=config,
+        subject="sub-031",
+    )
 
     assert resolved in {
         (root_a / "sub-031_" / "nir" / "sub-031_nir.avi").resolve(),
         (root_b / "sub-031_" / "nir" / "sub-031_nir.avi").resolve(),
     }
     assert info["candidate_count"] == 2
-    assert info["resolution_reason"] == "rediscovered_by_subject_filename_and_identical_sha256"
+    assert info["resolution_reason"] == "rediscovered_identical_content"
 
 
 def test_source_video_rediscovery_rejects_different_content(tmp_path):
@@ -127,7 +126,11 @@ def test_source_video_rediscovery_rejects_different_content(tmp_path):
     video_a.write_bytes(b"video-a")
     video_b.write_bytes(b"video-b")
 
-    marker = {"video": "Z:/old/sub-031_/nir/sub-031_nir.avi"}
+    completion = {"video": "Z:/old/sub-031_/nir/sub-031_nir.avi"}
     config = {"data": {"roots": [str(root_a), str(root_b)]}}
-    with pytest.raises(SystemExit, match="different content"):
-        _resolve_source_video(marker=marker, config=config, subject="sub-031")
+    with pytest.raises(RuntimeError, match="different SHA256"):
+        resolve_source_video(
+            completion=completion,
+            config=config,
+            subject="sub-031",
+        )

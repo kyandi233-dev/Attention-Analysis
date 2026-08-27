@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import sys
 
-import torch
+import pytest
+
+torch = pytest.importorskip("torch", reason="RITnet ONNX export tests require PyTorch")
 
 from export_ritnet_batch_variants import FinalUncertaintyExportWrapper, parse_args
 
