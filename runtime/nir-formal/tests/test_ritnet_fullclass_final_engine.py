@@ -60,6 +60,15 @@ class FakeRuntime:
         }, {"valid_batch_size": count}
 
 
+class PaddingUncertaintyRuntime(FakeRuntime):
+    def infer_batch(self, rois):
+        outputs, timing = super().infer_batch(rois)
+        outputs["max_probability"][:, :, :80] = 0.01
+        outputs["top1_top2_margin"][:, :, :80] = 0.0
+        outputs["entropy"][:, :, :80] = 1.30
+        return outputs, timing
+
+
 def final_roi_config(*, historical_horizontal=9.0, historical_vertical=9.0):
     return {
         "roi": {
@@ -167,7 +176,7 @@ def test_complete_batch_maps_success_outputs_and_keeps_failed_row_in_order():
     assert completed[0][1]["soft_pupil_fraction"] == np.float32(0.05)
 
 
-def test_complete_batch_excludes_padding_from_hard_metrics_but_retains_padding_qc():
+def test_complete_batch_excludes_padding_from_hard_metrics_and_uncertainty_but_retains_padding_qc():
     labels = synthetic_labels()
     source_pupil_pixels = int((labels == 3).sum())
     labels[40:60, 10:30] = 3
@@ -186,9 +195,9 @@ def test_complete_batch_excludes_padding_from_hard_metrics_but_retains_padding_q
 
     completed = _complete_batch(
         items=items,
-        runtime=FakeRuntime(labels),
+        runtime=PaddingUncertaintyRuntime(labels),
         boundary_band_px=5,
-        low_max_probability_threshold=None,
+        low_max_probability_threshold=0.60,
     )
     row = completed[0][1]
 
@@ -196,6 +205,10 @@ def test_complete_batch_excludes_padding_from_hard_metrics_but_retains_padding_q
     assert row["pupil_predicted_in_padding_pixels"] == 400
     assert row["analysis_valid_pixel_count"] == int(valid.sum())
     assert row["analysis_valid_pixel_fraction"] == pytest.approx(float(valid.mean()))
+    assert row["whole_max_probability_mean"] == pytest.approx(0.90)
+    assert row["whole_top1_top2_margin_mean"] == pytest.approx(0.70)
+    assert row["whole_entropy_mean"] == pytest.approx(0.30)
+    assert row["whole_low_max_probability_fraction"] == pytest.approx(0.0)
 
 
 def test_complete_batch_refuses_success_without_valid_source_mask():

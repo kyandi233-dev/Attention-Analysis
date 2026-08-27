@@ -18,8 +18,8 @@ LABEL_WIDTH = 640
 CLASS_IDS = (0, 1, 2, 3)
 STAT_PERCENTILES = (5, 25, 50, 75, 95)
 STAT_SUFFIXES = ("mean", "p05", "p25", "p50", "p75", "p95")
-UNCERTAINTY_ALGORITHM_VERSION = "allclass-online-summary-v1"
-UNCERTAINTY_DOMAIN_VERSION = "whole-ocular-boundary-v1"
+UNCERTAINTY_ALGORITHM_VERSION = "allclass-online-summary-v2-source-valid"
+UNCERTAINTY_DOMAIN_VERSION = "source-valid-whole-ocular-boundary-v2"
 DEFAULT_BOUNDARY_BAND_PX = 5
 
 
@@ -32,6 +32,19 @@ def _validate_labels(labels: np.ndarray) -> np.ndarray:
     if not np.isin(np.unique(array), CLASS_IDS).all():
         raise ValueError("labels contain values outside {0,1,2,3}")
     return np.ascontiguousarray(array)
+
+
+def _validate_valid_source_mask(valid_source_mask: np.ndarray) -> np.ndarray:
+    mask = np.asarray(valid_source_mask)
+    if mask.shape != (LABEL_HEIGHT, LABEL_WIDTH):
+        raise ValueError(
+            f"valid_source_mask must have shape {(LABEL_HEIGHT, LABEL_WIDTH)}, got {mask.shape}"
+        )
+    if mask.dtype != np.bool_:
+        raise TypeError(f"valid_source_mask must be bool, got {mask.dtype}")
+    if not mask.any():
+        raise ValueError("valid_source_mask contains no source-backed pixels")
+    return np.ascontiguousarray(mask)
 
 
 def _validate_map(name: str, values: np.ndarray, *, lower: float, upper: float) -> np.ndarray:
@@ -49,22 +62,39 @@ def _validate_map(name: str, values: np.ndarray, *, lower: float, upper: float) 
     return np.asarray(array, dtype=np.float32)
 
 
-def boundary_band_mask(labels: np.ndarray, band_px: int = DEFAULT_BOUNDARY_BAND_PX) -> np.ndarray:
+def boundary_band_mask(
+    labels: np.ndarray,
+    band_px: int = DEFAULT_BOUNDARY_BAND_PX,
+    valid_source_mask: np.ndarray | None = None,
+) -> np.ndarray:
+    """Return a class-boundary band without letting padding create boundaries.
+
+    When a source-valid mask is supplied, a class transition counts as a real
+    segmentation boundary only if both adjacent pixels are backed by the AVI.
+    The dilated band is then intersected with that same source-valid domain.
+    """
     labels = _validate_labels(labels)
     band_px = int(band_px)
     if band_px < 0:
         raise ValueError("boundary band must be non-negative")
+    valid = (
+        np.ones(labels.shape, dtype=bool)
+        if valid_source_mask is None
+        else _validate_valid_source_mask(valid_source_mask)
+    )
 
     boundary = np.zeros(labels.shape, dtype=np.uint8)
-    boundary[:, 1:] |= labels[:, 1:] != labels[:, :-1]
-    boundary[:, :-1] |= labels[:, 1:] != labels[:, :-1]
-    boundary[1:, :] |= labels[1:, :] != labels[:-1, :]
-    boundary[:-1, :] |= labels[1:, :] != labels[:-1, :]
+    horizontal = (labels[:, 1:] != labels[:, :-1]) & valid[:, 1:] & valid[:, :-1]
+    boundary[:, 1:] |= horizontal
+    boundary[:, :-1] |= horizontal
+    vertical = (labels[1:, :] != labels[:-1, :]) & valid[1:, :] & valid[:-1, :]
+    boundary[1:, :] |= vertical
+    boundary[:-1, :] |= vertical
     if band_px > 0 and boundary.any():
         kernel_size = 2 * band_px + 1
         kernel = np.ones((kernel_size, kernel_size), dtype=np.uint8)
         boundary = cv2.dilate(boundary, kernel, iterations=1)
-    return boundary.astype(bool)
+    return boundary.astype(bool) & valid
 
 
 def distribution_summary(values: np.ndarray, mask: np.ndarray) -> dict[str, float | None]:
@@ -86,6 +116,7 @@ def distribution_summary(values: np.ndarray, mask: np.ndarray) -> dict[str, floa
 def summarize_uncertainty(
     *,
     labels: np.ndarray,
+    valid_source_mask: np.ndarray,
     soft_class_fraction: np.ndarray,
     max_probability: np.ndarray,
     top1_top2_margin: np.ndarray,
@@ -93,8 +124,15 @@ def summarize_uncertainty(
     boundary_band_px: int = DEFAULT_BOUNDARY_BAND_PX,
     low_max_probability_threshold: float | None = None,
 ) -> dict[str, Any]:
-    """Reduce one eye's temporary uncertainty maps to compact scalar evidence."""
+    """Reduce one eye's temporary uncertainty maps to compact scalar evidence.
+
+    Whole/ocular/boundary uncertainty domains are restricted to source-backed
+    AVI pixels. ``soft_class_fraction`` is still the upstream ONNX aggregate and
+    is intentionally handled separately by the later soft-fraction repair; this
+    function does not relabel that aggregate as source-valid.
+    """
     labels = _validate_labels(labels)
+    valid = _validate_valid_source_mask(valid_source_mask)
     soft = np.asarray(soft_class_fraction, dtype=np.float64)
     if soft.shape != (4,) or not np.isfinite(soft).all():
         raise ValueError(f"soft_class_fraction must be four finite values, got {soft}")
@@ -108,9 +146,13 @@ def summarize_uncertainty(
     entropy = _validate_map("entropy", entropy, lower=0.0, upper=log(4.0))
 
     domains = {
-        "whole": np.ones(labels.shape, dtype=bool),
-        "ocular": labels != 0,
-        "boundary": boundary_band_mask(labels, boundary_band_px),
+        "whole": valid,
+        "ocular": (labels != 0) & valid,
+        "boundary": boundary_band_mask(
+            labels,
+            boundary_band_px,
+            valid_source_mask=valid,
+        ),
     }
     metrics = {
         "max_probability": max_probability,

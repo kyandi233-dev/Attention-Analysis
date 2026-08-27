@@ -305,6 +305,7 @@ def _complete_batch(
             )
             uncertainty = summarize_uncertainty(
                 labels=labels,
+                valid_source_mask=valid_source_mask,
                 soft_class_fraction=outputs["soft_class_fraction"][output_index],
                 max_probability=outputs["max_probability"][output_index],
                 top1_top2_margin=outputs["top1_top2_margin"][output_index],
