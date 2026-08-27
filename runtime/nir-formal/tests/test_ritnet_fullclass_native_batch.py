@@ -130,4 +130,6 @@ def test_source_context_preserves_missing_legacy_yolo_batch(tmp_path, monkeypatc
 
     assert context.source_identity["source_yolo_batch_size"] is None
     assert context.source_identity["source_yolo_batch_size_recorded"] is False
+    assert context.source_identity["source_yolo_model_sha256"] is None
+    assert context.source_identity["source_yolo_model_sha256_recorded"] is False
     source_loader._load_source_context_cached.cache_clear()

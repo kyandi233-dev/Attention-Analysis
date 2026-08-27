@@ -238,8 +238,8 @@ def _load_source_context_cached(run_dir: Path, config_path: Path) -> SourceForma
         # absence explicit in provenance; eyes.csv still carries its row-level
         # source batch field when available.
         source_yolo_batch = None
-    if not completion.get("yolo_model_sha256"):
-        raise RuntimeError("source completion lacks yolo_model_sha256")
+    raw_yolo_model_sha256 = completion.get("yolo_model_sha256")
+    yolo_model_sha256_recorded = bool(str(raw_yolo_model_sha256 or "").strip())
 
     video, video_resolution = resolve_source_video(
         completion=completion,
@@ -259,7 +259,8 @@ def _load_source_context_cached(run_dir: Path, config_path: Path) -> SourceForma
         "source_eyes_sha256": sha256_file(eyes_path),
         "source_frames_sha256": sha256_file(frames_path),
         "source_video_sha256": video_resolution["content_sha256"],
-        "source_yolo_model_sha256": completion.get("yolo_model_sha256"),
+        "source_yolo_model_sha256": raw_yolo_model_sha256 if yolo_model_sha256_recorded else None,
+        "source_yolo_model_sha256_recorded": yolo_model_sha256_recorded,
         "source_yolo_batch_size": source_yolo_batch,
         "source_yolo_batch_size_recorded": source_yolo_batch_recorded,
         "source_focuswave_release": completion.get("focuswave_release"),
