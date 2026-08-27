@@ -27,6 +27,10 @@ from ritnet_fullclass_source import load_source_context
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
+LEGACY_GZIP_DATA_NAMES = (
+    "eye_metrics.csv.gz",
+    "frame_coverage.csv.gz",
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -108,13 +112,15 @@ def _strict_skip_or_preflight(context, config_path: Path) -> tuple[Path, dict]:
         subject_dir / "manifest.json",
         subject_dir / "qc" / "qc_index.csv",
         subject_dir / "qc" / QC_PIXEL_EVIDENCE_NAME,
+        *(subject_dir / "data" / name for name in LEGACY_GZIP_DATA_NAMES),
     ]
     blockers += list((subject_dir / "qc" / "images").glob("*.png")) if (subject_dir / "qc" / "images").is_dir() else []
     existing = [path for path in blockers if path.exists()]
     if existing:
         raise RuntimeError(
-            "incomplete final artifacts already exist without a valid completion marker; refusing "
-            "automatic deletion/overwrite: " + ", ".join(str(path) for path in existing[:8])
+            "incomplete or legacy final artifacts already exist without a valid completion marker; "
+            "refusing automatic deletion/overwrite. Archive them outside the subject directory first: "
+            + ", ".join(str(path) for path in existing[:8])
         )
     return subject_dir, expected_identity
 
