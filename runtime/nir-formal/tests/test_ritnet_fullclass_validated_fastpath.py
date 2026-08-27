@@ -26,28 +26,29 @@ def _inputs():
     return labels, probability, max_probability, margin, entropy, valid
 
 
-def test_validated_cohort_path_preserves_primary_class_outputs_and_temporal_uncertainty_means():
+def test_validated_cohort_path_preserves_only_final_scientific_uncertainty_contract():
     labels, probability, max_probability, margin, entropy, valid = _inputs()
-    kwargs = dict(
+    common = dict(
         labels=labels,
         valid_source_mask=valid,
         class_probability=probability,
         max_probability=max_probability,
         top1_top2_margin=margin,
         entropy=entropy,
-        boundary_band_px=5,
-        low_max_probability_threshold=0.60,
     )
 
-    checked = summarize_uncertainty(**kwargs, inputs_validated=False)
-    cohort = summarize_uncertainty(**kwargs, inputs_validated=True)
+    checked = summarize_uncertainty(
+        **common,
+        boundary_band_px=5,
+        low_max_probability_threshold=0.60,
+        inputs_validated=False,
+    )
+    cohort = summarize_uncertainty(**common, inputs_validated=True)
 
-    # Production keeps all four soft classes exactly; these are scientific outputs.
     for name in ("background", "sclera", "iris", "pupil"):
         field = f"soft_{name}_fraction"
         assert cohort[field] == pytest.approx(checked[field])
 
-    # The three ocular means consumed by temporal QC remain numerically identical.
     for field in (
         "ocular_max_probability_mean",
         "ocular_top1_top2_margin_mean",
@@ -55,18 +56,33 @@ def test_validated_cohort_path_preserves_primary_class_outputs_and_temporal_unce
     ):
         assert cohort[field] == pytest.approx(checked[field])
 
-    # Cohort production deliberately skips the expensive QC-only percentile/boundary scope.
+    # Full/QC mode may compute these expensive diagnostics. Cohort mode must not
+    # compute them and must not serialize null placeholders for them.
     assert "whole_max_probability_mean" in checked
-    assert "whole_max_probability_mean" not in cohort
     assert "boundary_entropy_p95" in checked
-    assert "boundary_entropy_p95" not in cohort
-    assert cohort["uncertainty_boundary_band_px"] is None
-    assert cohort["uncertainty_boundary_pixel_count"] is None
+    assert "low_max_probability_threshold" in checked
+    for field in (
+        "whole_max_probability_mean",
+        "boundary_entropy_p95",
+        "uncertainty_boundary_band_px",
+        "uncertainty_boundary_pixel_count",
+        "low_max_probability_threshold",
+        "whole_low_max_probability_fraction",
+        "ocular_low_max_probability_fraction",
+        "boundary_low_max_probability_fraction",
+    ):
+        assert field not in cohort
 
-    # The configured low-confidence threshold is retained only for the ocular domain used in cohort QC.
-    assert cohort["low_max_probability_threshold"] == pytest.approx(0.60)
-    assert cohort["ocular_low_max_probability_fraction"] == pytest.approx(
-        checked["ocular_low_max_probability_fraction"]
-    )
-    assert cohort["whole_low_max_probability_fraction"] is None
-    assert cohort["boundary_low_max_probability_fraction"] is None
+    assert set(cohort) == {
+        "uncertainty_algorithm_version",
+        "uncertainty_domain_version",
+        "soft_class_fraction_domain_version",
+        "soft_background_fraction",
+        "soft_sclera_fraction",
+        "soft_iris_fraction",
+        "soft_pupil_fraction",
+        "uncertainty_ocular_pixel_count",
+        "ocular_max_probability_mean",
+        "ocular_top1_top2_margin_mean",
+        "ocular_entropy_mean",
+    }
