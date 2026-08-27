@@ -8,7 +8,7 @@ anomaly thresholds are intentionally left for sub-031 qualification.
 from __future__ import annotations
 
 from math import hypot, isfinite
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable, Iterator, Mapping
 
 
 TEMPORAL_QC_VERSION = "consecutive-eye-delta-v1"
@@ -73,13 +73,8 @@ def _success(row: Mapping[str, Any]) -> bool:
     return str(row.get("ritnet_status") or "").strip().lower() == "success"
 
 
-def add_temporal_facts(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """Return copies of rows with deterministic temporal fields added.
-
-    Input order is preserved. For each eye separately, frame indices must be
-    strictly increasing; this catches accidental duplicate/reordered eye rows.
-    """
-    output: list[dict[str, Any]] = []
+def iter_temporal_facts(rows: Iterable[Mapping[str, Any]]) -> Iterator[dict[str, Any]]:
+    """Stream copies of rows with deterministic temporal fields added."""
     previous_by_eye: dict[str, dict[str, Any]] = {}
 
     for source in rows:
@@ -138,11 +133,13 @@ def add_temporal_facts(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]
                     temporal["delta_pupil_center_y"] = dy
                     temporal["delta_pupil_center_distance_px"] = float(hypot(dx, dy))
 
-        # Deliberately unfrozen until sub-031 robust distribution qualification.
         temporal["temporal_jump_score"] = None
         temporal["temporal_anomaly"] = None
         row.update(temporal)
-        output.append(row)
         previous_by_eye[eye] = row
+        yield row
 
-    return output
+
+def add_temporal_facts(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """List helper for tests and small callers."""
+    return list(iter_temporal_facts(rows))
