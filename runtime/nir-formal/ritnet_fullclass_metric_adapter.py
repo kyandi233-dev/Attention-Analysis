@@ -97,16 +97,20 @@ def summarize_final_hard_metrics(
 ) -> dict[str, Any]:
     labels = validate_native_labels(labels)
     valid = _validate_analysis_mask(valid_source_mask)
-    valid_count = int(valid.sum())
-    invalid = ~valid
+    full_source_domain = bool(valid.all())
+    valid_count = valid.size if full_source_domain else int(valid.sum())
 
-    # Geometry/components are deliberately fitted only to observed source-backed
-    # labels. Invalid/padded positions are set to background for the existing,
-    # audited native geometry implementation. Class counts are recalculated
-    # below because this temporary background fill must not enter denominators.
-    observed_labels = labels.copy()
-    observed_labels[invalid] = 0
-    native = summarize_fullclass_native(observed_labels)
+    # Most formal eye crops are fully backed by the source AVI. In that common
+    # case the already-audited native summary is exactly the final hard-metric
+    # domain, so do not allocate a second 400x640 label copy and four duplicate
+    # class masks merely to prove that artificial-border counts are zero.
+    if full_source_domain:
+        native = summarize_fullclass_native(labels)
+    else:
+        invalid = ~valid
+        observed_labels = labels.copy()
+        observed_labels[invalid] = 0
+        native = summarize_fullclass_native(observed_labels)
 
     result: dict[str, Any] = {target: native[source] for source, target in DIRECT_MAP.items()}
     for final_prefix, native_prefix in (
@@ -116,18 +120,28 @@ def summarize_final_hard_metrics(
         for suffix in GEOMETRY_SUFFIXES:
             result[f"{final_prefix}_{suffix}"] = native[f"{native_prefix}_{suffix}"]
 
-    class_masks = {class_id: (labels == class_id) for class_id in CLASS_NAMES}
-    for class_id, name in CLASS_NAMES.items():
-        count = int((class_masks[class_id] & valid).sum())
-        result[f"hard_{name}_pixels"] = count
-        result[f"hard_{name}_fraction"] = float(count / valid_count)
+    if full_source_domain:
+        for name in CLASS_NAMES.values():
+            result[f"hard_{name}_pixels"] = int(native[f"native_{name}_pixels"])
+            result[f"hard_{name}_fraction"] = float(native[f"native_{name}_fraction"])
+        result["hard_iris_outer_pixels"] = int(native["native_iris_outer_pixels"])
+        result["hard_iris_outer_fraction"] = float(native["native_iris_outer_fraction"])
+        result["hard_ocular_pixels"] = int(native["native_ocular_pixels"])
+        result["hard_ocular_fraction"] = float(native["native_ocular_fraction"])
+        class_masks = None
+    else:
+        class_masks = {class_id: (labels == class_id) for class_id in CLASS_NAMES}
+        for class_id, name in CLASS_NAMES.items():
+            count = int((class_masks[class_id] & valid).sum())
+            result[f"hard_{name}_pixels"] = count
+            result[f"hard_{name}_fraction"] = float(count / valid_count)
 
-    iris_outer = class_masks[2] | class_masks[3]
-    ocular = class_masks[1] | iris_outer
-    for name, mask in (("iris_outer", iris_outer), ("ocular", ocular)):
-        count = int((mask & valid).sum())
-        result[f"hard_{name}_pixels"] = count
-        result[f"hard_{name}_fraction"] = float(count / valid_count)
+        iris_outer = class_masks[2] | class_masks[3]
+        ocular = class_masks[1] | iris_outer
+        for name, mask in (("iris_outer", iris_outer), ("ocular", ocular)):
+            count = int((mask & valid).sum())
+            result[f"hard_{name}_pixels"] = count
+            result[f"hard_{name}_fraction"] = float(count / valid_count)
 
     if sum(result[f"hard_{name}_pixels"] for name in CLASS_NAMES.values()) != valid_count:
         raise AssertionError("valid-domain hard class counts do not sum to valid pixel count")
@@ -135,18 +149,27 @@ def summarize_final_hard_metrics(
     result.update(
         {
             "analysis_domain_version": ANALYSIS_DOMAIN_VERSION,
-            "analysis_valid_pixel_count": valid_count,
+            "analysis_valid_pixel_count": int(valid_count),
             "analysis_valid_pixel_fraction": float(valid_count / valid.size),
         }
     )
 
-    structures = {
-        "pupil": class_masks[3],
-        "iris_outer": iris_outer,
-        "ocular": ocular,
-    }
-    for name, mask in structures.items():
-        result[f"{name}_predicted_in_padding_pixels"] = int((mask & invalid).sum())
-        result[f"{name}_touches_valid_domain_edge"] = _touches_internal_valid_boundary(mask, valid)
+    if full_source_domain:
+        for name in ("pupil", "iris_outer", "ocular"):
+            result[f"{name}_predicted_in_padding_pixels"] = 0
+            result[f"{name}_touches_valid_domain_edge"] = False
+    else:
+        assert class_masks is not None
+        invalid = ~valid
+        iris_outer = class_masks[2] | class_masks[3]
+        ocular = class_masks[1] | iris_outer
+        structures = {
+            "pupil": class_masks[3],
+            "iris_outer": iris_outer,
+            "ocular": ocular,
+        }
+        for name, mask in structures.items():
+            result[f"{name}_predicted_in_padding_pixels"] = int((mask & invalid).sum())
+            result[f"{name}_touches_valid_domain_edge"] = _touches_internal_valid_boundary(mask, valid)
 
     return result
