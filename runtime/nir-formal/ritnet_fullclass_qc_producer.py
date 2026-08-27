@@ -176,10 +176,10 @@ def _prepare_eye_overlays(
     prepared = _prepare_eye_rois(frame=frame, eye_rows=eye_rows, config=config)
     if not prepared:
         return {}
-    outputs, _timing = runtime.infer_batch([roi for _eye, roi in prepared])
+    labels, _timing = runtime.infer_labels_batch([roi for _eye, roi in prepared])
     overlays: dict[str, np.ndarray] = {}
     for index, (eye, roi) in enumerate(prepared):
-        _labels_color, overlay = render_qc_images(roi, outputs["labels"][index])
+        _labels_color, overlay = render_qc_images(roi, labels[index])
         overlays[eye] = overlay
     return overlays
 
@@ -242,7 +242,6 @@ def _read_qc_frame(
     if frame is not None:
         return frame, current_frame
 
-    # One explicit target retry mirrors the numeric-core failure isolation.
     cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
     ok, decoded = cap.read()
     if ok and decoded is not None:
@@ -298,9 +297,10 @@ def produce_qc_artifacts(
 
     This is a second sparse RITnet pass over selected QC eyes only. YOLO is never
     rerun: boxes come exclusively from final ``eye_metrics`` provenance. QC eyes
-    are packed across frames into the same fixed-b16 RITnet calls used by the
-    production runtime, while every ROI geometry is reproduced and checked
-    against saved provenance before an overlay is accepted.
+    are packed across frames into fixed-b16 calls, but request only the hard
+    ``labels`` ONNX output because probability/uncertainty maps are not needed to
+    render QC overlays. Every ROI geometry is reproduced and checked against
+    saved provenance before an overlay is accepted.
     """
     final_cfg = config.get("fullclass")
     if not isinstance(final_cfg, Mapping):
@@ -359,9 +359,6 @@ def produce_qc_artifacts(
     skipped_budget = 0
     current_frame: int | None = None
     try:
-        # Fixed anchors remain first so they can never be displaced by anomaly
-        # images. Within each tier use absolute frame order instead of phase-name
-        # order, which avoids needless backward seeks through the AVI.
         ordered = sorted(
             selections,
             key=lambda item: (
@@ -410,11 +407,11 @@ def produce_qc_artifacts(
                     if not model.is_file():
                         raise FileNotFoundError(model)
                     runtime = RitnetFullClassFinalRuntime(model, device=device)
-                outputs, _timing = runtime.infer_batch(batch_rois)
+                labels, _timing = runtime.infer_labels_batch(batch_rois)
                 for output_index, (work_index, eye, roi) in enumerate(batch_targets):
                     _labels_color, overlay = render_qc_images(
                         roi,
-                        outputs["labels"][output_index],
+                        labels[output_index],
                     )
                     works[work_index]["overlays"][eye] = overlay
 
@@ -468,9 +465,6 @@ def produce_qc_artifacts(
     finally:
         cap.release()
 
-    # The index itself is also part of the QC byte budget. Nothing has been
-    # published yet, so anomaly images can still be removed without leaving
-    # stale artifacts. Fixed anchors are never removed for budget convenience.
     while True:
         index_rows = _index_rows(
             subject=subject,
