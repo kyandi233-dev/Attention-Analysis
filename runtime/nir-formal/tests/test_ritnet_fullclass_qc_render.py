@@ -31,14 +31,7 @@ def metric(eye, *, success=True):
         "pupil_short_axis": 40,
         "pupil_long_axis": 60,
         "pupil_angle_deg": 15,
-        "iris_outer_fit_valid": True,
-        "iris_outer_center_x": 320,
-        "iris_outer_center_y": 200,
-        "iris_outer_short_axis": 120,
-        "iris_outer_long_axis": 180,
-        "iris_outer_angle_deg": 10,
-        "pupil_to_iris_diameter_ratio": 0.33,
-        "ocular_aperture_ratio_median": 0.44,
+        "pupil_geom_mean_diameter": 49.0,
         "ocular_max_probability_mean": 0.90,
         "ocular_entropy_mean": 0.20,
     }
@@ -70,7 +63,7 @@ def test_composite_contains_original_and_two_eye_panels():
     assert output.shape == (PANEL_HEIGHT + HEADER_HEIGHT, PANEL_WIDTH * 3, 3)
     assert output.dtype == np.uint8
     assert output.any()
-    assert QC_COMPOSITE_VERSION.endswith("v1")
+    assert QC_COMPOSITE_VERSION.endswith("pupil-only")
 
 
 def test_composite_supports_yolo_miss_with_no_eye_rows():
