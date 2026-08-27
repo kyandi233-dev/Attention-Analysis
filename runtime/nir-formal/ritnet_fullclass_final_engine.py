@@ -26,7 +26,7 @@ from ritnet_fullclass_contract import CLASS_MAPPING
 from ritnet_fullclass_coverage import build_fixed_qc_anchor_keys, build_frame_coverage
 from ritnet_fullclass_final_runtime import RitnetFullClassFinalRuntime
 from ritnet_fullclass_io import atomic_write_csv
-from ritnet_fullclass_metric_adapter import summarize_final_hard_metrics
+from ritnet_fullclass_metric_adapter import ANALYSIS_DOMAIN_VERSION, summarize_final_hard_metrics
 from ritnet_fullclass_roi import (
     PADDING_MODE_REPLICATE,
     ROI_ALGORITHM_VERSION,
@@ -48,9 +48,9 @@ from ritnet_fullclass_schema import (
 from ritnet_fullclass_source import SourceFormalContext, load_source_context
 from ritnet_fullclass_temporal import TEMPORAL_QC_VERSION, iter_temporal_facts
 from ritnet_fullclass_uncertainty import (
+    COHORT_UNCERTAINTY_ALGORITHM_VERSION,
+    COHORT_UNCERTAINTY_DOMAIN_VERSION,
     SOFT_CLASS_FRACTION_DOMAIN_VERSION,
-    UNCERTAINTY_ALGORITHM_VERSION,
-    UNCERTAINTY_DOMAIN_VERSION,
     summarize_uncertainty,
 )
 from ritnet_fullclass_workstore import FullClassWorkStore
@@ -403,8 +403,6 @@ def _summarize_outputs(
                 max_probability=outputs["max_probability"][output_index],
                 top1_top2_margin=outputs["top1_top2_margin"][output_index],
                 entropy=outputs["entropy"][output_index],
-                boundary_band_px=0,
-                low_max_probability_threshold=None,
                 inputs_validated=True,
             )
             uncertainty_ms += (time.perf_counter() - started) * 1000.0
@@ -424,54 +422,6 @@ def _summarize_outputs(
         "uncertainty_ms": float(uncertainty_ms),
         "summary_total_ms": float((time.perf_counter() - summary_started) * 1000.0),
     }
-
-
-def _complete_batch(
-    *,
-    items: list[dict[str, Any]],
-    runtime: RitnetFullClassFinalRuntime,
-    boundary_band_px: int,
-    low_max_probability_threshold: float | None,
-) -> list[tuple[int, dict[str, Any]]]:
-    """Synchronous compatibility helper retained for focused metric tests."""
-    successful_indices = [index for index, item in enumerate(items) if item["roi"] is not None]
-    inferred: dict[int, dict[str, Any]] = {}
-    if successful_indices:
-        rois = [items[index]["roi"] for index in successful_indices]
-        outputs, _timing = runtime.infer_batch(rois)
-        for output_index, item_index in enumerate(successful_indices):
-            labels = outputs["labels"][output_index]
-            valid_source_mask = items[item_index].get("valid_source_mask")
-            if valid_source_mask is None:
-                raise RuntimeError(
-                    "successful final RITnet item is missing valid_source_mask; refusing to compute "
-                    "scientific hard metrics over synthetic padding"
-                )
-            hard = summarize_final_hard_metrics(
-                labels,
-                valid_source_mask=valid_source_mask,
-            )
-            uncertainty = summarize_uncertainty(
-                labels=labels,
-                valid_source_mask=valid_source_mask,
-                class_probability=outputs["class_probability"][output_index],
-                max_probability=outputs["max_probability"][output_index],
-                top1_top2_margin=outputs["top1_top2_margin"][output_index],
-                entropy=outputs["entropy"][output_index],
-                boundary_band_px=boundary_band_px,
-                low_max_probability_threshold=low_max_probability_threshold,
-            )
-            inferred[item_index] = {**hard, **uncertainty}
-
-    completed: list[tuple[int, dict[str, Any]]] = []
-    for index, item in enumerate(items):
-        row = dict(item["base"])
-        if index in inferred:
-            row["ritnet_status"] = "success"
-            row["ritnet_failure_reason"] = None
-            row.update(inferred[index])
-        completed.append((int(item["ordinal"]), row))
-    return completed
 
 
 def _work_identity(
@@ -499,8 +449,9 @@ def _work_identity(
         "roi_algorithm_version": ROI_ALGORITHM_VERSION,
         "valid_source_mask_version": VALID_SOURCE_MASK_VERSION,
         "roi_contract": dict(roi_cfg),
-        "uncertainty_algorithm_version": UNCERTAINTY_ALGORITHM_VERSION,
-        "uncertainty_domain_version": UNCERTAINTY_DOMAIN_VERSION,
+        "analysis_domain_version": ANALYSIS_DOMAIN_VERSION,
+        "uncertainty_algorithm_version": COHORT_UNCERTAINTY_ALGORITHM_VERSION,
+        "uncertainty_domain_version": COHORT_UNCERTAINTY_DOMAIN_VERSION,
         "soft_class_fraction_domain_version": SOFT_CLASS_FRACTION_DOMAIN_VERSION,
         "temporal_qc_version": TEMPORAL_QC_VERSION,
         "eye_metrics_schema_version": EYE_METRICS_SCHEMA_VERSION,
