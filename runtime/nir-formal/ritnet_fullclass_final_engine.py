@@ -51,7 +51,7 @@ from ritnet_label_store import sha256_file
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
-CORE_VERSION = "fullclass-final-core-v4-local-data-failure-status"
+CORE_VERSION = "fullclass-final-core-v5-source-provenance"
 VIDEO_SEEK_GAP_THRESHOLD = 64
 
 
@@ -107,6 +107,7 @@ def _source_base_row(subject: str, source: Mapping[str, Any]) -> dict[str, Any]:
         "video_time_ms": _float_or_none(source.get("video_time_ms")),
         "unix_ms": _float_or_none(source.get("unix_ms")),
         "phase_time_ms": _float_or_none(source.get("phase_time_ms")),
+        "source_detection_source": str(source.get("source") or ""),
         "source_frame_status": str(source.get("frame_status") or ""),
         "source_eye_status": str(source.get("status") or ""),
         "source_redetect_reason": str(source.get("redetect_reason") or ""),
@@ -122,13 +123,6 @@ def _source_base_row(subject: str, source: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _final_roi_config(config: Mapping[str, Any]) -> dict[str, Any]:
-    """Return and validate the independent final full-class ROI contract.
-
-    The historical top-level ``roi`` block belongs to the already-completed
-    320x160 formal producer. Final full-class must not inherit its dimensions or
-    expansion values implicitly, even when the current numeric values happen to
-    match.
-    """
     fullclass = config.get("fullclass")
     if not isinstance(fullclass, Mapping):
         raise ValueError("config.fullclass must be a mapping")
@@ -256,10 +250,6 @@ def _prepared_items(
                 current_frame += 1
 
             if decode_failed_at is not None or frame is None:
-                # A failed sequential decode can occasionally be seek-related, so
-                # retry the actual target frame once before treating this frame as
-                # a local data failure. Model/contract failures remain fail-fast
-                # elsewhere and are never converted into per-eye QC rows.
                 cap.set(cv2.CAP_PROP_POS_FRAMES, target_frame)
                 retry_ok, retry_frame = cap.read()
                 if retry_ok and retry_frame is not None:
@@ -278,8 +268,6 @@ def _prepared_items(
                             source=source,
                             reason=reason,
                         )
-                    # Force an explicit seek on the next source-eye frame so one
-                    # unreadable frame does not poison all later groups.
                     current_frame = None
                     continue
 
