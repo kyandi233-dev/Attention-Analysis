@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from ritnet_fullclass_coverage import build_fixed_qc_anchor_keys, build_frame_coverage
 from ritnet_fullclass_schema import FRAME_COVERAGE_FIELDS
 
@@ -106,3 +108,30 @@ def test_video_read_failure_has_priority_in_coverage_status():
         fixed_anchor_keys=set(),
     )
     assert coverage[0]["coverage_status"] == "video_read_failed"
+
+
+def test_frames_selected_eye_count_must_match_eyes_csv_rows():
+    frames = [frame(10, selected=2)]
+    source_eyes = [eye(10, "frame_left")]
+    with pytest.raises(ValueError, match="selected_eye_count does not match"):
+        build_frame_coverage(
+            subject="sub-031",
+            source_frames=frames,
+            source_eye_rows=source_eyes,
+            final_eye_rows=[final_eye(10, "frame_left")],
+            fixed_anchor_keys=set(),
+        )
+
+
+def test_final_eye_cannot_exist_without_matching_source_eye():
+    frames = [frame(10, selected=1)]
+    source_eyes = [eye(10, "frame_left")]
+    finals = [final_eye(10, "frame_left"), final_eye(10, "frame_right")]
+    with pytest.raises(ValueError, match="without matching source eye rows"):
+        build_frame_coverage(
+            subject="sub-031",
+            source_frames=frames,
+            source_eye_rows=source_eyes,
+            final_eye_rows=finals,
+            fixed_anchor_keys=set(),
+        )
