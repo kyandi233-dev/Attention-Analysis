@@ -20,7 +20,15 @@ from ritnet_fullclass_coverage import build_fixed_qc_anchor_keys, build_frame_co
 from ritnet_fullclass_final_runtime import RitnetFullClassFinalRuntime
 from ritnet_fullclass_io import atomic_write_csv_gz
 from ritnet_fullclass_metric_adapter import summarize_final_hard_metrics
-from ritnet_fullclass_roi import ROI_ALGORITHM_VERSION, crop_fixed_aspect_gray, fixed_aspect_roi_geometry
+from ritnet_fullclass_roi import (
+    PADDING_MODE_REPLICATE,
+    ROI_ALGORITHM_VERSION,
+    TARGET_ASPECT_RATIO,
+    TARGET_HEIGHT,
+    TARGET_WIDTH,
+    crop_fixed_aspect_gray,
+    fixed_aspect_roi_geometry,
+)
 from ritnet_fullclass_schema import (
     EYE_METRIC_FIELDS,
     EYE_METRICS_SCHEMA_VERSION,
@@ -109,6 +117,66 @@ def _source_base_row(subject: str, source: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _final_roi_config(config: Mapping[str, Any]) -> dict[str, Any]:
+    """Return and validate the independent final full-class ROI contract.
+
+    The historical top-level ``roi`` block belongs to the already-completed
+    320x160 formal producer. Final full-class must not inherit its dimensions or
+    expansion values implicitly, even when the current numeric values happen to
+    match.
+    """
+    fullclass = config.get("fullclass")
+    if not isinstance(fullclass, Mapping):
+        raise ValueError("config.fullclass must be a mapping")
+    roi = fullclass.get("roi")
+    if not isinstance(roi, Mapping):
+        raise ValueError("config.fullclass.roi must be a mapping")
+
+    required = {
+        "target_width",
+        "target_height",
+        "aspect_ratio",
+        "expand_horizontal_each_side",
+        "expand_vertical_each_side",
+        "padding_mode",
+    }
+    missing = sorted(required - set(roi))
+    if missing:
+        raise ValueError(f"config.fullclass.roi missing required keys: {missing}")
+
+    target_width = int(roi["target_width"])
+    target_height = int(roi["target_height"])
+    aspect_ratio = float(roi["aspect_ratio"])
+    horizontal = float(roi["expand_horizontal_each_side"])
+    vertical = float(roi["expand_vertical_each_side"])
+    padding_mode = str(roi["padding_mode"])
+
+    if (target_width, target_height) != (TARGET_WIDTH, TARGET_HEIGHT):
+        raise ValueError(
+            "final RITnet ROI target must remain 640x400; got "
+            f"{target_width}x{target_height}"
+        )
+    if abs(aspect_ratio - TARGET_ASPECT_RATIO) > 1e-12:
+        raise ValueError(
+            f"final RITnet ROI aspect must remain {TARGET_ASPECT_RATIO}; got {aspect_ratio}"
+        )
+    if horizontal < 0 or vertical < 0:
+        raise ValueError("final ROI expansion fractions must be non-negative")
+    if padding_mode != PADDING_MODE_REPLICATE:
+        raise ValueError(
+            f"final ROI padding mode must remain {PADDING_MODE_REPLICATE!r}; got {padding_mode!r}"
+        )
+
+    return {
+        "target_width": target_width,
+        "target_height": target_height,
+        "aspect_ratio": aspect_ratio,
+        "expand_horizontal_each_side": horizontal,
+        "expand_vertical_each_side": vertical,
+        "padding_mode": padding_mode,
+    }
+
+
 def _group_remaining_rows(
     rows: tuple[dict[str, str], ...],
     start_ordinal: int,
@@ -137,7 +205,7 @@ def _prepared_items(
     rows = context.eye_rows
     if start_ordinal >= len(rows):
         return
-    roi_cfg = context.config["roi"]
+    roi_cfg = _final_roi_config(context.config)
     cap = cv2.VideoCapture(str(context.video))
     if not cap.isOpened():
         raise RuntimeError(f"Cannot open source video: {context.video}")
@@ -183,6 +251,7 @@ def _prepared_items(
                         frame_height=frame_height,
                         expand_horizontal_each_side=float(roi_cfg["expand_horizontal_each_side"]),
                         expand_vertical_each_side=float(roi_cfg["expand_vertical_each_side"]),
+                        padding_mode=str(roi_cfg["padding_mode"]),
                     )
                     roi = crop_fixed_aspect_gray(frame, geometry)
                     base.update(geometry.as_dict())
@@ -251,6 +320,7 @@ def _work_identity(
 ) -> dict[str, Any]:
     git_commit, git_branch = git_identity()
     full_cfg = context.config.get("fullclass", {})
+    roi_cfg = _final_roi_config(context.config)
     return {
         "core_version": CORE_VERSION,
         "subject": context.subject,
@@ -260,11 +330,12 @@ def _work_identity(
         "config_sha256": sha256_file(config_path),
         "ritnet_model_sha256": sha256_file(ritnet_model),
         "ritnet_external_data_sha256": sha256_file(ritnet_external_data),
-        "ritnet_input": [640, 400],
+        "ritnet_input": [TARGET_WIDTH, TARGET_HEIGHT],
         "ritnet_batch_size": 16,
         "ritnet_precision": "fp32",
         "class_mapping": {str(key): value for key, value in CLASS_MAPPING.items()},
         "roi_algorithm_version": ROI_ALGORITHM_VERSION,
+        "roi_contract": dict(roi_cfg),
         "uncertainty_algorithm_version": UNCERTAINTY_ALGORITHM_VERSION,
         "uncertainty_domain_version": UNCERTAINTY_DOMAIN_VERSION,
         "temporal_qc_version": TEMPORAL_QC_VERSION,
@@ -283,6 +354,7 @@ def run_numeric_core(
     context = load_source_context(run_dir, config_path)
     config = context.config
     final_cfg = config.get("fullclass", {})
+    _final_roi_config(config)
     output_dirname = str(final_cfg.get("output_dirname") or "ritnet-fullclass-final")
     subject_dir = context.run_dir.parent / output_dirname / context.subject
     data_dir = subject_dir / "data"
