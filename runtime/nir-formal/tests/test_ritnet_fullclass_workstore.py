@@ -1,27 +1,47 @@
 from __future__ import annotations
 
-import json
 import sqlite3
 
 import pytest
 
 from ritnet_fullclass_workstore import (
     V7_CORE_VERSION,
+    V7_LEGACY_UNCERTAINTY_ALGORITHM_VERSION,
+    V7_LEGACY_UNCERTAINTY_DOMAIN_VERSION,
     V8_CORE_VERSION,
     FullClassWorkStore,
 )
+
+
+ANALYSIS_VERSION = "source-backed-output-mask-v2-pupil-geometry-only"
+COHORT_UNCERTAINTY_VERSION = "cohort-ocular-mean-only-v1"
+COHORT_UNCERTAINTY_DOMAIN = "source-valid-ocular-mean-only-v1"
+SOFT_DOMAIN = "source-valid-class-probability-mean-v1"
 
 
 def source_row(frame, eye):
     return {"phase": "block1", "phase_segment": 1, "frame_idx": frame, "eye": eye}
 
 
-def payload(frame, eye, value):
-    return {**source_row(frame, eye), "hard_pupil_fraction": value}
+def payload(frame, eye, value, *, success=True):
+    row = {
+        **source_row(frame, eye),
+        "eye_metrics_schema_version": 6,
+        "ritnet_status": "success" if success else "failed",
+        "hard_pupil_fraction": value,
+    }
+    if success:
+        row.update(
+            analysis_domain_version=ANALYSIS_VERSION,
+            uncertainty_algorithm_version=COHORT_UNCERTAINTY_VERSION,
+            uncertainty_domain_version=COHORT_UNCERTAINTY_DOMAIN,
+            soft_class_fraction_domain_version=SOFT_DOMAIN,
+        )
+    return row
 
 
 def scientific_identity(core_version, *, subject="sub-031", model_hash="m" * 64):
-    return {
+    identity = {
         "core_version": core_version,
         "subject": subject,
         "source_identity": {"source_video_sha256": "s" * 64, "eyes_sha256": "e" * 64},
@@ -44,13 +64,19 @@ def scientific_identity(core_version, *, subject="sub-031", model_hash="m" * 64)
             "expand_vertical_each_side": 0.45,
             "padding_mode": "replicate",
         },
-        "uncertainty_algorithm_version": "unc-v1",
-        "uncertainty_domain_version": "domain-v1",
-        "soft_class_fraction_domain_version": "soft-v1",
+        "analysis_domain_version": ANALYSIS_VERSION,
+        "uncertainty_algorithm_version": COHORT_UNCERTAINTY_VERSION,
+        "uncertainty_domain_version": COHORT_UNCERTAINTY_DOMAIN,
+        "soft_class_fraction_domain_version": SOFT_DOMAIN,
         "temporal_qc_version": "temporal-v1",
         "eye_metrics_schema_version": 6,
         "frame_coverage_schema_version": 2,
     }
+    if core_version == V7_CORE_VERSION:
+        identity.pop("analysis_domain_version")
+        identity["uncertainty_algorithm_version"] = V7_LEGACY_UNCERTAINTY_ALGORITHM_VERSION
+        identity["uncertainty_domain_version"] = V7_LEGACY_UNCERTAINTY_DOMAIN_VERSION
+    return identity
 
 
 def read_meta(path):
@@ -61,9 +87,14 @@ def read_meta(path):
         con.close()
 
 
+def test_workstore_rejects_incomplete_new_scientific_identity(tmp_path):
+    with pytest.raises(ValueError, match="missing scientific keys"):
+        FullClassWorkStore(tmp_path / "work.sqlite", identity={"subject": "sub-031"})
+
+
 def test_workstore_commits_and_reopens_exact_prefix(tmp_path):
     path = tmp_path / "work.sqlite"
-    identity = {"subject": "sub-031", "source": "abc"}
+    identity = scientific_identity(V8_CORE_VERSION)
     source = [source_row(10, "frame_left"), source_row(10, "frame_right"), source_row(11, "frame_left")]
 
     with FullClassWorkStore(path, identity=identity) as store:
@@ -78,15 +109,15 @@ def test_workstore_commits_and_reopens_exact_prefix(tmp_path):
 
 def test_workstore_rejects_different_resume_identity(tmp_path):
     path = tmp_path / "work.sqlite"
-    with FullClassWorkStore(path, identity={"subject": "sub-031"}):
+    with FullClassWorkStore(path, identity=scientific_identity(V8_CORE_VERSION)):
         pass
     with pytest.raises(RuntimeError, match="identity digest"):
-        FullClassWorkStore(path, identity={"subject": "sub-032"})
+        FullClassWorkStore(path, identity=scientific_identity(V8_CORE_VERSION, subject="sub-032"))
 
 
 def test_workstore_prefix_rejects_source_key_change(tmp_path):
     path = tmp_path / "work.sqlite"
-    identity = {"subject": "sub-031"}
+    identity = scientific_identity(V8_CORE_VERSION)
     with FullClassWorkStore(path, identity=identity) as store:
         store.append_rows([(0, payload(10, "frame_left", 0.1))])
         with pytest.raises(RuntimeError, match="key mismatch"):
@@ -95,13 +126,13 @@ def test_workstore_prefix_rejects_source_key_change(tmp_path):
 
 def test_workstore_unique_eye_key_prevents_duplicate_frame_eye(tmp_path):
     path = tmp_path / "work.sqlite"
-    with FullClassWorkStore(path, identity={"subject": "sub-031"}) as store:
+    with FullClassWorkStore(path, identity=scientific_identity(V8_CORE_VERSION)) as store:
         store.append_rows([(0, payload(10, "frame_left", 0.1))])
         with pytest.raises(Exception):
             store.append_rows([(1, payload(10, "frame_left", 0.2))])
 
 
-def test_v7_checkpoint_migrates_to_v8_when_scientific_identity_is_identical(tmp_path):
+def test_v7_checkpoint_migrates_to_v8_when_real_payload_science_is_identical(tmp_path):
     path = tmp_path / "work.sqlite"
     stored = scientific_identity(V7_CORE_VERSION)
     source = [source_row(10, "frame_left")]
@@ -114,7 +145,6 @@ def test_v7_checkpoint_migrates_to_v8_when_scientific_identity_is_identical(tmp_
     current["summary_workers"] = 4
 
     with FullClassWorkStore(path, identity=current) as migrated:
-        # Metadata must remain v7 until the strict source prefix passes.
         assert V7_CORE_VERSION in read_meta(path)["identity_json"]
         assert migrated.validate_prefix(source) == 1
         assert list(migrated.iter_rows())[0]["hard_pupil_fraction"] == 0.1
@@ -122,6 +152,25 @@ def test_v7_checkpoint_migrates_to_v8_when_scientific_identity_is_identical(tmp_
     meta = read_meta(path)
     assert "resume_migrated_from_identity_digest" in meta
     assert V8_CORE_VERSION in meta["identity_json"]
+
+
+def test_v7_checkpoint_payload_version_mismatch_does_not_mutate_identity(tmp_path):
+    path = tmp_path / "work.sqlite"
+    stored = scientific_identity(V7_CORE_VERSION)
+    bad = payload(10, "frame_left", 0.1)
+    bad["uncertainty_algorithm_version"] = "wrong"
+    with FullClassWorkStore(path, identity=stored) as store:
+        store.append_rows([(0, bad)])
+    before = read_meta(path)
+
+    with FullClassWorkStore(path, identity=scientific_identity(V8_CORE_VERSION)) as candidate:
+        with pytest.raises(RuntimeError, match="payload uncertainty_algorithm_version mismatch"):
+            candidate.validate_prefix([source_row(10, "frame_left")])
+
+    after = read_meta(path)
+    assert after["identity_json"] == before["identity_json"]
+    assert after["identity_digest"] == before["identity_digest"]
+    assert "resume_migrated_from_identity_digest" not in after
 
 
 def test_v7_checkpoint_bad_prefix_does_not_mutate_identity(tmp_path):
@@ -146,12 +195,8 @@ def test_v7_checkpoint_rejects_v8_migration_when_scientific_key_is_missing(tmp_p
     path = tmp_path / "work.sqlite"
     stored = scientific_identity(V7_CORE_VERSION)
     del stored["roi_contract"]
-    with FullClassWorkStore(path, identity=stored):
-        pass
-
-    current = scientific_identity(V8_CORE_VERSION)
-    with pytest.raises(RuntimeError, match="scientific run"):
-        FullClassWorkStore(path, identity=current)
+    with pytest.raises(ValueError, match="missing scientific keys"):
+        FullClassWorkStore(path, identity=stored)
 
 
 def test_v7_checkpoint_rejects_v8_migration_when_model_hash_differs(tmp_path):
