@@ -27,6 +27,7 @@ from .formal import (
     validate_result_contract,
     write_manual_qc_montages,
 )
+from .incremental import run_incremental
 from .runner import VideoFrameSource
 from .schema import ALGORITHMS
 
@@ -44,9 +45,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--run-dir", help="required for prepare/run/all/validate")
     parser.add_argument("--run-confidence", action="store_true")
     parser.add_argument(
+        "--incremental",
+        action="store_true",
+        help="run one algorithm at a time, sharded across --parallel workers, "
+             "writing results incrementally with a structured event log "
+             "(run_events.jsonl) and per-worker logs; implies in-memory video decode",
+    )
+    parser.add_argument(
         "--parallel",
         type=int,
-        default=1,
+        default=8,
         help="shard the independent tight sample across this many worker "
              "processes (CPU-bound; Swirski2D is the main cost)",
     )
@@ -137,7 +145,8 @@ def _prepare(config_path: Path, config: dict, args, subjects: list[str], run_dir
             min_crop_width=int(config["input"]["min_crop_width"]),
             min_crop_height=int(config["input"]["min_crop_height"]),
         )
-        if getattr(args, "in_memory", False):
+        in_memory = getattr(args, "in_memory", False) or getattr(args, "incremental", False)
+        if in_memory:
             # Defer decoding to execution; no PNG crops are written to disk.
             manifest["input_status"] = manifest["input_status"].where(
                 manifest["input_status"] != "pending", "ready"
@@ -183,17 +192,27 @@ def _run(config: dict, args, algorithms: list[str], run_dir: Path) -> dict:
     if (run_dir / "frame_results.csv").exists():
         raise FileExistsError(f"refusing to overwrite existing results in {run_dir}")
     manifest = pd.read_csv(manifest_path, low_memory=False)
-    image_source = "video" if args.in_memory else "disk"
-    frame_source = VideoFrameSource() if args.in_memory else None
+    in_memory = args.in_memory or args.incremental
+    image_source = "video" if in_memory else "disk"
+    frame_source = VideoFrameSource() if in_memory else None
     try:
-        results = execute_manifest(
-            manifest,
-            algorithms,
-            run_dir=run_dir,
-            run_confidence=args.run_confidence,
-            image_source=image_source,
-            max_workers=args.parallel,
-        )
+        if args.incremental:
+            results = run_incremental(
+                manifest,
+                algorithms,
+                run_dir=run_dir,
+                workers=args.parallel,
+                run_confidence=args.run_confidence,
+            )
+        else:
+            results = execute_manifest(
+                manifest,
+                algorithms,
+                run_dir=run_dir,
+                run_confidence=args.run_confidence,
+                image_source=image_source,
+                max_workers=args.parallel,
+            )
         checks = validate_result_contract(manifest, results, algorithms)
         atomic_write_csv(results, run_dir / "frame_results.csv")
         _write_parquet_atomic(results, run_dir / "frame_results.parquet")

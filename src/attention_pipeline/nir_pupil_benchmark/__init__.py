@@ -18,6 +18,7 @@ from .adapters import (
     run_detection,
     run_with_confidence,
 )
+from .incremental import EventLogger, run_incremental
 from .core import (
     Ellipse,
     center_distance,
