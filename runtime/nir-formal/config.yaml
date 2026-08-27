@@ -20,10 +20,15 @@ models:
   yolo: "models/nir-eye-yolo26n-best.onnx"
   # Formal production path: fixed-b8 YOLO selected by DirectML benchmark.
   yolo_formal: "models/nir-eye-yolo26n-best-b8.onnx"
+  # Historical two-output RITnet interface used by the already-completed formal run.
   ritnet: "models/ritnet-b16-fp32.onnx"
   ritnet_external_data: "models/ritnet-b16-fp32.onnx.data"
   ritnet_reference: "models/ritnet-b16-fp32.onnx"
   ritnet_reference_external_data: "models/ritnet-b16-fp32.onnx.data"
+  # Final full-class interface. Generated from the SAME frozen RITnet weights with
+  # deterministic post-processing outputs for compact all-class uncertainty QC.
+  ritnet_fullclass_final: "models/ritnet-b16-fp32-uncertainty.onnx"
+  ritnet_fullclass_final_external_data: "models/ritnet-b16-fp32-uncertainty.onnx.data"
 
 yolo:
   confidence: 0.40
@@ -40,7 +45,8 @@ tracking:
   center_jump_width_fraction: 0.50
 
 roi:
-  # Stable analysis coordinate system used for pupil ellipse outputs.
+  # Historical settings are retained because the final 1.6 ROI starts from the
+  # same YOLO-context expansion, then expands further to an exact 8:5 crop.
   width: 320
   height: 160
   expand_horizontal_each_side: 0.30
@@ -53,6 +59,19 @@ ritnet:
   batch_size: 16
   precision: fp32
   pupil_confidence_min: null
+
+# Final RITnet full-class contract. Thresholds here are QC facts only; they never
+# rewrite hard labels or silently delete rows. low_max_probability_threshold stays
+# null until sub-031 qualification establishes a defensible descriptive cutoff.
+fullclass:
+  output_dirname: "ritnet-fullclass-final"
+  qc_interval_sec: 30
+  qc_boundary_band_px: 5
+  low_max_probability_threshold: null
+  qc_anomaly_max_per_reason: 20
+  qc_image_max_count: 200
+  qc_artifact_budget_bytes: 268435456
+  final_output_limit_bytes: 1073741824
 
 formal:
   focuswave_release: "v3.1.3"
