@@ -1,48 +1,95 @@
 # NIR Formal Runtime
 
-这是 Attention-Analysis `amd-DirectML` 分支的正式 NIR 运行包。它保持既有 NVIDIA 正式分析的科研口径，但使用 ONNX Runtime DirectML，并在 AMD 正式主链中采用经实机 benchmark 确认的 **YOLO fixed batch=8 + RITnet fixed batch=16**。
+这是 Attention-Analysis `amd-DirectML` 分支的正式 NIR 运行包。基础 formal producer 使用 ONNX Runtime DirectML；在已经完成的 formal 结果之上，RITnet full-class 只保留一条当前正式补全路径：**640×400 全量 hard-label 证据版**。
 
-## 当前正式流程
+需要区分两件事：
+
+1. **基础 formal producer**：YOLO 每帧找眼 ROI，再运行 RITnet，生成历史正式 `frames.csv / eyes.csv / summary / manifest / completion / overlays`；
+2. **当前 full-class 完整补全**：复用基础 formal 已保存的 `frame_idx + ROI`，不重跑 YOLO，只重新运行冻结 RITnet，并把过去没有保存的完整四分类证据和可重算派生量全部落盘。
+
+full-class 不再存在“fast 版”和“native 版”两套当前生产路径。历史旧 full-class 文件只作为 provenance（来源追踪）保留。
+
+---
+
+## 1. 基础 formal runtime
+
+当前 AMD package version 为 `0.2.0`，基础正式组合为：
 
 ```text
-FocusWave v3.1.3 phase windows
-        ↓
-连续读取最多 8 帧
-        ↓
-YOLO26n 640×640 / FP32 / DirectML / fixed batch=8
-        ↓
-逐帧恢复 bbox，并从原始分辨率帧裁剪扩展眼 ROI
-        ↓
-RITnet 640×400 / FP32 / DirectML / fixed batch=16
-        ↓
-320×160 analysis geometry
-        ↓
-frames.csv / eyes.csv / summary.json / run_manifest.json /
-phase_windows.json / completion.json / overlays
+YOLO26n: 640×640 / FP32 / DirectML / fixed batch=8 / every frame
+RITnet:  640×400 / FP32 / DirectML / fixed batch=16
+tracking: none
 ```
-
-当前 AMD package version 为 **`0.2.0`**。正式批处理入口为 `run_formal_batch.py`，其内部调用 `run_formal_batched.py`。旧的 `run_pipeline.py` 仍保留 diagnostic、discover、check-env 以及历史兼容逻辑，没有删除。
 
 正式模型资产：
 
 ```text
-models/nir-eye-yolo26n-best.onnx       # 原 fixed-b1 reference/diagnostic
-models/nir-eye-yolo26n-best-b8.onnx    # AMD 正式 YOLO
-models/ritnet-b16-fp32.onnx            # AMD 正式 RITnet
+models/nir-eye-yolo26n-best.onnx       # b1 reference / diagnostic
+models/nir-eye-yolo26n-best-b8.onnx    # AMD formal YOLO
+models/ritnet-b16-fp32.onnx            # AMD formal RITnet
 models/ritnet-b16-fp32.onnx.data
 ```
 
-YOLO benchmark 变体 `b4`、`b16` 可保留用于性能追溯；`b1`、`b10`、`b12`、`b14` 的临时导出文件不是正式运行依赖。
+基础 formal producer 的历史 `eyes.csv` 曾使用 320×160 analysis geometry。这一点仍属于历史 formal Schema；**当前 full-class 的 pupil/iris 几何不再从该 320×160结果拼接，而是统一从同一张 400×640 hard label 重新派生。**
 
-## v0.2.0 性能选择依据
+基础正式批处理入口：
 
-同一 `sub-031`、同一 1800 帧区间的 DirectML 测试显示：YOLO fixed batch=8 为当前硬件组合的吞吐 sweet spot；RITnet 则随 batch 从 8→16 持续提升，在 b16 达到本轮测试最高吞吐，因此正式组合冻结为 **YOLO b8 + RITnet b16**。
+```text
+run_formal_batch.py
+```
 
-完整主要计算链 benchmark（视频 decode → YOLO b8 → ROI crop → RITnet b16 → pupil postprocess）处理 1800 帧耗时约 59.02 s，约 **30.50 FPS**。此前完整正式 sub-031 运行约 20.21 FPS，因此本次优化在该机器/数据段上约提升 **50.9%**。该数字是硬件与数据相关的实测性能，不作为跨设备保证。
+单被试：
 
-## 正式原始数据发现
+```text
+run_formal_batched.py
+```
 
-正式原始数据在逻辑上位于两个目录：`正式实验` 与 `Data`。两块外接存储设备在 Windows 下的盘符可能随连接顺序在 `E:` / `F:` 之间交换，因此 `config.yaml` 同时声明四个候选根：
+`run_pipeline.py` 继续保留 diagnostic、discover、check-env 和历史兼容功能。
+
+---
+
+## 2. 环境与每次新终端
+
+AMD 工作副本：
+
+```text
+D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-amd-DirectML
+```
+
+已有环境：
+
+```text
+D:\CondaEnvs\nir-amd
+```
+
+每次打开 PowerShell / VS Code Terminal：
+
+```powershell
+cd "D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-amd-DirectML"
+
+git status --short --branch
+git switch amd-DirectML
+git pull --ff-only
+
+git status --short --branch
+conda activate "D:\CondaEnvs\nir-amd"
+cd runtime\nir-formal
+
+python -m pytest tests -q
+python run_pipeline.py check-env
+```
+
+full-class 正式入口要求 Git working tree 干净；如果存在未提交代码，不要 `reset --hard`，先检查并处理本地修改。
+
+DirectML 不可用时必须失败，不允许正式 session 静默退回 CPU。
+
+新机器安装见 [`INSTALL.md`](INSTALL.md)，操作与 protocol gate 见 [`RUNBOOK_V1.md`](RUNBOOK_V1.md)。
+
+---
+
+## 3. 基础 formal 数据发现
+
+当前 `config.yaml` 的候选数据根：
 
 ```text
 E:/正式实验
@@ -51,228 +98,243 @@ E:/Data
 F:/Data
 ```
 
-`run_formal_batch.py` 会忽略不存在的候选根，并在所有有效根中按 `sub-*_/nir/*_nir.avi` 发现被试。若同一被试的视频同时出现在多个有效根，会直接报告 duplicate，不静默选择其中一份。
+程序忽略不存在的根；同一 subject 同时出现在多个有效根时必须报 duplicate，不静默选择。
 
-## 环境安装
-
-新 AMD/DirectML Windows 机器从 [`INSTALL.md`](INSTALL.md) 开始。已配置机器使用 `D:\CondaEnvs\nir-amd`。安装完成后，在本目录执行：
+检查：
 
 ```powershell
-python -m pytest tests -q
-python run_pipeline.py check-env
 python run_pipeline.py discover --formal-only
 python run_formal_batch.py --dry-run
 ```
 
-DirectML 不可用时立即失败，不允许整个 session 静默退回纯 CPU。
+已有历史 formal 结果时，不应为了 full-class 补全而重新执行 YOLO producer。
 
-## 每次打开新终端：AMD 工作入口
+---
 
-当前 AMD 工作副本固定为：
+## 4. 当前唯一正式 RITnet full-class
 
-```text
-D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-amd-DirectML
-```
-
-每次重新打开 PowerShell / VS Code Terminal 后，先执行下面这一组命令。它负责进入仓库、激活已经配置好的 DirectML Conda 环境、确认当前分支并拉取 GitHub 最新提交，然后进入正式 NIR runtime：
-
-```powershell
-cd "D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-amd-DirectML"
-conda activate D:\CondaEnvs\nir-amd
-
-git switch amd-DirectML
-git pull --ff-only
-
-cd runtime\nir-formal
-```
-
-如果 `git pull --ff-only` 提示本地存在未提交修改，不要强制覆盖；先用 `git status --short --branch` 检查本地状态，再决定是否提交或保留修改。
-
-开始长时间 GPU 任务前，建议做最小环境确认：
-
-```powershell
-python run_pipeline.py check-env
-```
-
-确认输出中 DirectML provider 可用后，再进入实际运行步骤。
-
-## RITnet 四分类遗漏信息补充：全量运行
-
-此前 AMD 正式主链已经实际执行了完整四分类 RITnet，但旧的 `eyes.csv` 只保留了瞳孔相关几何，没有把 sclera / iris / pupil / visible ocular 等可以直接获得的结构信息全部落盘。补充分析使用 `run_ritnet_fullclass_batch.py`，根据旧正式结果中保存的 `frame_idx` 和 ROI 坐标重新裁剪相同眼 ROI，只重跑冻结的 **RITnet 640×400 / FP32 / fixed batch=16 / DirectML**；不会重新跑 YOLO，也不会改写旧正式产物。
-
-完整变量、归一化指标、QC 图片采样和科学边界见 [`RITNET_FULLCLASS_EXTENSION.md`](RITNET_FULLCLASS_EXTENSION.md)。
-
-当前 AMD 正式结果根为：
+详细数学定义、完整字段、官方/项目派生边界、恢复机制和验收标准见 [`RITNET_FULLCLASS_EXTENSION.md`](RITNET_FULLCLASS_EXTENSION.md)。当前版本标识：
 
 ```text
-D:\_AttentionData\Beijing-NIR\amd-directml
+ritnet-fullclass-v2-native640
+schema_version = 2
 ```
 
-### 1. 先预览将要处理的全部被试
+这是**当前唯一生产 Schema**，版本号不是“双轨运行”的含义。
+
+full-class 数据流：
+
+```text
+已完成 formal eyes.csv 的 frame_idx + YOLO ROI
+→ 原视频重新裁相同 ROI
+→ RITnet 640×400 / FP32 / fixed-b16 / DirectML
+→ 每个 eye row 保存 uint8 [400,640] 四分类 hard label
+→ 同一 label 派生 pupil / iris_outer / ocular
+→ pupil 与 iris ellipse、PIR、component、edge、OAR、原子 gate/diagnostic
+→ class-3 pupil probability 条件摘要随 chunk checkpoint
+→ sparse QC
+→ manifest / completion / SHA256
+```
+
+不会重新运行 YOLO，也不会覆盖基础 formal `eyes.csv`。
+
+### 4.1 原始证据与派生层级
+
+正式 full-class 分为：
+
+```text
+原始可重算证据：*_labels/chunks/*.npz
+索引/存储证明：label_index.csv + chunk_manifest.csv + store_manifest.json
+派生数值：*_ritnet_fullclass_v2-native640.csv
+人工检查：*_qc/ + *_qc_index.csv
+运行说明：*_summary.json + *_manifest.json
+最终证明：*_completion.json
+```
+
+完整 hard label 是后续重算几何/QC 的事实源，CSV 只是派生层。
+
+### 4.2 当前正式入口
+
+用户只调用：
+
+```text
+run_ritnet_fullclass_extension.py
+run_ritnet_fullclass_batch.py
+```
+
+带 `native` 的 Python 文件属于内部实现，不是第二套用户生产入口。旧 fast 参数已经退出正式路径。
+
+正式入口自动执行两项强 provenance：
+
+- source video 计算内容 SHA256；
+- 禁止 model mismatch override。
+
+同时要求 Git working tree 干净，使 manifest 中记录的 commit 能完整代表执行代码。
+
+---
+
+## 5. 先验收 sub-031，再扩 AMD cohort
+
+不要直接根据旧 full-class 的“已跑到 sub-031/从 sub-032 继续”状态启动新版本。完整证据版新增了全量 labels、概率 checkpoint、strict resume 和最终哈希链，必须重新以当前 completion 为完成依据。
+
+### 5.1 dry-run
 
 ```powershell
 python run_ritnet_fullclass_batch.py `
   --output "D:\_AttentionData\Beijing-NIR\amd-directml" `
+  --subjects "sub-031" `
   --device 0 `
-  --postprocess-workers 4 `
+  --chunk-rows 128 `
   --dry-run
 ```
 
-`--dry-run` 只检查并打印每个被试将使用的完整正式 source run，不做 RITnet 推理。当前 batch runner 会优先选择同一被试的 YOLO b8 正式完成目录；没有 b8 时才选择最新的其他完整正式 run。
-
-### 2. 首次运行时先实跑一个被试
+### 5.2 只跑 sub-031
 
 ```powershell
 python run_ritnet_fullclass_batch.py `
   --output "D:\_AttentionData\Beijing-NIR\amd-directml" `
   --subjects "sub-031" `
   --device 0 `
-  --postprocess-workers 4
+  --chunk-rows 128
 ```
 
-检查该被试的 completion marker 为 `status=complete`，CSV 行数完整，并确认 QC index、`*_labels.png`、`*_overlay.png` 和 timing 字段正常后，再启动全量。
+当前 `chunk_rows=128` 是存储打包默认值，只影响 chunk 大小，不改变科学结果；在正式 cohort 开始前根据 `sub-031` 的磁盘占用、压缩率、吞吐与恢复实测冻结。
 
-### 3. 跑全部已完成正式被试
+### 5.3 sub-031 最小验收
+
+至少确认：
+
+```text
+DirectML provider 正确
+processed_rows == expected_rows == stored_label_rows
+label shape == 400×640, dtype == uint8, value domain ⊆ {0,1,2,3}
+label_index ordinal 连续，frame/eye 唯一
+CSV key sequence == label_index key sequence
+所有 chunk SHA256 正确
+store_manifest.status == complete
+store_manifest 内嵌 label_index/chunk_manifest SHA256 正确
+CSV / label_index / chunk_manifest / store_manifest / summary / manifest / qc_index
+    的 SHA256 全部通过 completion verifier
+finalized store 重开后 store_manifest 内容和 SHA256 不变化
+抽样 QC 语义正常
+中断后 committed chunk 能恢复而不重复推理
+```
+
+通过以后再根据本机 discovery 生成 AMD 当前 cohort 的 subject list。
+
+### 5.4 批量运行
+
+例如先在 PowerShell 得到希望处理的 subject list，然后：
 
 ```powershell
 python run_ritnet_fullclass_batch.py `
   --output "D:\_AttentionData\Beijing-NIR\amd-directml" `
+  --subjects "$subjectArg" `
   --device 0 `
-  --postprocess-workers 4
+  --chunk-rows 128
 ```
 
-这就是当前 AMD 的 RITnet 补充全量分析命令。程序会按已有正式完成目录发现全部可处理被试，并根据 extension completion identity 跳过已经完整补充完成且身份一致的被试；不会因为仅存在部分文件就静默当成完成。
-
-### 4. 指定或强制重跑
-
-只跑指定被试：
-
-```powershell
-python run_ritnet_fullclass_batch.py `
-  --output "D:\_AttentionData\Beijing-NIR\amd-directml" `
-  --subjects "sub-031,sub-033" `
-  --device 0 `
-  --postprocess-workers 4
-```
-
-明确需要覆盖该 extension 版本已有结果时才使用 `--force`：
-
-```powershell
-python run_ritnet_fullclass_batch.py `
-  --output "D:\_AttentionData\Beijing-NIR\amd-directml" `
-  --subjects "sub-031" `
-  --device 0 `
-  --postprocess-workers 4 `
-  --force
-```
-
-`--validate-pupil` 会重新请求 pupil probability 并重新计算瞳孔几何，只用于少量验证样本的 parity 检查，不应用于正式全量补充运行。
-
-补充分析结束后，批处理总表写到：
+不要再使用：
 
 ```text
-D:\_AttentionData\Beijing-NIR\amd-directml\ritnet_fullclass_batch_summary.json
+--postprocess-workers
+--validate-pupil
+--force
+--allow-model-mismatch
 ```
 
-每个被试的 full-class CSV、summary、manifest、completion、QC index 和 QC 图片保存在其被选择的原正式 run 目录内，并使用独立 extension 文件名，不覆盖原来的 `eyes.csv`。
+这些属于旧实现或不符合当前严格 provenance 的操作。
 
-## 数据发现与批处理
+---
 
-先检查当前实际挂载的数据：
+## 6. full-class resume 与完成判定
 
-```powershell
-python run_pipeline.py discover --formal-only
-python run_formal_batch.py --dry-run
-```
-
-确认后运行：
-
-```powershell
-python run_formal_batch.py
-```
-
-`batch.subjects.include: []` 表示发现所有编号不低于 `formal.min_subject_number` 的完整正式被试；`exclude` 用于显式排除。命令行 `--subjects sub-031,sub-033` 可临时覆盖 include。
-
-## 单被试正式运行
-
-v0.2.0 的单被试正式入口改为 batched runner：
-
-```powershell
-python run_formal_batched.py `
-  --video "<实际盘符>:\<数据根>\sub-033_\nir\sub-033_nir.avi" `
-  --device 0
-```
-
-正式多被试仍推荐使用 `run_formal_batch.py`，因为它会统一执行候选根发现、重复被试检查、skip-completed 和输出命名。
-
-## 关键正式参数
-
-当前 `config.yaml` 冻结的主要参数包括：
-
-- YOLO confidence：0.40
-- YOLO imgsz：640
-- YOLO fixed batch size：8
-- tracking：`none`（正式主链每帧均由 YOLO 分析；batch 只是并行组织，不跳帧）
-- 标准 analysis geometry：320 × 160
-- RITnet 输入：640 × 400
-- RITnet fixed batch size：16
-- RITnet precision：fp32
-- FocusWave release：v3.1.3
-- 正式被试编号下限：31
-- phases：baseline / instructions / practice / block1 / block2
-- baseline：180 s
-- 正式 block 数：2
-
-YOLO 尾批和 RITnet 尾批都通过重复最后一个真实样本补齐固定 batch，padding 输出不会写入正式结果。phase 边界不跨 YOLO batch。
-
-## 输出与恢复
-
-默认正式输出根为：
+label store 使用事务式 chunk：
 
 ```text
-outputs/amd-directml/formal
+临时 NPZ
+→ flush + fsync
+→ 结构校验
+→ SHA256
+→ os.replace
+→ 更新 index / chunk manifest / store manifest
 ```
 
-v0.2.0 正式运行目录名明确区分两个 batch：
+已经原子提交的 NPZ chunk 是恢复事实源。如果程序在 chunk rename 后、metadata 写入前中断，恢复器会从 committed chunk 重建 metadata，不删除该 chunk、不重跑对应 RITnet。
 
-```text
-sub-031_formal_v3.1.3_yolo-b8_ritnet-b16_fp32
-```
+已经 complete 的 store 内容未变化时重新打开必须保持 byte-stable（字节稳定）。completion verifier 会在任何 store recovery 之后重新核验最终 artifact SHA256，因此 metadata 真正发生恢复时，旧 completion 会自然失效并要求重新 finalize；没有恢复时则不得产生 hash drift。
 
-`completion.json` identity 现在显式包含：
+`status=complete` 不能只看文件存在，必须同时通过行数、shape/dtype/value-domain、chunk hash、index↔CSV key、store manifest 和全部顶层 artifact hash。
 
-- package version
-- FocusWave release / phases
-- YOLO batch size
-- YOLO model SHA256
-- RITnet batch size / precision
-- RITnet model SHA256
-- video identity
+---
 
-因此旧版 `..._yolo_b16_fp32` 目录不会被误判成 v0.2.0 已完成结果。`skip_completed: true` 只跳过通过完整 identity 与 artifact 校验的 `status=complete`。
+## 7. 官方 RITnet 与项目新增记录的边界
 
-正式运行开始时先原子写 `completion.json: running`，全部 CSV/JSON 产物写完并验证后最后写 `complete`。partial/smoke/读帧失败均不会被当成完整结果。
+官方 RITnet 提供/定义：
 
-## 眨眼解释边界
+- `DenseNet2D` 网络；
+- 冻结 `best_model.pkl` 权重；
+- background / sclera / iris / pupil 四分类任务语义；
+- 网络 logits；
+- gamma=0.8、CLAHE 1.5/8×8、Normalize([0.5],[0.5])；
+- 官方 test 流程对 logits 做 argmax 得到 hard prediction。
 
-RITnet 输出 background、sclera、iris、pupil 四类分割；当前正式后处理仍只使用 pupil 类拟合椭圆。把 sclera、iris、pupil 合成 ocular mask 后，可以派生候选眼裂高度/宽度和被试内 normalized openness，但尚未作为正式 blink/PERCLOS 指标验证。
+Attention-Analysis 自己增加：
 
-`ritnet_missing`、`yolo_missing`、瞳孔面积下降或低置信度都不能单独解释为 blink。完整派生逻辑、unknown 门控、时间戳、基线与验证要求见 `docs/020-nir/021-眨眼检测边界与RITnet派生开合度.md`。
+- YOLO ROI 复用与 ROI→640×400 resize；
+- fixed-b16 FP32 ONNX / DirectML 运行适配；
+- `labels_u8` ONNX 输出（logits 后 ArgMax）；
+- `pupil_probability`（Softmax/Gather class 3）；
+- pupil/iris ellipse、PIR、component、edge、OAR；
+- probability summaries；
+- `gate_*` / `diagnostic_*`；
+- label store、QC、manifest、completion、SHA256。
 
-## 代码边界
+所以 `native_*` 只表示“640×400 hard-label 坐标系”，不表示“RITnet 官方变量”。
 
-`run_formal_batched.py` 是 AMD v0.2.0 正式单被试执行器；`run_formal_batch.py` 是正式多被试入口。`run_pipeline.py` 保留 diagnostic / discover / check-env 和历史兼容，不删除。
+---
 
-benchmark/export 工具用于版本性能追溯，不是全量正式分析入口。
+## 8. 几何与 blink/PERCLOS 边界
 
-## 最小验收
+ROI 会被调整到固定 640×400。如果 `scale_x != scale_y`，模型坐标存在非等比例形变。因此 full-class 保存 `source_roi_*`、`roi_to_ritnet_scale_*` 和 `geometry_coordinate_system`，不把模型坐标 PIR 宣称为物理尺度不变指标。完整 hard label 已保存，后续可映回 source ROI 坐标重算。
 
-```powershell
-# runtime/nir-formal
-python -m pytest tests -q
-python run_pipeline.py check-env
-python run_pipeline.py discover --formal-only
-python run_formal_batch.py --dry-run
-```
+OAR（ocular aperture ratio，眼球可见开口比例）是项目派生几何量，不是 EAR（Eye Aspect Ratio，基于眼睑关键点的眼睛纵横比），也不是已经验证的 blink/closed/PERCLOS 标签。`ritnet_missing`、`yolo_missing`、瞳孔面积下降或低 confidence 也不能单独解释为 blink。
 
-在实际 AMD 机器上还应确认 `models/nir-eye-yolo26n-best-b8.onnx` 已存在。缺失时 `run_formal_batch.py` 会直接失败，不会静默退回原 b1 模型。
+当前 full-class 只保存原子 QC 事实，不提前冻结未经验证的新 primary validity cutoff 或 blink cutoff。
+
+---
+
+## 9. 基础 formal producer 的既有参数
+
+`config.yaml` 的基础 formal 主要参数包括：
+
+- YOLO confidence：0.40；
+- YOLO imgsz：640；
+- YOLO fixed batch size：8；
+- tracking：none；
+- 历史 formal analysis geometry：320×160；
+- RITnet 输入：640×400；
+- RITnet fixed batch size：16；
+- RITnet precision：fp32；
+- FocusWave release：v3.1.3；
+- formal subject 编号下限：31；
+- phases：baseline / instructions / practice / block1 / block2；
+- baseline：180 s；
+- expected formal blocks：2。
+
+YOLO/RITnet 尾批只在 fixed ONNX batch 需要时复制最后一个真实样本补齐，padding 输出被丢弃。
+
+---
+
+## 10. 当前不能在仓库里伪称完成的验收
+
+以下必须由 AMD 本机实际运行确认：
+
+- DirectML 端到端 full-class；
+- 当前 `.onnx` + `.onnx.data` 实机加载；
+- `sub-031` 完整 labels / CSV / QC / completion；
+- `chunk_rows=128` 的压缩率、磁盘占用与吞吐；
+- Windows 文件系统下真实中断恢复；
+- 当前 AMD cohort 全量完成。
+
+因此仓库现在可以冻结**唯一完整方法和代码路径**，但在 AMD 本机把这些验收项跑完之前，不能把运行状态写成“44 人已经完成”。
