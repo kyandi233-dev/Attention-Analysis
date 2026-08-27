@@ -212,3 +212,15 @@ def test_build_sample_plan_full_video_temporal_still_bounded():
     assert len(tight) == 80
     assert len(temporal) == 5
     assert np.diff(temporal["frame_idx"]).tolist() == [1, 1, 1, 1]
+
+
+def test_chunk_rows_even_and_preserves_order():
+    from attention_pipeline.nir_pupil_benchmark.formal import _chunk_rows
+
+    rows = [{"i": i} for i in range(10)]
+    chunks = _chunk_rows(rows, 3)
+    assert [len(c) for c in chunks] == [4, 4, 2]
+    assert [row["i"] for chunk in chunks for row in chunk] == list(range(10))
+    assert _chunk_rows(rows, 1) == [rows]
+    assert len(_chunk_rows(rows, 100)) == 10
+    assert _chunk_rows([], 4) == []

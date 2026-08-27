@@ -805,6 +805,39 @@ def enrich_source_and_agreement(results: pd.DataFrame) -> pd.DataFrame:
     return output.reindex(columns=RESULT_COLUMNS)
 
 
+def _chunk_rows(rows: Sequence[Mapping[str, Any]], n: int) -> list[list[dict[str, Any]]]:
+    """Split rows into n contiguous chunks (frame-order preserved)."""
+    if not rows:
+        return []
+    n = max(1, min(int(n), len(rows)))
+    size = int(math.ceil(len(rows) / n))
+    return [list(rows[i:i + size]) for i in range(0, len(rows), size)]
+
+
+def _worker_limit_threads(limit: str) -> None:
+    """Cap TBB/OMP worker threads in a sharded child process.
+
+    Swirski2D uses TBB internally and would otherwise oversubscribe cores when
+    many worker processes run concurrently.
+    """
+    os.environ["TBB_NUM_THREADS"] = limit
+    os.environ["OMP_NUM_THREADS"] = limit
+
+
+def _exec_tight_chunk_worker(
+    chunk: list[dict[str, Any]],
+    algorithms: Sequence[str],
+    run_dir: str,
+    run_confidence: bool,
+    image_source: str,
+) -> pd.DataFrame:
+    return run_crop_list(
+        chunk, algorithms, crop_root=run_dir,
+        run_confidence=run_confidence, mode="independent",
+        image_source=image_source,
+    )
+
+
 def execute_manifest(
     manifest: pd.DataFrame,
     algorithms: Sequence[str],
@@ -812,6 +845,7 @@ def execute_manifest(
     run_dir: str | Path,
     run_confidence: bool = False,
     image_source: str = "disk",
+    max_workers: int = 1,
 ) -> pd.DataFrame:
     for algorithm in algorithms:
         if algorithm not in ALGORITHM_SPECS:
@@ -822,15 +856,41 @@ def execute_manifest(
         ready["input_kind"].eq("fixed_source_canvas_from_temporal_tight_bbox_union")
     ]
     parts: list[pd.DataFrame] = []
+
     if not tight.empty:
-        parts.append(
-            run_crop_list(
-                tight.to_dict("records"), algorithms, crop_root=run_dir,
-                run_confidence=run_confidence, mode="independent",
-                image_source=image_source,
+        tight_rows = tight.to_dict("records")
+        if max_workers > 1:
+            chunks = _chunk_rows(tight_rows, max_workers)
+            limit = str(max(1, (os.cpu_count() or 1) // len(chunks)))
+            from concurrent.futures import ProcessPoolExecutor
+
+            with ProcessPoolExecutor(
+                max_workers=len(chunks),
+                initializer=_worker_limit_threads,
+                initargs=(limit,),
+            ) as pool:
+                futures = [
+                    pool.submit(
+                        _exec_tight_chunk_worker,
+                        chunk, list(algorithms), str(run_dir),
+                        run_confidence, image_source,
+                    )
+                    for chunk in chunks
+                ]
+                for future in futures:
+                    parts.append(future.result())
+        else:
+            parts.append(
+                run_crop_list(
+                    tight_rows, algorithms, crop_root=run_dir,
+                    run_confidence=run_confidence, mode="independent",
+                    image_source=image_source,
+                )
             )
-        )
+
     if not continuous.empty:
+        # Stateful algorithms (PuReST/Starburst/PupilLabs2D) need frame order and
+        # shared detector state; the continuous window is small, run it serially.
         parts.append(
             run_crop_list(
                 continuous.to_dict("records"), algorithms, crop_root=run_dir,
@@ -838,6 +898,7 @@ def execute_manifest(
                 image_source=image_source,
             )
         )
+
     unavailable = manifest[~manifest["input_status"].eq("ready")]
     if not unavailable.empty:
         parts.append(_unavailable_results(unavailable.to_dict("records"), algorithms))

@@ -44,6 +44,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--run-dir", help="required for prepare/run/all/validate")
     parser.add_argument("--run-confidence", action="store_true")
     parser.add_argument(
+        "--parallel",
+        type=int,
+        default=1,
+        help="shard the independent tight sample across this many worker "
+             "processes (CPU-bound; Swirski2D is the main cost)",
+    )
+    parser.add_argument(
         "--in-memory",
         action="store_true",
         help="do not materialize crops to disk; decode source-video frames in "
@@ -185,6 +192,7 @@ def _run(config: dict, args, algorithms: list[str], run_dir: Path) -> dict:
             run_dir=run_dir,
             run_confidence=args.run_confidence,
             image_source=image_source,
+            max_workers=args.parallel,
         )
         checks = validate_result_contract(manifest, results, algorithms)
         atomic_write_csv(results, run_dir / "frame_results.csv")
