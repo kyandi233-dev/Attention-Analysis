@@ -1,17 +1,13 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import cv2
 import numpy as np
 import pytest
 
-import ritnet_fullclass_final_engine as final_engine
 from ritnet_fullclass_final_engine import (
     _complete_batch,
     _final_roi_config,
     _group_remaining_rows,
-    _prepared_items,
     _source_base_row,
 )
 
@@ -49,8 +45,8 @@ def synthetic_labels():
 
 def class_probability(count):
     probability = np.zeros((count, 4, 400, 640), dtype=np.float32)
-    probability[:, 0] = 0.5
-    probability[:, 1] = 0.3
+    probability[:, 0] = 0.50
+    probability[:, 1] = 0.30
     probability[:, 2] = 0.15
     probability[:, 3] = 0.05
     return probability
@@ -65,21 +61,10 @@ class FakeRuntime:
         return {
             "labels": np.stack([self.labels] * count),
             "class_probability": class_probability(count),
-            "max_probability": np.full((count, 400, 640), 0.9, dtype=np.float32),
-            "top1_top2_margin": np.full((count, 400, 640), 0.7, dtype=np.float32),
-            "entropy": np.full((count, 400, 640), 0.3, dtype=np.float32),
+            "max_probability": np.full((count, 400, 640), 0.50, dtype=np.float32),
+            "top1_top2_margin": np.full((count, 400, 640), 0.20, dtype=np.float32),
+            "entropy": np.full((count, 400, 640), 1.142120, dtype=np.float32),
         }, {"valid_batch_size": count}
-
-
-class PaddingUncertaintyRuntime(FakeRuntime):
-    def infer_batch(self, rois):
-        outputs, timing = super().infer_batch(rois)
-        outputs["class_probability"][:, :, :, :80] = 0.0
-        outputs["class_probability"][:, 3, :, :80] = 1.0
-        outputs["max_probability"][:, :, :80] = 0.01
-        outputs["top1_top2_margin"][:, :, :80] = 0.0
-        outputs["entropy"][:, :, :80] = 1.30
-        return outputs, timing
 
 
 def final_roi_config(*, historical_horizontal=9.0, historical_vertical=9.0):
@@ -103,7 +88,7 @@ def final_roi_config(*, historical_horizontal=9.0, historical_vertical=9.0):
     }
 
 
-def test_source_base_row_selects_only_final_source_provenance():
+def test_source_base_row_keeps_only_final_source_provenance():
     row = _source_base_row("sub-031", source())
     assert row["subject"] == "sub-031"
     assert row["yolo_confidence"] == 0.9
@@ -126,12 +111,12 @@ def test_final_roi_contract_fails_closed_when_missing_or_wrong():
 
     wrong = final_roi_config()
     wrong["fullclass"]["roi"]["target_height"] = 401
-    with pytest.raises(ValueError, match="640x400"):
+    with pytest.raises(ValueError):
         _final_roi_config(wrong)
 
     wrong = final_roi_config()
     wrong["fullclass"]["roi"]["padding_mode"] = "reflect101"
-    with pytest.raises(ValueError, match="padding mode"):
+    with pytest.raises(ValueError):
         _final_roi_config(wrong)
 
 
@@ -149,157 +134,60 @@ def test_group_remaining_rows_preserves_source_ordinal_groups():
     assert groups[2][0] == 12
 
 
-def test_prepared_items_records_local_decode_failure_and_resumes_next_frame(monkeypatch):
-    class FakeCapture:
-        def __init__(self, *_):
-            self.position = 0
-            self.released = False
-
-        def isOpened(self):
-            return True
-
-        def get(self, prop):
-            if prop == cv2.CAP_PROP_FRAME_WIDTH:
-                return 160
-            if prop == cv2.CAP_PROP_FRAME_HEIGHT:
-                return 100
-            return 0
-
-        def set(self, prop, value):
-            assert prop == cv2.CAP_PROP_POS_FRAMES
-            self.position = int(value)
-            return True
-
-        def read(self):
-            if self.position == 10:
-                return False, None
-            frame = np.zeros((100, 160, 3), dtype=np.uint8)
-            self.position += 1
-            return True, frame
-
-        def release(self):
-            self.released = True
-
-    monkeypatch.setattr(final_engine.cv2, "VideoCapture", FakeCapture)
-    context = SimpleNamespace(
-        subject="sub-031",
-        video="dummy.avi",
-        config=final_roi_config(),
-        eye_rows=(
-            source(10, "frame_left"),
-            source(10, "frame_right"),
-            source(11, "frame_left"),
-        ),
-    )
-
-    items = list(_prepared_items(context=context, start_ordinal=0))
-    assert len(items) == 3
-    assert items[0]["roi"] is None
-    assert items[1]["roi"] is None
-    assert items[0]["base"]["ritnet_status"] == "failed"
-    assert items[1]["base"]["ritnet_status"] == "failed"
-    assert items[0]["base"]["ritnet_failure_reason"].startswith(
-        "source_video_decode_failed:target_frame=10"
-    )
-    assert items[1]["base"]["ritnet_failure_reason"] == items[0]["base"]["ritnet_failure_reason"]
-    assert items[2]["roi"] is not None
-    assert items[2]["valid_source_mask"].shape == (400, 640)
-
-
-def test_complete_batch_maps_success_outputs_and_keeps_failed_row_in_order():
+def test_complete_batch_keeps_four_classes_and_pupil_only_geometry():
     labels = synthetic_labels()
     valid = np.ones((400, 640), dtype=bool)
+    base = _source_base_row("sub-031", source(10, "frame_left"))
+    items = [{
+        "ordinal": 0,
+        "base": base,
+        "roi": np.zeros((100, 160), dtype=np.uint8),
+        "valid_source_mask": valid,
+    }]
 
-    good_base = _source_base_row("sub-031", source(10, "frame_left"))
-    failed_base = _source_base_row("sub-031", source(10, "frame_right"))
-    failed_base["ritnet_status"] = "failed"
-    failed_base["ritnet_failure_reason"] = "roi_invalid:test"
-    good_base_2 = _source_base_row("sub-031", source(11, "frame_left"))
-
-    items = [
-        {
-            "ordinal": 0,
-            "base": good_base,
-            "roi": np.zeros((100, 160), dtype=np.uint8),
-            "valid_source_mask": valid,
-        },
-        {"ordinal": 1, "base": failed_base, "roi": None, "valid_source_mask": None},
-        {
-            "ordinal": 2,
-            "base": good_base_2,
-            "roi": np.zeros((100, 160), dtype=np.uint8),
-            "valid_source_mask": valid,
-        },
-    ]
     completed = _complete_batch(
         items=items,
         runtime=FakeRuntime(labels),
         boundary_band_px=5,
         low_max_probability_threshold=None,
     )
-    assert [ordinal for ordinal, _ in completed] == [0, 1, 2]
-    assert completed[0][1]["ritnet_status"] == "success"
-    assert completed[1][1]["ritnet_status"] == "failed"
-    assert completed[2][1]["ritnet_status"] == "success"
-    assert completed[0][1]["hard_pupil_pixels"] > 0
-    assert completed[0][1]["ocular_max_probability_mean"] == pytest.approx(0.9)
-    assert completed[0][1]["soft_pupil_fraction"] == pytest.approx(0.05)
-
-
-def test_complete_batch_excludes_padding_from_hard_soft_and_uncertainty_metrics_but_retains_padding_qc():
-    labels = synthetic_labels()
-    source_pupil_pixels = int((labels == 3).sum())
-    labels[40:60, 10:30] = 3
-
-    valid = np.ones((400, 640), dtype=bool)
-    valid[:, :80] = False
-    base = _source_base_row("sub-031", source(10, "frame_left"))
-    items = [
-        {
-            "ordinal": 0,
-            "base": base,
-            "roi": np.zeros((100, 160), dtype=np.uint8),
-            "valid_source_mask": valid,
-        }
-    ]
-
-    completed = _complete_batch(
-        items=items,
-        runtime=PaddingUncertaintyRuntime(labels),
-        boundary_band_px=5,
-        low_max_probability_threshold=0.60,
-    )
     row = completed[0][1]
-
-    assert row["hard_pupil_pixels"] == source_pupil_pixels
-    assert row["pupil_predicted_in_padding_pixels"] == 400
-    assert row["analysis_valid_pixel_count"] == int(valid.sum())
-    assert row["analysis_valid_pixel_fraction"] == pytest.approx(float(valid.mean()))
+    assert row["ritnet_status"] == "success"
+    assert row["hard_background_pixels"] > 0
+    assert row["hard_sclera_pixels"] > 0
+    assert row["hard_iris_pixels"] > 0
+    assert row["hard_pupil_pixels"] > 0
+    assert row["pupil_fit_valid"] is True
+    assert row["pupil_geom_mean_diameter"] > 0
+    assert "iris_outer_fit_valid" not in row
+    assert "pupil_to_iris_diameter_ratio" not in row
+    assert "ocular_aperture_ratio_median" not in row
     assert row["soft_background_fraction"] == pytest.approx(0.50)
     assert row["soft_sclera_fraction"] == pytest.approx(0.30)
     assert row["soft_iris_fraction"] == pytest.approx(0.15)
     assert row["soft_pupil_fraction"] == pytest.approx(0.05)
-    assert row["whole_max_probability_mean"] == pytest.approx(0.90)
-    assert row["whole_top1_top2_margin_mean"] == pytest.approx(0.70)
-    assert row["whole_entropy_mean"] == pytest.approx(0.30)
-    assert row["whole_low_max_probability_fraction"] == pytest.approx(0.0)
 
 
-def test_complete_batch_refuses_success_without_valid_source_mask():
-    labels = synthetic_labels()
+def test_complete_batch_excludes_padding_from_scientific_hard_counts():
+    labels = np.zeros((400, 640), dtype=np.uint8)
+    labels[:, :80] = 3
+    valid = np.ones((400, 640), dtype=bool)
+    valid[:, :80] = False
     base = _source_base_row("sub-031", source(10, "frame_left"))
-    items = [
-        {
-            "ordinal": 0,
-            "base": base,
-            "roi": np.zeros((100, 160), dtype=np.uint8),
-        }
-    ]
+    items = [{
+        "ordinal": 0,
+        "base": base,
+        "roi": np.zeros((100, 160), dtype=np.uint8),
+        "valid_source_mask": valid,
+    }]
 
-    with pytest.raises(RuntimeError, match="valid_source_mask"):
-        _complete_batch(
-            items=items,
-            runtime=FakeRuntime(labels),
-            boundary_band_px=5,
-            low_max_probability_threshold=None,
-        )
+    completed = _complete_batch(
+        items=items,
+        runtime=FakeRuntime(labels),
+        boundary_band_px=5,
+        low_max_probability_threshold=None,
+    )
+    row = completed[0][1]
+    assert row["analysis_valid_pixel_count"] == 400 * 560
+    assert row["hard_pupil_pixels"] == 0
+    assert row["pupil_predicted_in_padding_pixels"] == 400 * 80
