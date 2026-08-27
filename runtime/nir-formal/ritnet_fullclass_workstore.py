@@ -66,13 +66,7 @@ def resume_identity_compatible(
     stored_identity: Mapping[str, Any],
     current_identity: Mapping[str, Any],
 ) -> bool:
-    """Allow only explicit orchestration-only migrations into the v8 core.
-
-    Git commit, branch, whole-config hash and scheduling knobs are provenance or
-    execution details, not per-eye scientific identity. They may change without
-    invalidating a completed checkpoint only when the current core explicitly
-    declares compatibility and every scientific identity field remains equal.
-    """
+    """Allow only explicit orchestration-only migrations into the v8 core."""
     if current_identity.get("core_version") != V8_CORE_VERSION:
         return False
     if stored_identity.get("core_version") not in RESUME_COMPATIBLE_STORED_CORE_VERSIONS:
@@ -91,6 +85,7 @@ class FullClassWorkStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.identity = dict(identity)
         self.identity_digest = identity_digest(self.identity)
+        self._pending_migration_from_digest: str | None = None
         self.connection = sqlite3.connect(str(self.path))
         # This database is only an interruption-recovery checkpoint. Final CSV,
         # manifest and completion artifacts are independently hashed/validated.
@@ -146,27 +141,33 @@ class FullClassWorkStore:
             return
 
         if resume_identity_compatible(stored_identity, self.identity):
-            # Persist the migration before any new rows can be appended. The old
-            # digest remains in metadata for auditability; numeric payload rows
-            # are not rewritten.
-            with self.connection:
-                self.connection.execute(
-                    "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
-                    ("resume_migrated_from_identity_digest", stored_digest),
-                )
-                self.connection.execute(
-                    "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
-                    ("identity_json", canonical_json(self.identity)),
-                )
-                self.connection.execute(
-                    "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
-                    ("identity_digest", self.identity_digest),
-                )
+            # Do not mutate checkpoint metadata yet. The source-key prefix must
+            # first be validated against the current historical eyes.csv.
+            self._pending_migration_from_digest = stored_digest
             return
 
         if stored_digest != self.identity_digest:
             raise RuntimeError("workstore identity digest differs from current scientific run")
         raise RuntimeError("workstore identity differs from current scientific run")
+
+    def _commit_pending_identity_migration(self) -> None:
+        stored_digest = self._pending_migration_from_digest
+        if stored_digest is None:
+            return
+        with self.connection:
+            self.connection.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+                ("resume_migrated_from_identity_digest", stored_digest),
+            )
+            self.connection.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+                ("identity_json", canonical_json(self.identity)),
+            )
+            self.connection.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+                ("identity_digest", self.identity_digest),
+            )
+        self._pending_migration_from_digest = None
 
     @property
     def stored_rows(self) -> int:
@@ -194,9 +195,14 @@ class FullClassWorkStore:
                     f"workstore/source key mismatch at ordinal {expected_ordinal}: "
                     f"stored={actual_key}, source={expected_key}"
                 )
+        # Only a checkpoint that is a strict source prefix is allowed to adopt
+        # the compatible v8 orchestration identity.
+        self._commit_pending_identity_migration()
         return len(stored)
 
     def append_rows(self, items: Iterable[tuple[int, Mapping[str, Any]]]) -> None:
+        if self._pending_migration_from_digest is not None:
+            raise RuntimeError("workstore identity migration requires validate_prefix before append")
         records = []
         for ordinal, row in items:
             phase, segment, frame_idx, eye = _key_from_row(row)
