@@ -1,148 +1,198 @@
-# INSTALL｜NIR Formal Runtime
+# INSTALL｜NIR Formal Runtime（NVIDIA / CUDA v8）
 
-本文件是 `runtime/nir-formal/` 在 AMD/DirectML Windows 机器上的安装入口。当前正式分支为 `amd-DirectML`，package version 为 `0.2.0`，正式组合为 **YOLO b8 + RITnet b16**。
+本文件是 `runtime/nir-formal/` 在 NVIDIA/CUDA Windows 机器上的安装入口。当前分支为 `nvidia-cuda-v8`；final full-class scientific/core 与 `amd-DirectML` v8 共用同一套 ROI、RITnet preprocessing、pupil/uncertainty/temporal 公式、schema、QC 与 completion 契约，执行后端改为 ONNX Runtime `CUDAExecutionProvider`。
 
-新机器安装完成后，正式批量运行前必须继续读取 `RUNBOOK_V1.md`。特别是：当前 `config.yaml` 冻结为两个正式 B block 的 v3.1.3 scope；若实际数据是三 block/BBB 或其他 site/protocol，不得仅因为环境安装成功就直接全量运行，必须先通过 protocol compatibility gate。
+当前 final full-class **不重新执行历史 YOLO producer**。它消费已经完成的历史 formal run：`completion.json + frames.csv + eyes.csv + 原始 NIR AVI`。
 
-## 1. 获取当前分支
+## 1. 获取 NVIDIA v8 分支
+
+新 clone：
 
 ```powershell
 git clone https://github.com/kyandi233-dev/Attention-Analysis.git
 cd Attention-Analysis
-git switch amd-DirectML
-```
-
-如果仓库已经存在：
-
-```powershell
-git switch amd-DirectML
+git fetch origin --prune
+git switch nvidia-cuda-v8
 git pull --ff-only
+git status --short --branch
+git rev-parse HEAD
 ```
 
-正式运行时还必须记录 exact Git commit，不能只记录移动的分支名。
-
-## 2. 创建独立环境
-
-推荐 Python 3.11 的独立 Conda 环境。当前已验证环境为：
+已有仓库：
 
 ```powershell
-conda create -p D:\CondaEnvs\nir-amd python=3.11 -y
-conda activate D:\CondaEnvs\nir-amd
+git fetch origin --prune
+git switch nvidia-cuda-v8
+git pull --ff-only
+git status --short --branch
+git rev-parse HEAD
 ```
 
-进入 runtime 安装依赖：
+正式 runner 要求 clean code worktree；不要用 `git reset --hard` 掩盖未知本地修改。
+
+## 2. 创建独立 NVIDIA 环境
+
+推荐 Python 3.11：
+
+```powershell
+conda create -p D:\CondaEnvs\nir-nvidia python=3.11 -y
+conda activate D:\CondaEnvs\nir-nvidia
+```
+
+进入 runtime 并安装依赖：
 
 ```powershell
 cd runtime\nir-formal
-pip install -r requirements.txt
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 ```
 
-`requirements.txt` 使用 ONNX Runtime DirectML；正式推理不需要 Ultralytics、PyTorch 或 CUDA。DirectML 需要 Windows 10 1903+ 与 DirectX 12 可用 GPU/驱动。
-
-## 3. 检查冻结资产
-
-正式运行至少需要：
+当前关键依赖：
 
 ```text
-models/nir-eye-yolo26n-best.onnx
-models/nir-eye-yolo26n-best-b8.onnx
-models/ritnet-b16-fp32.onnx
-models/ritnet-b16-fp32.onnx.data
-directml_runtime.py
-run_formal_batched.py
-run_formal_batch.py
+onnxruntime-gpu==1.24.4
+opencv-contrib-python>=4.10
+numpy>=1.26
+pandas>=2.2
+PyYAML>=6.0
+```
+
+final full-class 不依赖 PyTorch 或 Ultralytics 做推理；历史 YOLO bbox 已存在于 `eyes.csv`。
+
+## 3. 检查 CUDA provider
+
+```powershell
+nvidia-smi
+python -c "import onnxruntime as ort; print(ort.__version__); print(ort.get_available_providers())"
+```
+
+必须看到：
+
+```text
+CUDAExecutionProvider
+```
+
+`cuda_runtime.py` 会：
+
+- 只创建 CUDAExecutionProvider session；
+- 要求 CUDA 为 primary provider；
+- 设置 `session.disable_cpu_ep_fallback=1`；
+- 调用 `session.disable_fallback()`；
+- 固定 `use_tf32=0`；
+- CUDA 不可用时 fail closed。
+
+因此不要把 `CPUExecutionProvider` 当作 CUDA 环境安装成功的替代证据。
+
+## 4. 检查 final 资产
+
+至少需要：
+
+```text
+models/ritnet-b16-fp32-uncertainty.onnx
+models/ritnet-b16-fp32-uncertainty.onnx.data
+cuda_runtime.py
+ritnet_fullclass_final_runtime.py
+run_ritnet_fullclass_extension.py
+run_ritnet_fullclass_batch.py
 config.yaml
 ```
 
-其中原 `nir-eye-yolo26n-best.onnx` 作为 b1 reference/diagnostic 资产保留；`nir-eye-yolo26n-best-b8.onnx` 才是 v0.2.0 正式 YOLO。
+历史 producer/reference 资产可以继续保留，但 final full-class 不会因此重新跑 YOLO。
 
-然后执行：
+## 5. 跑代码测试
 
 ```powershell
 python -m pytest tests -q
-python run_pipeline.py check-env
 ```
 
-DirectML 不可用时必须失败，不允许整个 session 静默退回纯 CPU。
+仓库根目录 CI 还会跑 portable baseline tests。CPU CI 可以验证 contract、公式、checkpoint、I/O、CUDA fail-closed mock 等，但无法代替真实 NVIDIA GPU smoke。
 
-## 4. 挂载正式数据
+## 6. 准备历史 formal source
 
-正式数据逻辑目录为 `正式实验` 与 `Data`；两块外接盘盘符可能在 `E:` / `F:` 之间交换。`config.yaml` 已声明：
+final batch 的 `--output` 必须指向已经存在历史 formal run 的输出根。每个候选 run 至少应有严格有效的 completion 和：
 
 ```text
-E:/正式实验
-F:/正式实验
-E:/Data
-F:/Data
+sub-XXX_formal_*/
+├── completion.json
+├── frames.csv
+└── eyes.csv
 ```
 
-程序忽略不存在的候选根；若同一被试同时出现在多个有效根，会直接报告 duplicate。
+对应原始 NIR AVI 必须仍可从 recorded source/provenance 找到。
 
-挂载数据盘后先检查：
+先只做 source selection：
 
 ```powershell
-python run_pipeline.py discover --formal-only
-python run_formal_batch.py --dry-run
+python run_ritnet_fullclass_batch.py `
+  --output "<NVIDIA 历史 formal 输出根>" `
+  --subjects "sub-XXX" `
+  --device 0 `
+  --dry-run
 ```
 
-这一步只说明环境/数据发现是否工作，不等于实际 protocol 已被批准。发现结果必须与 `RUNBOOK_V1.md` 的 protocol compatibility gate 一起审查。
-
-## 5. 正式运行
-
-仅当 dry-run 和 protocol gate 都通过后：
+确认选中 run、eyes SHA、frames SHA 与 subject 正确后再正式执行：
 
 ```powershell
-python run_formal_batch.py
-```
-
-只跑少量被试：
-
-```powershell
-python run_formal_batch.py --subjects sub-031,sub-033
-```
-
-显式重跑：
-
-```powershell
-python run_formal_batch.py --subjects sub-031 --force
-```
-
-v0.2.0 输出目录示例：
-
-```text
-sub-031_formal_v3.1.3_yolo-b8_ritnet-b16_fp32
-```
-
-## 6. 单被试正式运行
-
-v0.2.0 的正式单被试入口是：
-
-```powershell
-python run_formal_batched.py `
-  --video "<实际盘符>:\<数据根>\sub-033_\nir\sub-033_nir.avi" `
+python run_ritnet_fullclass_batch.py `
+  --output "<NVIDIA 历史 formal 输出根>" `
+  --subjects "sub-XXX" `
   --device 0
 ```
 
-`run_pipeline.py` 继续保留 diagnostic / discover / check-env 和历史兼容功能；正式全量不再通过旧的逐帧 YOLO formal 路径执行。
+单 run：
 
-## 7. AMD v0.2.0 版本边界
-
-正式参数：
-
-```text
-YOLO26n: 640×640, FP32, DirectML, fixed batch=8, every frame
-RITnet:  640×400, FP32, DirectML, fixed batch=16
-analysis geometry: 320×160
-tracking: none
+```powershell
+python run_ritnet_fullclass_extension.py `
+  --run-dir "<历史 formal run 目录>" `
+  --config config.yaml `
+  --device 0
 ```
 
-YOLO 尾批和 RITnet 尾批都只在固定 ONNX 输入所需时复制最后一个真实样本补齐，padding 输出被丢弃；正式结果仍是一帧一条 frame identity，不跳帧。
+## 7. checkpoint 与 AMD 隔离
 
-本版本的同机同段完整 benchmark（sub-031，1800 帧）约为 30.50 FPS；旧正式运行约 20.21 FPS。性能数字只描述该测试硬件和数据段，不保证跨设备一致。
+NVIDIA v8 work identity 记录：
 
-## 8. 安装完成后的下一份文档
+```text
+execution_backend = onnxruntime-cuda
+execution_provider = CUDAExecutionProvider
+```
 
-不要直接从本文件跳到全量生产。继续读取：
+CUDA checkpoint 只能在 execution identity 一致时恢复。DirectML checkpoint 或未记录 execution identity 的旧 checkpoint不会被 NVIDIA v8 静默接续。这样避免一个 subject 的 numeric rows 混合两个后端。
 
-1. `README.md`：当前 NIR 科研/算法口径；
-2. `RUNBOOK_V1.md`：第二台机器操作、protocol gate、provenance 和中央交付。
+checkpoint 仍是临时 interruption-recovery 数据；最终科研完成状态只由严格有效的 `completion.json` 决定。
+
+## 8. 最终输出与大小限制
+
+输出结构：
+
+```text
+<历史 formal 输出根>\ritnet-fullclass-final\sub-XXX\
+├── data\eye_metrics.csv
+├── data\frame_coverage.csv
+├── qc\images\*.png
+├── qc\qc_index.csv
+├── qc\qc_pixel_evidence.npz
+├── summary.json
+├── manifest.json
+└── completion.json
+```
+
+每被试 final directory 必须 ≤1 GiB。旧 `.csv.gz`、半完成 summary/manifest/QC 在没有有效 completion 时会阻止自动覆盖；先人工确认并归档，不自动删除。
+
+## 9. 实机最小验收顺序
+
+在正式全量前按以下顺序：
+
+```text
+1. git status / exact HEAD
+2. pytest tests -q
+3. CUDAExecutionProvider 可用
+4. final ONNX 文件存在
+5. batch --dry-run source selection 正确
+6. 一个真实 subject / 短范围或可控 smoke 的 CUDA 实机验证
+7. 检查 manifest execution_backend/provider
+8. 检查 plain CSV / bounded QC / completion / <=1 GiB
+9. 再进入 cohort full run
+```
+
+详细科学输出、checkpoint、QC 和 transfer benchmark 说明见 `README.md`。
