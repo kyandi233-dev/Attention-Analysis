@@ -1,10 +1,11 @@
 package:
   name: nir-formal
   version: 0.2.0
-  purpose: AMD DirectML formal NIR analysis runtime; YOLO b8 + RITnet b16 production path
+  purpose: NVIDIA CUDA formal NIR analysis runtime; shared v8 science with CUDA execution
 
 data:
   roots:
+    - "J:/Data"
     - "E:/正式实验"
     - "F:/正式实验"
     - "E:/Data"
@@ -93,9 +94,9 @@ batch:
   device: "0"
   continue_on_error: true
   skip_completed: true
-  output_root: "outputs/amd-directml/formal"
+  output_root: "outputs/nvidia-cuda/formal"
 
 output:
-  root: "outputs/amd-directml"
+  root: "outputs/nvidia-cuda"
   overlay_stride: 3000
   save_rois: false
