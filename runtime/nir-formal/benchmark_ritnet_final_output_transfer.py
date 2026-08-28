@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Isolated DirectML benchmark for the current fixed-b16 final RITnet ONNX.
+"""Isolated CUDA benchmark for the current fixed-b16 final RITnet ONNX.
 
 This script does not write scientific outputs and does not touch the checkpoint.
 It prepares one real b16 tensor using the canonical source/ROI/preprocess path,
@@ -37,7 +37,7 @@ MODES = {
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Benchmark output-transfer cost of the current final RITnet b16 ONNX"
+        description="Benchmark output-transfer cost of the current final RITnet b16 ONNX on CUDA"
     )
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--config", type=Path, default=PACKAGE_ROOT / "config.yaml")
@@ -47,7 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=PACKAGE_ROOT / "outputs" / "amd-directml" / "ritnet-final-output-transfer.json",
+        default=PACKAGE_ROOT / "outputs" / "nvidia-cuda" / "ritnet-final-output-transfer.json",
     )
     return parser.parse_args()
 
