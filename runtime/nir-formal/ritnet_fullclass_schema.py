@@ -1,16 +1,18 @@
-"""Fixed lean schema for the final NIR RITnet full-class workflow.
+"""Fixed schema for the AMD pupil-geometry shadow validation workflow.
 
-Four-class hard/soft segmentation, pupil geometry, source/ROI provenance and
-compact temporal/model-QC facts are retained. Scientifically weak iris geometry,
-PIR/OAR, obsolete uncertainty distributions and dead compatibility groups are
-not part of the production cohort schema.
+The ordinary production fields remain unchanged. Validation-only columns append
+three pupil-geometry paths computed from the same fresh RITnet hard-label output:
+legacy largest-contour OpenCV, current primary-iris-topology OpenCV, and EllSeg
+PartSeg semantic-boundary ElliFit/RANSAC. This schema is intentionally isolated
+on ``amd-DirectML-geometry-validation`` and must not be treated as the final
+cohort schema until a method is selected and frozen.
 """
 from __future__ import annotations
 
 from typing import Any, Mapping
 
 
-EYE_METRICS_SCHEMA_VERSION = 6
+EYE_METRICS_SCHEMA_VERSION = 7
 FRAME_COVERAGE_SCHEMA_VERSION = 2
 
 IDENTITY_FIELDS = (
@@ -68,7 +70,6 @@ RITNET_STATUS_FIELDS = (
     "ritnet_failure_reason",
 )
 
-# Preserve the four native classes plus two cheap unions. No geometry is implied.
 HARD_CLASS_FIELDS = tuple(
     field
     for name in ("background", "sclera", "iris", "pupil", "iris_outer", "ocular")
@@ -92,23 +93,42 @@ COMPONENT_FIELDS = (
     "pupil_largest_component_fraction",
 )
 
-GEOMETRY_FIELDS = tuple(
-    f"pupil_{suffix}"
-    for suffix in (
-        "found",
-        "fit_valid",
-        "center_x",
-        "center_y",
-        "short_axis",
-        "long_axis",
-        "angle_deg",
-        "contour_area",
-        "ellipse_area",
-        "equiv_diameter",
-        "geom_mean_diameter",
-        "whole_mask_touches_edge",
-        "largest_contour_touches_edge",
-    )
+GEOMETRY_SUFFIXES = (
+    "found",
+    "fit_valid",
+    "center_x",
+    "center_y",
+    "short_axis",
+    "long_axis",
+    "angle_deg",
+    "contour_area",
+    "ellipse_area",
+    "equiv_diameter",
+    "geom_mean_diameter",
+    "whole_mask_touches_edge",
+    "largest_contour_touches_edge",
+)
+
+GEOMETRY_FIELDS = tuple(f"pupil_{suffix}" for suffix in GEOMETRY_SUFFIXES)
+
+VALIDATION_DIAGNOSTIC_SUFFIXES = (
+    "geometry_method",
+    "geometry_failure_reason",
+    "valid_boundary_point_count",
+    "ransac_used",
+    "ransac_inlier_count",
+    "ransac_inlier_fraction",
+    "ellipse_fit_error",
+    "axis_ratio",
+    "contour_to_ellipse_area_ratio",
+)
+VALIDATION_GEOMETRY_FIELDS = (
+    "validation_geometry_version",
+    *tuple(
+        f"validation_{method}_pupil_{suffix}"
+        for method in ("legacy", "topology", "ellseg")
+        for suffix in (*GEOMETRY_SUFFIXES, *VALIDATION_DIAGNOSTIC_SUFFIXES)
+    ),
 )
 
 ATOMIC_QC_FIELDS = (
@@ -159,6 +179,7 @@ EYE_METRIC_FIELDS = (
     *ANALYSIS_DOMAIN_FIELDS,
     *COMPONENT_FIELDS,
     *GEOMETRY_FIELDS,
+    *VALIDATION_GEOMETRY_FIELDS,
     *ATOMIC_QC_FIELDS,
     *UNCERTAINTY_BASE_FIELDS,
     *UNCERTAINTY_MEAN_FIELDS,
