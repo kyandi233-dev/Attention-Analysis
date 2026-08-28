@@ -53,7 +53,7 @@ function Ensure-HiddenJunction([string]$Alias, [string]$Target) {
 
 Write-Host "=== Attention-Analysis AMD NIR data organizer ==="
 Write-Host "Root: $Root"
-Write-Host "Policy: MOVE/PRESERVE ONLY; NO DELETE."
+Write-Host "Policy: MOVE/PRESERVE ONLY; NO SCIENTIFIC DATA DELETE."
 Write-Host "Final readable folders: historical-yolo / final-topology / validation / runtime / archive"
 Write-Host ""
 
@@ -88,34 +88,47 @@ if ($manifest.work_identity.analysis_domain_version -ne "source-backed-output-ma
 Write-Host "[SAFETY OK] sub-032 complete Topology result found."
 
 # If the abandoned numbered naming was ever created, normalize it first.
-if ((Test-Path -LiteralPath (Join-Path $Root "10-final-topology")) -and
-    -not (Test-Path -LiteralPath (Join-Path $Root "final-topology"))) {
-    [void](Move-Preserved (Join-Path $Root "10-final-topology") (Join-Path $Root "final-topology"))
+$numberedFinal = Join-Path $Root "10-final-topology"
+$finalTarget = Join-Path $Root "final-topology"
+if ((Test-Path -LiteralPath $numberedFinal) -and -not (Test-Path -LiteralPath $finalTarget)) {
+    [void](Move-Preserved $numberedFinal $finalTarget)
 }
-if ((Test-Path -LiteralPath (Join-Path $Root "20-validation")) -and
-    -not (Test-Path -LiteralPath (Join-Path $Root "validation"))) {
-    [void](Move-Preserved (Join-Path $Root "20-validation") (Join-Path $Root "validation"))
+$numberedValidation = Join-Path $Root "20-validation"
+if ((Test-Path -LiteralPath $numberedValidation) -and -not (Test-Path -LiteralPath (Join-Path $Root "validation"))) {
+    [void](Move-Preserved $numberedValidation (Join-Path $Root "validation"))
 }
-if ((Test-Path -LiteralPath (Join-Path $Root "90-runtime")) -and
-    -not (Test-Path -LiteralPath (Join-Path $Root "runtime"))) {
-    [void](Move-Preserved (Join-Path $Root "90-runtime") (Join-Path $Root "runtime"))
+$numberedRuntime = Join-Path $Root "90-runtime"
+if ((Test-Path -LiteralPath $numberedRuntime) -and -not (Test-Path -LiteralPath (Join-Path $Root "runtime"))) {
+    [void](Move-Preserved $numberedRuntime (Join-Path $Root "runtime"))
 }
-if ((Test-Path -LiteralPath (Join-Path $Root "99-archive")) -and
-    -not (Test-Path -LiteralPath (Join-Path $Root "archive"))) {
-    [void](Move-Preserved (Join-Path $Root "99-archive") (Join-Path $Root "archive"))
+$numberedArchive = Join-Path $Root "99-archive"
+if ((Test-Path -LiteralPath $numberedArchive) -and -not (Test-Path -LiteralPath (Join-Path $Root "archive"))) {
+    [void](Move-Preserved $numberedArchive (Join-Path $Root "archive"))
 }
-if ((Test-Path -LiteralPath (Join-Path $Root "00-source-yolo-historical")) -and
-    -not (Test-Path -LiteralPath (Join-Path $Root "historical-yolo"))) {
-    [void](Move-Preserved (Join-Path $Root "00-source-yolo-historical") (Join-Path $Root "historical-yolo"))
+$numberedSource = Join-Path $Root "00-source-yolo-historical"
+if ((Test-Path -LiteralPath $numberedSource) -and -not (Test-Path -LiteralPath (Join-Path $Root "historical-yolo"))) {
+    [void](Move-Preserved $numberedSource (Join-Path $Root "historical-yolo"))
 }
 
-# Current formal outputs.
-$finalTarget = Join-Path $Root "final-topology"
+# Current formal outputs. If Windows currently locks the legacy folder, leave it
+# intact and continue organizing everything else; rerunning later will retry only
+# this missing migration. Never create an empty final-topology that could be
+# mistaken for the real cohort output.
 $legacyFinal = Join-Path $Root "ritnet-fullclass-final"
-if (-not (Test-Path -LiteralPath $finalTarget) -and (Test-Path -LiteralPath $legacyFinal) -and -not (Is-Junction $legacyFinal)) {
-    [void](Move-Preserved $legacyFinal $finalTarget)
+if (-not (Test-Path -LiteralPath $finalTarget)) {
+    if ((Test-Path -LiteralPath $legacyFinal) -and -not (Is-Junction $legacyFinal)) {
+        [void](Move-Preserved $legacyFinal $finalTarget)
+    }
 }
-Ensure-HiddenJunction $legacyFinal $finalTarget
+if (Test-Path -LiteralPath $finalTarget) {
+    Ensure-HiddenJunction $legacyFinal $finalTarget
+    Write-Host "[OK formal] $finalTarget"
+} elseif (Test-Path -LiteralPath $legacyFinal) {
+    Write-Warning "Formal result folder is still at legacy path because Windows did not allow the move: $legacyFinal"
+    Write-Host "[KEEP legacy final] No data was deleted; close Explorer/image viewers using this folder and rerun later."
+} else {
+    throw "Formal output folder disappeared from all recognized locations; refusing to continue."
+}
 
 # Active recovery checkpoints. Preserve partial sub-034 progress.
 $runtimeTarget = Join-Path $Root "runtime"
@@ -192,11 +205,16 @@ if (Test-Path -LiteralPath $legacyBatchSummary) {
     [void](Move-Preserved $legacyBatchSummary (Join-Path $archiveTarget "legacy-logs\batch-run-summary-legacy.json"))
 }
 
+# README creation is strictly conditional on the real formal directory existing.
+# This prevents a locked formal folder from turning a successful partial cleanup
+# into an irrelevant DirectoryNotFoundException at the end.
+if (Test-Path -LiteralPath $finalTarget) {
 @"
 CURRENT FORMAL OUTPUT ONLY.
 RITnet FP32 + primary-pupil-topology + OpenCV pupil ellipse.
 A subject is complete only when completion.json validates.
 "@ | Set-Content -LiteralPath (Join-Path $finalTarget "README.txt") -Encoding UTF8
+}
 
 @"
 historical-yolo : completed historical YOLO formal runs; bbox/source only; never rerun YOLO.
@@ -212,7 +230,11 @@ Write-Host ""
 Write-Host "=== DONE ===" -ForegroundColor Green
 Write-Host "Use these folders:"
 Write-Host "  historical-yolo   historical YOLO sources"
-Write-Host "  final-topology    current formal outputs"
+if (Test-Path -LiteralPath $finalTarget) {
+    Write-Host "  final-topology    current formal outputs"
+} else {
+    Write-Host "  ritnet-fullclass-final   current formal outputs (temporary legacy name; move was locked)" -ForegroundColor Yellow
+}
 Write-Host "  validation        method validation"
 Write-Host "  runtime           checkpoints/logs"
 Write-Host "  archive           old/failed/backup"
