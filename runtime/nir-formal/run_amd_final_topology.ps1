@@ -15,14 +15,16 @@ Write-Host "Minimum subject: $MinSubject"
 Write-Host "Policy: historical YOLO only; RITnet FP32 + Topology; fail-fast on any subject error."
 Write-Host ""
 
-# Avoid the previously observed Codex/Zotero MCP memory leak.
 $zotero = Get-Process zotero-mcp -ErrorAction SilentlyContinue
 if ($zotero) {
     $zotero | Select-Object Id,ProcessName,Path | Format-Table -AutoSize
     throw "zotero-mcp is running. Disable/close it before formal DirectML inference to avoid system-memory OOM."
 }
 
-$sourceParent = Join-Path $Root "00-source-yolo-historical"
+$sourceParent = Join-Path $Root "historical-yolo"
+if (-not (Test-Path -LiteralPath $sourceParent)) {
+    $sourceParent = Join-Path $Root "00-source-yolo-historical"
+}
 if (-not (Test-Path -LiteralPath $sourceParent)) {
     $sourceParent = $Root
 }
@@ -45,7 +47,7 @@ if (-not $subjects) {
 Write-Host ("Subjects ({0}): {1}" -f $subjects.Count, ($subjects -join ', '))
 Write-Host ""
 
-$logDir = Join-Path $Root "90-runtime\logs"
+$logDir = Join-Path $Root "runtime\logs"
 New-Item -ItemType Directory -Path $logDir -Force | Out-Null
 
 $index = 0
