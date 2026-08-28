@@ -53,7 +53,11 @@ from ritnet_fullclass_uncertainty import (
     UNCERTAINTY_DOMAIN_VERSION,
     summarize_uncertainty,
 )
-from ritnet_fullclass_workstore import FullClassWorkStore
+from ritnet_fullclass_workstore import (
+    FullClassWorkStore,
+    WORKSTORE_IDENTITY_MISMATCH_REASON,
+    archive_identity_mismatch_workstore,
+)
 from ritnet_label_store import sha256_file
 
 
@@ -650,7 +654,19 @@ def run_numeric_core(
     if max_pending_summaries < summary_workers:
         raise ValueError("fullclass.max_pending_summaries must be >= summary_workers")
 
-    with FullClassWorkStore(workstore_path, identity=identity) as store:
+    try:
+        workstore = FullClassWorkStore(workstore_path, identity=identity)
+    except RuntimeError as exc:
+        if str(exc) != "workstore identity digest differs from current run":
+            raise
+        archive_identity_mismatch_workstore(workstore_path)
+        print(
+            f"[WORKSTORE] archived {WORKSTORE_IDENTITY_MISMATCH_REASON}: {workstore_path}",
+            flush=True,
+        )
+        workstore = FullClassWorkStore(workstore_path, identity=identity)
+
+    with workstore as store:
         start_ordinal = store.validate_prefix(context.eye_rows)
         total_rows = len(context.eye_rows)
         item_iterator = _prepared_items(context=context, start_ordinal=start_ordinal)

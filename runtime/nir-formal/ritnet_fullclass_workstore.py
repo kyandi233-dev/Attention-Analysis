@@ -9,11 +9,13 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Iterator, Mapping
 
 
 WORKSTORE_SCHEMA_VERSION = 1
+WORKSTORE_IDENTITY_MISMATCH_REASON = "workstore-identity-digest-mismatch"
 
 
 def canonical_json(value: Any) -> str:
@@ -48,7 +50,11 @@ class FullClassWorkStore:
         self.connection.execute("PRAGMA synchronous=NORMAL")
         self.connection.execute("PRAGMA foreign_keys=ON")
         self.connection.execute("PRAGMA temp_store=MEMORY")
-        self._initialize()
+        try:
+            self._initialize()
+        except Exception:
+            self.connection.close()
+            raise
 
     def _initialize(self) -> None:
         with self.connection:
@@ -163,3 +169,41 @@ class FullClassWorkStore:
 
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
+
+
+def archive_identity_mismatch_workstore(path: Path) -> Path | None:
+    """Move an obsolete SQLite workstore and sidecars into a recoverable archive."""
+    path = Path(path)
+    related = [candidate for candidate in (
+        path,
+        Path(str(path) + "-wal"),
+        Path(str(path) + "-shm"),
+    ) if candidate.exists()]
+    if not related:
+        return None
+
+    archive_root = path.parent.parent / "_archive" / path.parent.name / path.stem
+    archive_root.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    destination = archive_root / f"{stamp}__{WORKSTORE_IDENTITY_MISMATCH_REASON}"
+    suffix = 1
+    while destination.exists():
+        destination = archive_root / f"{stamp}-{suffix:02d}__{WORKSTORE_IDENTITY_MISMATCH_REASON}"
+        suffix += 1
+    destination.mkdir(parents=True)
+
+    for source in related:
+        source.replace(destination / source.name)
+    record = {
+        "archived_at_local": datetime.now().isoformat(timespec="seconds"),
+        "reason": WORKSTORE_IDENTITY_MISMATCH_REASON,
+        "source_workstore": str(path),
+        "archive_dir": str(destination),
+        "files": [source.name for source in related],
+        "policy": "preserve-by-move-no-delete",
+    }
+    (destination / "_archive_reason.json").write_text(
+        json.dumps(record, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return destination
