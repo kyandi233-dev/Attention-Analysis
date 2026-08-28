@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime
 from pathlib import Path
 
 from ritnet_fullclass_final_completion import (
     COMPLETION_NAME,
+    MANIFEST_NAME,
     finalize_subject,
     validate_final_completion,
 )
@@ -22,7 +24,7 @@ from ritnet_fullclass_final_engine import (
     run_numeric_core,
 )
 from ritnet_fullclass_git import require_clean_code_worktree
-from ritnet_fullclass_qc_producer import QC_PIXEL_EVIDENCE_NAME, produce_qc_artifacts
+from ritnet_fullclass_qc_producer import produce_qc_artifacts
 from ritnet_fullclass_source import load_source_context
 
 
@@ -74,6 +76,109 @@ def _expected_work_identity(context, config_path: Path) -> dict:
     )
 
 
+def _manifest_work_identity(subject_dir: Path) -> tuple[dict, dict]:
+    manifest_path = Path(subject_dir) / MANIFEST_NAME
+    with manifest_path.open(encoding="utf-8") as handle:
+        manifest = json.load(handle)
+    if not isinstance(manifest, dict):
+        raise RuntimeError("final completion manifest must be an object")
+    work_identity = manifest.get("work_identity")
+    if not isinstance(work_identity, dict):
+        raise RuntimeError("final completion manifest has no work_identity object")
+    return dict(work_identity), manifest
+
+
+def _complete_manifest_identity(work_identity: dict, manifest: dict) -> bool:
+    """Require explicit provenance and scientific identity before a skip.
+
+    Legacy final outputs can pass the structural validator by reconstructing
+    scientific identity from their recorded commit. They are still not
+    evidence of the current formal rerun, so they must be archived and rerun.
+    """
+    commit = work_identity.get("git_commit")
+    branch = work_identity.get("git_branch")
+    scientific = manifest.get("scientific_identity")
+    provenance = manifest.get("provenance_identity")
+    if (
+        not isinstance(commit, str)
+        or len(commit) != 40
+        or any(char not in "0123456789abcdefABCDEF" for char in commit)
+        or not isinstance(branch, str)
+        or not branch.strip()
+    ):
+        return False
+    if not isinstance(scientific, dict) or not scientific:
+        return False
+    if not isinstance(provenance, dict):
+        return False
+    return provenance.get("git_commit") == commit and provenance.get("git_branch") == branch
+
+
+def _archive_reason_slug(reason: str) -> str:
+    text = "".join(ch.lower() if ch.isalnum() else "-" for ch in str(reason))
+    text = "-".join(part for part in text.split("-") if part)
+    return (text or "stale-state")[:64]
+
+
+def _archive_subject_dir(subject_dir: Path, *, reason: str) -> Path | None:
+    """Move stale final output aside without deleting or overwriting it."""
+    subject_dir = Path(subject_dir)
+    if not subject_dir.exists():
+        return None
+    try:
+        has_contents = any(subject_dir.iterdir())
+    except OSError as exc:
+        raise RuntimeError(f"cannot inspect existing final subject directory: {subject_dir}: {exc}") from exc
+    if not has_contents:
+        return None
+
+    output_root = subject_dir.parent.parent
+    archive_parent = output_root / "_archive" / subject_dir.parent.name / subject_dir.name
+    archive_parent.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    slug = _archive_reason_slug(reason)
+    destination = archive_parent / f"{stamp}__{slug}"
+    suffix = 1
+    while destination.exists():
+        destination = archive_parent / f"{stamp}-{suffix:02d}__{slug}"
+        suffix += 1
+
+    try:
+        subject_dir.replace(destination)
+    except OSError as exc:
+        raise RuntimeError(
+            "existing final subject state needs archiving but Windows refused the directory move. "
+            "Close any Explorer preview/image viewer/VS Code tab that has files open under this subject, "
+            f"then rerun the same command. source={subject_dir} destination={destination} error={exc}"
+        ) from exc
+
+    archive_record = {
+        "archived_at_local": datetime.now().isoformat(timespec="seconds"),
+        "reason": str(reason),
+        "source_subject_dir": str(subject_dir),
+        "archive_dir": str(destination),
+        "policy": "preserve-by-move-no-delete",
+    }
+    (destination / "_archive_reason.json").write_text(
+        json.dumps(archive_record, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    print(
+        json.dumps(
+            {
+                "subject": subject_dir.name,
+                "status": "archived_stale_final_state",
+                "reason": str(reason),
+                "from": str(subject_dir),
+                "to": str(destination),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return destination
+
+
 def _strict_skip_or_preflight(context, config_path: Path) -> tuple[Path, dict]:
     subject_dir = _subject_dir(context)
     expected_identity = _expected_work_identity(context, config_path)
@@ -85,37 +190,47 @@ def _strict_skip_or_preflight(context, config_path: Path) -> tuple[Path, dict]:
             expected_work_identity=expected_identity,
         )
         if validation.valid:
-            print(
-                json.dumps(
-                    {
-                        "subject": context.subject,
-                        "status": "skipped_valid_completion",
-                        "subject_dir": str(subject_dir),
-                        "completion": str(completion),
-                    },
-                    ensure_ascii=False,
-                    indent=2,
+            try:
+                stored_identity, manifest = _manifest_work_identity(subject_dir)
+            except Exception as exc:
+                _archive_subject_dir(
+                    subject_dir,
+                    reason=f"invalid-completion__{_archive_reason_slug(str(exc))}",
                 )
-            )
+                return subject_dir, expected_identity
+            if _complete_manifest_identity(stored_identity, manifest):
+                print(
+                    json.dumps(
+                        {
+                            "subject": context.subject,
+                            "status": "skipped_valid_completion",
+                            "subject_dir": str(subject_dir),
+                            "completion": str(completion),
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                )
+                return subject_dir, expected_identity
+            _archive_subject_dir(subject_dir, reason="valid-completion-identity-incomplete")
             return subject_dir, expected_identity
-        raise RuntimeError(
-            "existing final completion is invalid or belongs to a different run identity; "
-            "refusing automatic overwrite: " + validation.reason
-        )
 
-    blockers = [
-        subject_dir / "summary.json",
-        subject_dir / "manifest.json",
-        subject_dir / "qc" / "qc_index.csv",
-        subject_dir / "qc" / QC_PIXEL_EVIDENCE_NAME,
-    ]
-    blockers += list((subject_dir / "qc" / "images").glob("*.png")) if (subject_dir / "qc" / "images").is_dir() else []
-    existing = [path for path in blockers if path.exists()]
-    if existing:
-        raise RuntimeError(
-            "incomplete final artifacts already exist without a valid completion marker; refusing "
-            "automatic deletion/overwrite: " + ", ".join(str(path) for path in existing[:8])
+        _archive_subject_dir(
+            subject_dir,
+            reason=f"invalid-completion__{_archive_reason_slug(validation.reason)}",
         )
+        return subject_dir, expected_identity
+
+    if subject_dir.exists():
+        try:
+            has_contents = any(subject_dir.iterdir())
+        except OSError as exc:
+            raise RuntimeError(f"cannot inspect existing final subject directory: {subject_dir}: {exc}") from exc
+        if has_contents:
+            _archive_subject_dir(
+                subject_dir,
+                reason="incomplete-or-legacy-without-valid-completion",
+            )
     return subject_dir, expected_identity
 
 
