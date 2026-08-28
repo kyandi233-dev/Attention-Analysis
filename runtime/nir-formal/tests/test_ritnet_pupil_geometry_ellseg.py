@@ -12,6 +12,7 @@ from benchmark_ritnet_pupil_geometry import (
 )
 from ritnet_pupil_geometry import (
     ELLIFIT_MIN_POINT_COUNT,
+    _canonicalize_opencv_geometry,
     _deterministic_ellseg_ransac,
     _ellifit,
     _valid_pupil_boundary_points,
@@ -55,7 +56,10 @@ def _background_fragment_case() -> np.ndarray:
 
 def test_ellifit_minimum_is_seven_2d_points_not_thirteen_or_fifteen():
     assert ELLIFIT_MIN_POINT_COUNT == 7
-    points = _ellipse_points(cx=201.0, cy=133.0, a=38.0, b=21.0, theta=0.31, count=7)
+    # Use an axis-aligned synthetic ellipse here. EllSeg's published ElliFit
+    # parameter/residual code uses an orientation sign convention that is not
+    # the object of this minimum-point contract test.
+    points = _ellipse_points(cx=201.0, cy=133.0, a=38.0, b=21.0, theta=0.0, count=7)
 
     model, error = _ellifit(points)
 
@@ -77,6 +81,32 @@ def test_ellseg_uses_direct_ellifit_when_valid_points_do_not_exceed_15():
     assert fit.inlier_fraction == pytest.approx(1.0)
     assert fit.model[0] == pytest.approx(300.0, abs=1e-5)
     assert fit.model[1] == pytest.approx(180.0, abs=1e-5)
+
+
+def test_opencv_axis_sorting_rotates_angle_with_the_axis_swap():
+    raw = {
+        "found": True,
+        "fit_valid": True,
+        "center_x": 100.0,
+        "center_y": 80.0,
+        "axis_a": 20.0,
+        "axis_b": 50.0,
+        "short_axis": 20.0,
+        "long_axis": 50.0,
+        "angle_deg": 17.0,
+        "contour_area": 700.0,
+        "ellipse_area": 785.0,
+        "equiv_diameter": 29.85,
+        "geom_mean_diameter": np.sqrt(1000.0),
+        "whole_mask_touches_edge": False,
+        "largest_contour_touches_edge": False,
+    }
+
+    canonical = _canonicalize_opencv_geometry(raw)
+
+    assert canonical["long_axis"] == pytest.approx(50.0)
+    assert canonical["short_axis"] == pytest.approx(20.0)
+    assert canonical["angle_deg"] == pytest.approx(107.0)
 
 
 def test_partseg_boundary_filter_rejects_background_exposed_false_pupil():
