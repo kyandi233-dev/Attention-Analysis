@@ -224,17 +224,16 @@ CI 的 CPU runner 无法证明真实 NVIDIA GPU 推理正确，因此 CI 通过�
 
 ## 8. 历史 source 与运行入口
 
-旧 NVIDIA formal producer 的数据发现逻辑曾支持：
+旧 NVIDIA formal producer 的某些历史机器/版本曾使用 `J:/Data`，这是历史路径信息，不加入当前 shared v8 的 raw-data discovery contract。当前 `config.yaml` 与仓库行为数据配置继续统一使用：
 
 ```text
 E:/正式实验
 F:/正式实验
 E:/Data
 F:/Data
-J:/Data
 ```
 
-当前 `config.yaml` 保留这些候选根用于 NVIDIA 机器迁移；实际 final full-class batch 最重要的是 `--output` 指向**已经完成历史 formal producer 的输出根**，其中应存在：
+final full-class 本身并不依赖把历史 formal 输出根写进 `data.roots`；`--output` 应直接指向**已经完成历史 formal producer 的输出根**。因此即使旧 NVIDIA formal 结果位于其他盘符（例如 `J:`），也应通过 `--output` 显式传入，而不是修改当前 raw-data roots。历史输出根中应存在：
 
 ```text
 sub-XXX_formal_*/
