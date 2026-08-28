@@ -5,6 +5,7 @@ param(
 $ErrorActionPreference = "Stop"
 $Root = (Resolve-Path -LiteralPath $Root).Path
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+$script:MoveWarnings = [System.Collections.Generic.List[string]]::new()
 
 function Ensure-Parent([string]$Path) {
     $parent = Split-Path -Parent $Path
@@ -14,22 +15,43 @@ function Ensure-Parent([string]$Path) {
 }
 
 function Move-Preserved([string]$Source, [string]$Destination) {
-    if (-not (Test-Path -LiteralPath $Source)) {
+    $sourceExists = Test-Path -LiteralPath $Source
+    $destinationExists = Test-Path -LiteralPath $Destination
+
+    if (-not $sourceExists -and $destinationExists) {
+        Write-Host "[OK already organized] $Destination"
+        return $true
+    }
+    if (-not $sourceExists) {
         Write-Host "[SKIP missing] $Source"
-        return
+        return $true
     }
-    if (Test-Path -LiteralPath $Destination) {
-        throw "Refusing to overwrite existing destination: $Destination"
+    if ($destinationExists) {
+        $message = "Source and destination both exist; refusing overwrite. source=$Source destination=$Destination"
+        $script:MoveWarnings.Add($message)
+        Write-Warning $message
+        return $false
     }
+
     Ensure-Parent $Destination
-    Move-Item -LiteralPath $Source -Destination $Destination
-    Write-Host "[MOVE] $Source"
-    Write-Host "    -> $Destination"
+    try {
+        Move-Item -LiteralPath $Source -Destination $Destination -ErrorAction Stop
+        Write-Host "[MOVE] $Source"
+        Write-Host "    -> $Destination"
+        return $true
+    }
+    catch {
+        $message = "Could not move (likely Windows file/directory handle). source=$Source destination=$Destination error=$($_.Exception.Message)"
+        $script:MoveWarnings.Add($message)
+        Write-Warning $message
+        Write-Host "    Kept in original location; organizer will continue."
+        return $false
+    }
 }
 
 Write-Host "=== AMD NIR data-root organizer ==="
 Write-Host "Root: $Root"
-Write-Host "Policy: move/preserve only; no deletion"
+Write-Host "Policy: move/preserve only; no deletion; resumable; locked items do not abort"
 
 # Hard safety gate: the successful sub-032 production result must remain exactly
 # where downstream cohort analysis expects it, and it must be the frozen
@@ -63,36 +85,41 @@ if (Test-Path -LiteralPath $final31) {
     $completion31 = Join-Path $final31 "completion.json"
     if (-not (Test-Path -LiteralPath $completion31)) {
         $dest31 = Join-Path $Root "_archive\ritnet-fullclass-final\sub-031\${stamp}__aborted-formal-rerun"
-        Move-Preserved $final31 $dest31
+        [void](Move-Preserved $final31 $dest31)
     }
     else {
         Write-Host "[KEEP formal] sub-031 has completion.json; organizer will not move it"
     }
 }
+else {
+    Write-Host "[OK] no active formal sub-031 directory to organize"
+}
 
 # Keep the scientifically important geometry-selection run visible as validation
 # evidence rather than burying it among failed/legacy artifacts.
-Move-Preserved `
+[void](Move-Preserved `
     (Join-Path $Root "ritnet-fullclass-geometry-validation") `
-    (Join-Path $Root "_validation\pupil-geometry")
+    (Join-Path $Root "_validation\pupil-geometry"))
 
 # Historical/recovery-only workstores and smoke artifacts are not formal cohort
 # outputs. Preserve them under explicit archive categories.
-Move-Preserved `
+[void](Move-Preserved `
     (Join-Path $Root ".ritnet-fullclass-work-geometry-validation-sub031-20260828") `
-    (Join-Path $Root "_archive\workstores\.ritnet-fullclass-work-geometry-validation-sub031-20260828")
-Move-Preserved `
+    (Join-Path $Root "_archive\workstores\.ritnet-fullclass-work-geometry-validation-sub031-20260828"))
+[void](Move-Preserved `
     (Join-Path $Root ".ritnet-fullclass-work-production-backup-20260828") `
-    (Join-Path $Root "_archive\workstores\.ritnet-fullclass-work-production-backup-20260828")
-Move-Preserved `
+    (Join-Path $Root "_archive\workstores\.ritnet-fullclass-work-production-backup-20260828"))
+[void](Move-Preserved `
     (Join-Path $Root "_smoke-workstore-archive") `
-    (Join-Path $Root "_archive\development\_smoke-workstore-archive")
-Move-Preserved `
+    (Join-Path $Root "_archive\development\_smoke-workstore-archive"))
+[void](Move-Preserved `
     (Join-Path $Root "batch_run_summary.json") `
-    (Join-Path $Root "_archive\legacy-run-summaries\batch_run_summary.json")
+    (Join-Path $Root "_archive\legacy-run-summaries\batch_run_summary.json"))
 
 # The current production workstore remains in place because the current engine
 # uses this exact path for interruption recovery. It is not a scientific output.
+# In particular, sub-034's interrupted checkpoint must remain here so the next
+# formal run can resume rather than restarting from zero.
 $currentWork = Join-Path $Root ".ritnet-fullclass-work"
 if (Test-Path -LiteralPath $currentWork) {
     Write-Host "[KEEP runtime] $currentWork"
@@ -132,3 +159,15 @@ Write-Host "Validation evidence:    $Root\_validation"
 Write-Host "Historical archive:     $Root\_archive"
 Write-Host "Active recovery cache:  $Root\.ritnet-fullclass-work"
 Write-Host "Historical YOLO sources remain untouched: $Root\sub-*_formal_*"
+
+if ($script:MoveWarnings.Count -gt 0) {
+    Write-Host ""
+    Write-Warning "Organizer finished with $($script:MoveWarnings.Count) item(s) left in place. Nothing was deleted."
+    foreach ($warning in $script:MoveWarnings) {
+        Write-Host "  - $warning"
+    }
+    Write-Host "Close Explorer/image-viewer/VS Code handles for those paths and rerun this same script."
+}
+else {
+    Write-Host "No move warnings. Data-root organization is complete."
+}
