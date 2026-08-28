@@ -17,41 +17,44 @@ function Ensure-Dir([string]$Path) {
     }
 }
 
-function Move-ToReadablePath([string]$Legacy, [string]$Readable, [switch]$KeepHiddenJunction) {
-    if (Is-Junction $Legacy) {
-        Write-Host "[OK alias] $Legacy"
-        return
+function Move-Preserved([string]$Source, [string]$Destination) {
+    if (-not (Test-Path -LiteralPath $Source)) {
+        return $false
     }
-    if (-not (Test-Path -LiteralPath $Legacy)) {
-        if (Test-Path -LiteralPath $Readable) {
-            Write-Host "[OK moved] $Readable"
-        } else {
-            Write-Host "[SKIP missing] $Legacy"
-        }
-        return
+    if (Test-Path -LiteralPath $Destination) {
+        Write-Warning "Both paths exist; refusing overwrite. source=$Source destination=$Destination"
+        return $false
     }
-    if (Test-Path -LiteralPath $Readable) {
-        Write-Warning "Both legacy and readable paths exist; leaving both untouched: $Legacy / $Readable"
-        return
-    }
-    Ensure-Dir (Split-Path -Parent $Readable)
+    Ensure-Dir (Split-Path -Parent $Destination)
     try {
-        Move-Item -LiteralPath $Legacy -Destination $Readable
-        Write-Host "[MOVE] $Legacy"
-        Write-Host "    -> $Readable"
-        if ($KeepHiddenJunction) {
-            New-Item -ItemType Junction -Path $Legacy -Target $Readable | Out-Null
-            attrib +h $Legacy 2>$null
-            Write-Host "[HIDDEN compatibility alias] $Legacy"
-        }
-    } catch {
-        Write-Warning "Could not move (likely Windows file lock); skipped without deleting anything: $Legacy :: $($_.Exception.Message)"
+        Move-Item -LiteralPath $Source -Destination $Destination -ErrorAction Stop
+        Write-Host "[MOVE] $Source"
+        Write-Host "    -> $Destination"
+        return $true
+    }
+    catch {
+        Write-Warning "Could not move; left untouched. source=$Source error=$($_.Exception.Message)"
+        return $false
     }
 }
 
-Write-Host "=== Attention-Analysis AMD NIR data layout organizer ==="
+function Ensure-HiddenJunction([string]$Alias, [string]$Target) {
+    if (Test-Path -LiteralPath $Alias) {
+        if (Is-Junction $Alias) {
+            Write-Host "[OK compatibility alias] $Alias"
+        }
+        return
+    }
+    if (-not (Test-Path -LiteralPath $Target)) { return }
+    New-Item -ItemType Junction -Path $Alias -Target $Target | Out-Null
+    attrib +h $Alias 2>$null
+    Write-Host "[HIDDEN compatibility alias] $Alias -> $Target"
+}
+
+Write-Host "=== Attention-Analysis AMD NIR data organizer ==="
 Write-Host "Root: $Root"
-Write-Host "Policy: MOVE ONLY, NO DELETE; legacy compatibility aliases are hidden."
+Write-Host "Policy: MOVE/PRESERVE ONLY; NO DELETE."
+Write-Host "Final readable folders: historical-yolo / final-topology / validation / runtime / archive"
 Write-Host ""
 
 $active = Get-CimInstance Win32_Process | Where-Object {
@@ -59,124 +62,157 @@ $active = Get-CimInstance Win32_Process | Where-Object {
     $_.CommandLine -match 'ritnet_fullclass|run_ritnet_fullclass'
 }
 if ($active) {
-    Write-Host "Active formal RITnet process detected:" -ForegroundColor Red
     $active | Select-Object ProcessId,Name,CommandLine | Format-List
-    throw "Stop the RITnet run before reorganizing the data root."
+    throw "A formal RITnet process is still running. Stop it before reorganizing."
 }
 
-# Safety gate: never reorganize unless the successful Topology sub-032 is present.
+# Safety gate: do not reorganize unless the known-good sub-032 Topology result exists.
 $final32Candidates = @(
+    (Join-Path $Root "final-topology\sub-032"),
     (Join-Path $Root "10-final-topology\sub-032"),
     (Join-Path $Root "ritnet-fullclass-final\sub-032")
 )
 $final32 = $final32Candidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
-if (-not $final32) {
-    throw "Safety gate failed: cannot find completed formal sub-032."
-}
+if (-not $final32) { throw "Safety gate failed: completed formal sub-032 was not found." }
 $completion32 = Join-Path $final32 "completion.json"
 $manifest32 = Join-Path $final32 "manifest.json"
 if (-not (Test-Path -LiteralPath $completion32) -or -not (Test-Path -LiteralPath $manifest32)) {
-    throw "Safety gate failed: sub-032 completion/manifest missing under $final32"
+    throw "Safety gate failed: sub-032 completion.json or manifest.json is missing."
 }
 $completion = Get-Content -LiteralPath $completion32 -Raw | ConvertFrom-Json
 $manifest = Get-Content -LiteralPath $manifest32 -Raw | ConvertFrom-Json
-if ($completion.status -ne "complete") {
-    throw "Safety gate failed: sub-032 status is not complete."
-}
+if ($completion.status -ne "complete") { throw "Safety gate failed: sub-032 is not complete." }
 if ($manifest.work_identity.analysis_domain_version -ne "source-backed-output-mask-v3-primary-pupil-topology") {
     throw "Safety gate failed: sub-032 is not the frozen Topology production result."
 }
 Write-Host "[SAFETY OK] sub-032 complete Topology result found."
-Write-Host ""
 
-# 1) Current formal outputs. Old code keeps working through a hidden junction.
-Move-ToReadablePath `
-    (Join-Path $Root "ritnet-fullclass-final") `
-    (Join-Path $Root "10-final-topology") `
-    -KeepHiddenJunction
-
-# 2) Active SQLite recovery checkpoints. This preserves partial sub-034/sub-036 progress.
-Move-ToReadablePath `
-    (Join-Path $Root ".ritnet-fullclass-work") `
-    (Join-Path $Root "90-runtime\checkpoints\final-topology") `
-    -KeepHiddenJunction
-
-# 3) Scientific validation evidence.
-if (Test-Path -LiteralPath (Join-Path $Root "_validation\pupil-geometry")) {
-    Move-ToReadablePath `
-        (Join-Path $Root "_validation\pupil-geometry") `
-        (Join-Path $Root "20-validation\pupil-geometry")
+# If the abandoned numbered naming was ever created, normalize it first.
+if ((Test-Path -LiteralPath (Join-Path $Root "10-final-topology")) -and
+    -not (Test-Path -LiteralPath (Join-Path $Root "final-topology"))) {
+    [void](Move-Preserved (Join-Path $Root "10-final-topology") (Join-Path $Root "final-topology"))
 }
-Move-ToReadablePath `
-    (Join-Path $Root "ritnet-fullclass-geometry-validation") `
-    (Join-Path $Root "20-validation\pupil-geometry")
+if ((Test-Path -LiteralPath (Join-Path $Root "20-validation")) -and
+    -not (Test-Path -LiteralPath (Join-Path $Root "validation"))) {
+    [void](Move-Preserved (Join-Path $Root "20-validation") (Join-Path $Root "validation"))
+}
+if ((Test-Path -LiteralPath (Join-Path $Root "90-runtime")) -and
+    -not (Test-Path -LiteralPath (Join-Path $Root "runtime"))) {
+    [void](Move-Preserved (Join-Path $Root "90-runtime") (Join-Path $Root "runtime"))
+}
+if ((Test-Path -LiteralPath (Join-Path $Root "99-archive")) -and
+    -not (Test-Path -LiteralPath (Join-Path $Root "archive"))) {
+    [void](Move-Preserved (Join-Path $Root "99-archive") (Join-Path $Root "archive"))
+}
+if ((Test-Path -LiteralPath (Join-Path $Root "00-source-yolo-historical")) -and
+    -not (Test-Path -LiteralPath (Join-Path $Root "historical-yolo"))) {
+    [void](Move-Preserved (Join-Path $Root "00-source-yolo-historical") (Join-Path $Root "historical-yolo"))
+}
 
-# 4) Historical/failed material. Runner keeps writing to _archive through a hidden junction.
-Move-ToReadablePath `
-    (Join-Path $Root "_archive") `
-    (Join-Path $Root "99-archive") `
-    -KeepHiddenJunction
+# Current formal outputs.
+$finalTarget = Join-Path $Root "final-topology"
+$legacyFinal = Join-Path $Root "ritnet-fullclass-final"
+if (-not (Test-Path -LiteralPath $finalTarget) -and (Test-Path -LiteralPath $legacyFinal) -and -not (Is-Junction $legacyFinal)) {
+    [void](Move-Preserved $legacyFinal $finalTarget)
+}
+Ensure-HiddenJunction $legacyFinal $finalTarget
 
-Move-ToReadablePath `
+# Active recovery checkpoints. Preserve partial sub-034 progress.
+$runtimeTarget = Join-Path $Root "runtime"
+Ensure-Dir $runtimeTarget
+$checkpointTarget = Join-Path $runtimeTarget "checkpoints\final-topology"
+$legacyWork = Join-Path $Root ".ritnet-fullclass-work"
+if (-not (Test-Path -LiteralPath $checkpointTarget) -and (Test-Path -LiteralPath $legacyWork) -and -not (Is-Junction $legacyWork)) {
+    [void](Move-Preserved $legacyWork $checkpointTarget)
+}
+Ensure-HiddenJunction $legacyWork $checkpointTarget
+Ensure-Dir (Join-Path $runtimeTarget "logs")
+
+# Scientific validation evidence.
+$validationTarget = Join-Path $Root "validation\pupil-geometry"
+if (Test-Path -LiteralPath (Join-Path $Root "_validation\pupil-geometry")) {
+    if (-not (Test-Path -LiteralPath $validationTarget)) {
+        [void](Move-Preserved (Join-Path $Root "_validation\pupil-geometry") $validationTarget)
+    }
+}
+if (Test-Path -LiteralPath (Join-Path $Root "ritnet-fullclass-geometry-validation")) {
+    if (-not (Test-Path -LiteralPath $validationTarget)) {
+        [void](Move-Preserved (Join-Path $Root "ritnet-fullclass-geometry-validation") $validationTarget)
+    } else {
+        Write-Warning "Validation target already exists; legacy validation folder was left untouched rather than merged automatically."
+    }
+}
+
+# Historical / failed / development material.
+$archiveTarget = Join-Path $Root "archive"
+$legacyArchive = Join-Path $Root "_archive"
+if (-not (Test-Path -LiteralPath $archiveTarget) -and (Test-Path -LiteralPath $legacyArchive) -and -not (Is-Junction $legacyArchive)) {
+    [void](Move-Preserved $legacyArchive $archiveTarget)
+}
+Ensure-Dir $archiveTarget
+Ensure-HiddenJunction $legacyArchive $archiveTarget
+
+[void](Move-Preserved `
     (Join-Path $Root ".ritnet-fullclass-work-geometry-validation-sub031-20260828") `
-    (Join-Path $Root "99-archive\old-checkpoints\geometry-validation-sub031-20260828")
-Move-ToReadablePath `
+    (Join-Path $archiveTarget "old-checkpoints\geometry-validation-sub031-20260828"))
+[void](Move-Preserved `
     (Join-Path $Root ".ritnet-fullclass-work-production-backup-20260828") `
-    (Join-Path $Root "99-archive\old-checkpoints\production-backup-20260828")
-Move-ToReadablePath `
+    (Join-Path $archiveTarget "old-checkpoints\production-backup-20260828"))
+[void](Move-Preserved `
     (Join-Path $Root "_smoke-workstore-archive") `
-    (Join-Path $Root "99-archive\development\smoke-workstore")
+    (Join-Path $archiveTarget "development\smoke-workstore"))
 
-# 5) Historical YOLO source runs. Real folders go under one readable parent.
-# Hidden junctions remain in the root only for backwards-compatible discovery.
-$sourceRoot = Join-Path $Root "00-source-yolo-historical"
-Ensure-Dir $sourceRoot
+# Historical YOLO sources. Real directories move under one parent; hidden root aliases
+# preserve the current source-discovery contract without rerunning YOLO.
+$sourceTarget = Join-Path $Root "historical-yolo"
+Ensure-Dir $sourceTarget
 $legacySources = Get-ChildItem -LiteralPath $Root -Directory -Force | Where-Object {
     $_.Name -match '^sub-\d+_formal_' -and -not ($_.Attributes -band [IO.FileAttributes]::ReparsePoint)
 }
 foreach ($source in $legacySources) {
-    $dest = Join-Path $sourceRoot $source.Name
-    Move-ToReadablePath $source.FullName $dest -KeepHiddenJunction
+    $dest = Join-Path $sourceTarget $source.Name
+    if (-not (Test-Path -LiteralPath $dest)) {
+        if (Move-Preserved $source.FullName $dest) {
+            Ensure-HiddenJunction $source.FullName $dest
+        }
+    }
 }
 
-# 6) Runtime logs.
-Ensure-Dir (Join-Path $Root "90-runtime\logs")
+# Runtime logs.
 $oldBatchSummary = Join-Path $Root "ritnet_fullclass_batch_summary.json"
 if (Test-Path -LiteralPath $oldBatchSummary) {
-    $dest = Join-Path $Root "90-runtime\logs\last-fullclass-batch-summary.json"
+    $dest = Join-Path $runtimeTarget "logs\last-fullclass-batch-summary.json"
     if (Test-Path -LiteralPath $dest) {
-        $dest = Join-Path $Root ("90-runtime\logs\fullclass-batch-summary-{0}.json" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
+        $dest = Join-Path $runtimeTarget ("logs\fullclass-batch-summary-{0}.json" -f (Get-Date -Format 'yyyyMMdd-HHmmss'))
     }
-    Move-ToReadablePath $oldBatchSummary $dest
+    [void](Move-Preserved $oldBatchSummary $dest)
 }
 $legacyBatchSummary = Join-Path $Root "batch_run_summary.json"
 if (Test-Path -LiteralPath $legacyBatchSummary) {
-    Move-ToReadablePath $legacyBatchSummary (Join-Path $Root "99-archive\legacy-logs\batch-run-summary-legacy.json")
+    [void](Move-Preserved $legacyBatchSummary (Join-Path $archiveTarget "legacy-logs\batch-run-summary-legacy.json"))
 }
 
 @"
-THIS IS THE ONLY CURRENT FORMAL RITNET COHORT OUTPUT.
-Method: RITnet FP32 + primary-pupil-topology + OpenCV pupil ellipse.
-A subject is complete only when its completion.json validates.
-"@ | Set-Content -LiteralPath (Join-Path $Root "10-final-topology\README.txt") -Encoding UTF8
+CURRENT FORMAL OUTPUT ONLY.
+RITnet FP32 + primary-pupil-topology + OpenCV pupil ellipse.
+A subject is complete only when completion.json validates.
+"@ | Set-Content -LiteralPath (Join-Path $finalTarget "README.txt") -Encoding UTF8
 
 @"
-00-source-yolo-historical : historical completed YOLO formal runs; bbox source only, never rerun YOLO.
-10-final-topology         : current formal RITnet + Topology cohort outputs.
-20-validation             : scientific validation evidence; not cohort output.
-90-runtime                : SQLite interruption checkpoints and run logs; not scientific output.
-99-archive                : failed, interrupted, legacy, backup, and development artifacts.
+historical-yolo : completed historical YOLO formal runs; bbox/source only; never rerun YOLO.
+final-topology  : current formal RITnet + Topology cohort outputs.
+validation      : scientific method-validation evidence; not cohort output.
+runtime         : interruption checkpoints and run logs; not scientific output.
+archive         : failed, interrupted, legacy, backup, and development artifacts.
 
-Hidden legacy junctions exist only so current code remains backward-compatible. Do not use them manually.
+Hidden legacy junctions exist only for backward compatibility with the current Python paths.
 "@ | Set-Content -LiteralPath (Join-Path $Root "README-DATA-LAYOUT.txt") -Encoding UTF8
 
 Write-Host ""
 Write-Host "=== DONE ===" -ForegroundColor Green
-Write-Host "Use these five folders only:"
-Write-Host "  00-source-yolo-historical   historical YOLO sources"
-Write-Host "  10-final-topology           current formal outputs"
-Write-Host "  20-validation               method validation"
-Write-Host "  90-runtime                  checkpoints/logs"
-Write-Host "  99-archive                  old/failed/backup"
-Write-Host ""
-Write-Host "Hidden compatibility aliases remain for the current Python code; they can be removed only after a later code-path migration."
+Write-Host "Use these folders:"
+Write-Host "  historical-yolo   historical YOLO sources"
+Write-Host "  final-topology    current formal outputs"
+Write-Host "  validation        method validation"
+Write-Host "  runtime           checkpoints/logs"
+Write-Host "  archive           old/failed/backup"
