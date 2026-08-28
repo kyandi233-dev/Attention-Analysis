@@ -1,6 +1,7 @@
 param(
     [int]$MinSubject = 33,
     [string]$Root = "D:\_AttentionData\Beijing-NIR\amd-directml",
+    [string]$PythonExe = "D:\CondaEnvs\nir-amd\python.exe",
     [switch]$DryRun
 )
 
@@ -12,8 +13,21 @@ Set-Location $RuntimeDir
 Write-Host "=== AMD FINAL TOPOLOGY RUNNER ==="
 Write-Host "Root: $Root"
 Write-Host "Minimum subject: $MinSubject"
+Write-Host "Python: $PythonExe"
 Write-Host "Policy: historical YOLO only; RITnet FP32 + Topology; fail-fast on any subject error."
 Write-Host ""
+
+if (-not (Test-Path -LiteralPath $PythonExe -PathType Leaf)) {
+    throw "Required AMD NIR Python executable not found: $PythonExe"
+}
+
+# Never rely on PATH or a nested PowerShell's Python resolution. The formal AMD
+# runtime is frozen to the nir-amd interpreter that was already used for the
+# successful DirectML cohort runs.
+& $PythonExe -c "import sys, cv2, numpy, onnxruntime; print('Python executable:', sys.executable); print('cv2:', cv2.__version__); print('numpy:', numpy.__version__); print('onnxruntime:', onnxruntime.__version__)"
+if ($LASTEXITCODE -ne 0) {
+    throw "AMD NIR Python preflight failed. Do not start the cohort until cv2/numpy/onnxruntime import successfully in $PythonExe"
+}
 
 $zotero = Get-Process zotero-mcp -ErrorAction SilentlyContinue
 if ($zotero) {
@@ -66,7 +80,7 @@ foreach ($subject in $subjects) {
         $args += "--dry-run"
     }
 
-    & python @args
+    & $PythonExe @args
     $code = $LASTEXITCODE
 
     $batchSummary = Join-Path $Root "ritnet_fullclass_batch_summary.json"
