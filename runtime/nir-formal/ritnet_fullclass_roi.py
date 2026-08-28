@@ -24,6 +24,13 @@ SUPPORTED_PADDING_MODES = frozenset({PADDING_MODE_REPLICATE})
 ROI_ALGORITHM_VERSION = "fixed-aspect-1p6-expanded-context-replicate-v2"
 VALID_SOURCE_MASK_VERSION = "pre-resize-source-domain-nearest-v1"
 
+# Canonical immutable output-space mask for the overwhelmingly common case in
+# which the requested ROI lies fully inside the source frame. Downstream metric
+# reducers can recognize this object by identity and skip repeated 400x640
+# any()/all() scans without changing a single scientific pixel or denominator.
+FULL_SOURCE_VALID_MASK = np.ones((TARGET_HEIGHT, TARGET_WIDTH), dtype=bool)
+FULL_SOURCE_VALID_MASK.setflags(write=False)
+
 
 @dataclass(frozen=True)
 class FixedAspectRoi:
@@ -299,6 +306,8 @@ def valid_source_analysis_mask(
         raise ValueError("analysis mask output must preserve exact 8:5 aspect ratio")
 
     if not any((geometry.pad_left, geometry.pad_top, geometry.pad_right, geometry.pad_bottom)):
+        if (output_width, output_height) == (TARGET_WIDTH, TARGET_HEIGHT):
+            return FULL_SOURCE_VALID_MASK
         return np.ones((output_height, output_width), dtype=bool)
 
     pre = np.zeros((geometry.height, geometry.width), dtype=np.uint8)
