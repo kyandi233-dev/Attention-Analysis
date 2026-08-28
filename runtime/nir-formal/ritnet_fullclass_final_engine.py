@@ -26,7 +26,11 @@ from ritnet_fullclass_contract import CLASS_MAPPING
 from ritnet_fullclass_coverage import build_fixed_qc_anchor_keys, build_frame_coverage
 from ritnet_fullclass_final_runtime import RitnetFullClassFinalRuntime
 from ritnet_fullclass_io import atomic_write_csv
-from ritnet_fullclass_metric_adapter import ANALYSIS_DOMAIN_VERSION, summarize_final_hard_metrics
+from ritnet_fullclass_metric_adapter import (
+    ANALYSIS_DOMAIN_VERSION,
+    VALIDATION_GEOMETRY_VERSION,
+    summarize_final_hard_metrics,
+)
 from ritnet_fullclass_roi import (
     PADDING_MODE_REPLICATE,
     ROI_ALGORITHM_VERSION,
@@ -58,9 +62,10 @@ from ritnet_label_store import sha256_file
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
-CORE_VERSION = "fullclass-final-core-v8-interface-safe-plain-csv"
+CORE_VERSION = f"fullclass-geometry-validation-v1::{VALIDATION_GEOMETRY_VERSION}"
 EXECUTION_BACKEND = "onnxruntime-cuda"
 EXECUTION_PROVIDER = "CUDAExecutionProvider"
+VALIDATION_WORK_DIRNAME = ".ritnet-fullclass-geometry-validation-work"
 VIDEO_SEEK_GAP_THRESHOLD = 64
 DEFAULT_CHECKPOINT_ROWS = 128
 DEFAULT_PROGRESS_EVERY_BATCHES = 100
@@ -439,6 +444,7 @@ def _work_identity(
     roi_cfg = _final_roi_config(context.config)
     return {
         "core_version": CORE_VERSION,
+        "validation_geometry_version": VALIDATION_GEOMETRY_VERSION,
         "subject": context.subject,
         "source_identity": context.source_identity,
         "git_commit": git_commit,
@@ -542,7 +548,7 @@ def run_numeric_core(
         ritnet_model=ritnet_model,
         ritnet_external_data=ritnet_external,
     )
-    work_root = context.run_dir.parent / ".ritnet-fullclass-work"
+    work_root = context.run_dir.parent / VALIDATION_WORK_DIRNAME
     workstore_path = work_root / f"{context.subject}.sqlite"
 
     checkpoint_rows = int(final_cfg.get("checkpoint_rows", DEFAULT_CHECKPOINT_ROWS))
