@@ -9,6 +9,7 @@ param(
 $ErrorActionPreference = "Stop"
 $RuntimeDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PythonExe = "D:\Project\厚粲杯\08_算法\.venv_nir_gpu\Scripts\python.exe"
+$Config = (Resolve-Path -LiteralPath $Config).Path
 Set-Location -LiteralPath $RuntimeDir
 
 Write-Host "=== NVIDIA FINAL TOPOLOGY RUNNER ==="
