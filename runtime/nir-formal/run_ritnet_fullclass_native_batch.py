@@ -21,7 +21,8 @@ if str(PACKAGE_ROOT) not in sys.path:
     sys.path.insert(0, str(PACKAGE_ROOT))
 
 from formal_completion import validate_completion
-from ritnet_fullclass_contract import FULLCLASS_VERSION, normalize_subject
+from ritnet_fullclass_contract import normalize_subject
+from ritnet_fullclass_workstore import V8_CORE_VERSION
 from ritnet_label_store import sha256_file
 
 EXTENSION = PACKAGE_ROOT / "run_ritnet_fullclass_extension.py"
@@ -203,7 +204,7 @@ def main() -> int:
         )
 
     preview = {
-        "fullclass_version": FULLCLASS_VERSION,
+        "fullclass_version": V8_CORE_VERSION,
         "selected_count": len(selections),
         "source_completion_contract_enforced": True,
         "historical_yolo_boxes_reused_as_recorded": True,
