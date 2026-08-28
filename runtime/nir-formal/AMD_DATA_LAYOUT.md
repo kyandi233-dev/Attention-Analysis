@@ -9,18 +9,20 @@ D:\_AttentionData\Beijing-NIR\amd-directml
 整理后只需要人工识别以下五个目录：
 
 ```text
-00-source-yolo-historical\
-10-final-topology\
-20-validation\
-90-runtime\
-99-archive\
+historical-yolo\
+final-topology\
+validation\
+runtime\
+archive\
 ```
 
-## 00-source-yolo-historical
+这些名字没有编号含义，直接按用途命名。
+
+## historical-yolo
 
 历史正式 YOLO 输出，仅作为 bbox/source provenance 使用。最终 RITnet 管线严格复用这些 `eyes.csv` / `frames.csv`，绝不重新跑 YOLO。
 
-## 10-final-topology
+## final-topology
 
 唯一当前正式 cohort 输出：
 
@@ -37,11 +39,11 @@ D:\_AttentionData\Beijing-NIR\amd-directml
 
 每个被试只有有效 `completion.json` 才算完成。
 
-## 20-validation
+## validation
 
 方法验证证据，不是正式 cohort。当前保留 pupil geometry 三算法 Legacy / Topology / EllSeg 的 sub-031 验证结果。
 
-## 90-runtime
+## runtime
 
 程序运行状态，不是科学结果：
 
@@ -50,23 +52,25 @@ D:\_AttentionData\Beijing-NIR\amd-directml
 
 中断后恢复正式计算依赖 checkpoint，因此全量完成前不要删除。
 
-## 99-archive
+## archive
 
 仅保存失败、中断、旧版、备份、开发/smoke 产物。这里的内容不是当前正式结果。
 
-## 为什么资源管理器可能仍看到旧名字
+## 兼容旧路径
 
-当前 Python 代码仍使用部分历史路径名。整理脚本会为这些路径建立 **Hidden Junction** 作为兼容入口，例如：
+当前 Python 代码仍使用少量历史路径名。整理脚本会为这些路径建立隐藏 Junction，例如：
 
 ```text
-ritnet-fullclass-final  -> 10-final-topology
-.ritnet-fullclass-work -> 90-runtime\checkpoints\final-topology
-_archive               -> 99-archive
+ritnet-fullclass-final  -> final-topology
+.ritnet-fullclass-work -> runtime\checkpoints\final-topology
+_archive               -> archive
 ```
 
-这些兼容入口默认隐藏，仅供程序使用，不再作为人工数据目录。
+这些兼容入口只供程序使用，不作为人工数据目录。
 
-## 两个正式操作入口
+如果本地曾经拉取过短暂使用的 `00/10/20/90/99` 数字目录版本，整理脚本会尝试把它们统一迁回这里定义的普通目录名，不把数字前缀作为最终规范。
+
+## 正式操作入口
 
 整理目录：
 
