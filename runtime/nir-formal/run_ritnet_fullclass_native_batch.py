@@ -79,7 +79,8 @@ def discover_source_runs(
             continue
         marker = validation.marker
         eyes_path = run_dir / "eyes.csv"
-        if not eyes_path.is_file():
+        frames_path = run_dir / "frames.csv"
+        if not eyes_path.is_file() or not frames_path.is_file():
             continue
         subject = normalize_subject(marker.get("subject") or run_dir.name.split("_formal_", 1)[0])
         grouped.setdefault(subject, []).append(
@@ -88,6 +89,7 @@ def discover_source_runs(
                 "marker": marker,
                 "validation_reason": validation.reason,
                 "eyes_sha256": sha256_file(eyes_path),
+                "frames_sha256": sha256_file(frames_path),
                 "formal_identity": _formal_identity(marker),
             }
         )
@@ -95,7 +97,11 @@ def discover_source_runs(
 
 
 def _same_source_identity(left: dict[str, Any], right: dict[str, Any]) -> bool:
-    return left["formal_identity"] == right["formal_identity"] and left["eyes_sha256"] == right["eyes_sha256"]
+    return (
+        left["formal_identity"] == right["formal_identity"]
+        and left["eyes_sha256"] == right["eyes_sha256"]
+        and left["frames_sha256"] == right["frames_sha256"]
+    )
 
 
 def select_run(candidates: list[dict[str, Any]]) -> tuple[dict[str, Any], list[Path], str]:
@@ -112,6 +118,7 @@ def select_run(candidates: list[dict[str, Any]]) -> tuple[dict[str, Any], list[P
                 "run_dir": str(item["run_dir"]),
                 "run_id": item["marker"].get("run_id"),
                 "eyes_sha256": item["eyes_sha256"],
+                "frames_sha256": item["frames_sha256"],
                 "yolo_batch_size": item["marker"].get("yolo_batch_size"),
                 "yolo_model_sha256": item["marker"].get("yolo_model_sha256"),
             }
@@ -125,7 +132,11 @@ def select_run(candidates: list[dict[str, Any]]) -> tuple[dict[str, Any], list[P
     candidates_sorted = sorted(candidates, key=lambda item: str(item["run_dir"]).lower())
     selected = candidates_sorted[0]
     alternatives = [item["run_dir"] for item in candidates_sorted[1:]]
-    return selected, alternatives, "equivalent_duplicate_historical_sources_same_identity_and_eyes_sha256"
+    return (
+        selected,
+        alternatives,
+        "equivalent_duplicate_historical_sources_same_identity_eyes_and_frames_sha256",
+    )
 
 
 def parse_subjects(text: str | None) -> list[str] | None:
@@ -184,6 +195,7 @@ def main() -> int:
                 "source_yolo_model_sha256": marker.get("yolo_model_sha256"),
                 "source_yolo_model_sha256_recorded": bool(marker.get("yolo_model_sha256")),
                 "source_eyes_sha256": selected["eyes_sha256"],
+                "source_frames_sha256": selected["frames_sha256"],
                 "source_validation": selected["validation_reason"],
                 "selection_reason": selection_reason,
                 "alternatives": [str(path) for path in alternatives],
@@ -232,6 +244,7 @@ def main() -> int:
                 "source_yolo_model_sha256": item["source_yolo_model_sha256"],
                 "source_yolo_model_sha256_recorded": item["source_yolo_model_sha256_recorded"],
                 "source_eyes_sha256": item["source_eyes_sha256"],
+                "source_frames_sha256": item["source_frames_sha256"],
                 "selection_reason": item["selection_reason"],
                 "alternatives": item["alternatives"],
                 "returncode": completed.returncode,
