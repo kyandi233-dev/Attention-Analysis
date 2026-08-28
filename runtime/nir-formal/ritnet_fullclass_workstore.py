@@ -25,13 +25,17 @@ V8_CORE_VERSION = "fullclass-final-core-v8-interface-safe-plain-csv"
 V7_LEGACY_UNCERTAINTY_ALGORITHM_VERSION = "allclass-online-summary-v3-source-valid-softclass"
 V7_LEGACY_UNCERTAINTY_DOMAIN_VERSION = "source-valid-allclass-whole-ocular-boundary-v3"
 
-# These fields define the expensive per-eye numeric result stored in SQLite.
-# Git/config execution provenance is intentionally excluded here: it remains in
-# the full work identity/final manifest, but a checkpoint may be reused across
-# non-numeric execution changes only after strict source-prefix + payload checks.
+# These fields define the expensive per-eye numeric result stored in SQLite plus
+# the execution backend that produced it. CUDA/DirectML are intentionally kept
+# distinct for checkpoint resume even though the scientific formulas and schema
+# are shared. Git/config execution provenance remains excluded: a checkpoint may
+# be reused across non-numeric changes only after strict source-prefix + payload
+# checks, but never across execution providers.
 SCIENTIFIC_IDENTITY_KEYS = (
     "subject",
     "source_identity",
+    "execution_backend",
+    "execution_provider",
     "ritnet_model_sha256",
     "ritnet_external_data_sha256",
     "ritnet_input",
@@ -100,9 +104,9 @@ def _v7_to_v8_identity_compatible(
     if stored["uncertainty_domain_version"] != V7_LEGACY_UNCERTAINTY_DOMAIN_VERSION:
         return False
 
-    # Compare every scientific field that v7 recorded correctly. The two legacy
-    # uncertainty metadata fields are verified later against actual payload rows,
-    # and analysis_domain_version did not exist in v7 metadata at all.
+    # Compare every scientific/resume-critical field that v7 recorded correctly.
+    # The two legacy uncertainty metadata fields are verified later against actual
+    # payload rows, and analysis_domain_version did not exist in v7 metadata.
     ignored = {
         "analysis_domain_version",
         "uncertainty_algorithm_version",
@@ -120,7 +124,7 @@ def _v8_to_v8_identity_compatible(
     stored_identity: Mapping[str, Any],
     current_identity: Mapping[str, Any],
 ) -> bool:
-    """Allow checkpoint reuse only when every numeric scientific field matches."""
+    """Allow checkpoint reuse only when every numeric/resume-critical field matches."""
     if stored_identity.get("core_version") != V8_CORE_VERSION:
         return False
     if current_identity.get("core_version") != V8_CORE_VERSION:
