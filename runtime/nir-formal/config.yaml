@@ -5,7 +5,6 @@ package:
 
 data:
   roots:
-    - "J:/Data"
     - "E:/正式实验"
     - "F:/正式实验"
     - "E:/Data"
