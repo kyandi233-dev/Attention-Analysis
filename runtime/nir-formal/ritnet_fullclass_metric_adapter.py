@@ -54,16 +54,14 @@ def _validate_analysis_mask(valid_source_mask: np.ndarray | None) -> np.ndarray:
     return np.ascontiguousarray(mask)
 
 
-def _touches_internal_valid_boundary(structure: np.ndarray, valid: np.ndarray) -> bool:
-    if valid.all() or not structure.any():
-        return False
+def _internal_valid_boundary_adjacency(valid: np.ndarray) -> np.ndarray:
+    """Pixels adjacent to artificial padding, computed once per padded eye."""
     invalid = (~valid).astype(np.uint8)
-    adjacent = cv2.dilate(
+    return cv2.dilate(
         invalid,
         np.ones((3, 3), dtype=np.uint8),
         iterations=1,
     ).astype(bool)
-    return bool((structure & valid & adjacent).any())
 
 
 def summarize_final_hard_metrics(
@@ -131,6 +129,7 @@ def summarize_final_hard_metrics(
         return result
 
     invalid = ~valid
+    adjacent_to_padding = _internal_valid_boundary_adjacency(valid)
     iris_outer = labels >= 2
     ocular = labels != 0
     structures = {
@@ -140,5 +139,7 @@ def summarize_final_hard_metrics(
     }
     for name, mask in structures.items():
         result[f"{name}_predicted_in_padding_pixels"] = int((mask & invalid).sum())
-        result[f"{name}_touches_valid_domain_edge"] = _touches_internal_valid_boundary(mask, valid)
+        result[f"{name}_touches_valid_domain_edge"] = bool(
+            (mask & valid & adjacent_to_padding).any()
+        )
     return result
