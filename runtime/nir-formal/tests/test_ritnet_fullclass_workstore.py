@@ -49,8 +49,10 @@ def scientific_identity(core_version, *, subject="sub-031", model_hash="m" * 64)
         "subject": subject,
         "source_identity": {"source_video_sha256": "s" * 64, "eyes_sha256": "e" * 64},
         "git_commit": "a" * 40,
-        "git_branch": "amd-DirectML",
+        "git_branch": "nvidia-cuda-v8",
         "config_sha256": "c" * 64,
+        "execution_backend": "onnxruntime-cuda",
+        "execution_provider": "CUDAExecutionProvider",
         "ritnet_model_sha256": model_hash,
         "ritnet_external_data_sha256": "d" * 64,
         "ritnet_input": [640, 400],
@@ -160,6 +162,19 @@ def test_workstore_rejects_different_resume_identity(tmp_path):
         FullClassWorkStore(path, identity=scientific_identity(V8_CORE_VERSION, subject="sub-032"))
 
 
+def test_workstore_rejects_directml_checkpoint_on_cuda(tmp_path):
+    path = tmp_path / "work.sqlite"
+    stored = scientific_identity(V8_CORE_VERSION)
+    with FullClassWorkStore(path, identity=stored):
+        pass
+
+    current = scientific_identity(V8_CORE_VERSION)
+    current["execution_backend"] = "onnxruntime-directml"
+    current["execution_provider"] = "DmlExecutionProvider"
+    with pytest.raises(RuntimeError, match="scientific run"):
+        FullClassWorkStore(path, identity=current)
+
+
 def test_workstore_prefix_rejects_source_key_change(tmp_path):
     path = tmp_path / "work.sqlite"
     identity = scientific_identity(V8_CORE_VERSION)
@@ -196,6 +211,17 @@ def test_v7_checkpoint_migrates_to_v8_when_real_payload_science_is_identical(tmp
     meta = read_meta(path)
     assert "resume_migrated_from_identity_digest" in meta
     assert V8_CORE_VERSION in meta["identity_json"]
+
+
+def test_v7_checkpoint_without_execution_identity_is_not_migrated(tmp_path):
+    path = tmp_path / "work.sqlite"
+    stored = scientific_identity(V7_CORE_VERSION)
+    stored.pop("execution_backend")
+    stored.pop("execution_provider")
+    seed_legacy_v7(path, stored)
+
+    with pytest.raises(RuntimeError, match="scientific run"):
+        FullClassWorkStore(path, identity=scientific_identity(V8_CORE_VERSION))
 
 
 def test_v7_checkpoint_payload_version_mismatch_does_not_mutate_identity(tmp_path):
