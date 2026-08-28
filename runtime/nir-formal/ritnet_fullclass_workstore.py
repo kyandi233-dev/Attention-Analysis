@@ -16,6 +16,7 @@ from typing import Any, Iterable, Iterator, Mapping
 WORKSTORE_SCHEMA_VERSION = 1
 V7_CORE_VERSION = "fullclass-final-core-v7-pupil-only-lean-schema"
 V8_CORE_VERSION = "fullclass-final-core-v8-interface-safe-plain-csv"
+VALIDATION_GEOMETRY_IDENTITY_KEY = "validation_geometry_version"
 
 # v7 metadata accidentally recorded the full validation/sparse-QC uncertainty
 # implementation instead of the cohort fast-path algorithm actually present in
@@ -75,6 +76,19 @@ def _key_from_row(row: Mapping[str, Any]) -> tuple[str, int, int, str]:
     )
 
 
+def _scientific_identity_keys(*identities: Mapping[str, Any]) -> tuple[str, ...]:
+    """Return the strict numeric identity keys for ordinary or validation runs.
+
+    Production v8 identities remain unchanged. Geometry-shadow validation adds
+    one result-affecting key so a changed EllSeg/topology implementation cannot
+    silently resume an older validation checkpoint merely because the ordinary
+    production scientific fields still match.
+    """
+    if any(VALIDATION_GEOMETRY_IDENTITY_KEY in identity for identity in identities):
+        return (*SCIENTIFIC_IDENTITY_KEYS, VALIDATION_GEOMETRY_IDENTITY_KEY)
+    return SCIENTIFIC_IDENTITY_KEYS
+
+
 def _require_identity_keys(
     identity: Mapping[str, Any],
     keys: tuple[str, ...],
@@ -92,6 +106,10 @@ def _v7_to_v8_identity_compatible(
     if stored_identity.get("core_version") != V7_CORE_VERSION:
         return False
     if current_identity.get("core_version") != V8_CORE_VERSION:
+        return False
+    # A geometry-shadow run must start from its own checkpoint namespace rather
+    # than migrating an ordinary production v7 checkpoint into validation rows.
+    if VALIDATION_GEOMETRY_IDENTITY_KEY in current_identity:
         return False
     try:
         stored = _require_identity_keys(stored_identity, V7_SCIENTIFIC_IDENTITY_KEYS)
@@ -129,9 +147,10 @@ def _v8_to_v8_identity_compatible(
         return False
     if current_identity.get("core_version") != V8_CORE_VERSION:
         return False
+    keys = _scientific_identity_keys(stored_identity, current_identity)
     try:
-        stored = _require_identity_keys(stored_identity, SCIENTIFIC_IDENTITY_KEYS)
-        current = _require_identity_keys(current_identity, SCIENTIFIC_IDENTITY_KEYS)
+        stored = _require_identity_keys(stored_identity, keys)
+        current = _require_identity_keys(current_identity, keys)
     except ValueError:
         return False
     return stored == current
@@ -176,7 +195,7 @@ class FullClassWorkStore:
             )
         existing = dict(self.connection.execute("SELECT key, value FROM meta"))
         if not existing:
-            _require_identity_keys(self.identity, SCIENTIFIC_IDENTITY_KEYS)
+            _require_identity_keys(self.identity, _scientific_identity_keys(self.identity))
             with self.connection:
                 self.connection.executemany(
                     "INSERT INTO meta(key, value) VALUES (?, ?)",
@@ -198,7 +217,7 @@ class FullClassWorkStore:
 
         stored_digest = str(existing.get("identity_digest") or "")
         if stored_digest == self.identity_digest and stored_identity == self.identity:
-            _require_identity_keys(self.identity, SCIENTIFIC_IDENTITY_KEYS)
+            _require_identity_keys(self.identity, _scientific_identity_keys(self.identity))
             return
 
         if _v7_to_v8_identity_compatible(stored_identity, self.identity):
