@@ -6,12 +6,17 @@ This script does not write scientific outputs and does not touch the checkpoint.
 It prepares one real b16 tensor using the canonical source/ROI/preprocess path,
 then repeatedly requests different output subsets from the *same* ONNX session:
 
-1. labels only
-2. labels + class_probability (current cohort transfer contract)
-3. all five qualified outputs
+1. labels only -- the transfer behavior used by the pre-2026-08-27 stable CUDA
+   full-class production path when pupil-probability validation was disabled;
+2. labels + class_probability -- the current v8 cohort transfer contract needed
+   for four soft fractions and three ocular uncertainty means;
+3. all five qualified outputs -- qualification/sparse-QC reference.
 
 The calls are interleaved to reduce thermal/order bias. Labels and probability
-outputs are parity-checked before timings are reported.
+outputs are parity-checked before timings are reported. The report explicitly
+quantifies the current-v8 transfer/latency premium over the historical labels-only
+reference so a scalar-output candidate is considered only if the real NVIDIA
+machine shows a material benefit.
 """
 
 import argparse
@@ -29,7 +34,7 @@ from ritnet_label_store import sha256_file
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
 MODES = {
-    "labels_only": ("labels",),
+    "labels_only_stable_reference": ("labels",),
     "cohort_current": ("labels", "class_probability"),
     "full_five_output": OUTPUT_NAMES,
 }
@@ -80,6 +85,12 @@ def _stats(values: list[float]) -> dict[str, float]:
     }
 
 
+def _ratio(numerator: float, denominator: float) -> float | None:
+    if denominator == 0:
+        return None
+    return float(numerator / denominator)
+
+
 def main() -> int:
     args = parse_args()
     if args.warmup < 0:
@@ -108,7 +119,7 @@ def main() -> int:
         reference[mode] = values
         output_bytes[mode] = _output_bytes(values)
 
-    labels_reference = np.asarray(reference["labels_only"][0])
+    labels_reference = np.asarray(reference["labels_only_stable_reference"][0])
     for mode in ("cohort_current", "full_five_output"):
         if not np.array_equal(labels_reference, np.asarray(reference[mode][0])):
             raise RuntimeError(f"labels parity failed before timing for mode={mode}")
@@ -141,8 +152,49 @@ def main() -> int:
             runtime.session.run(list(MODES[mode]), feed)
             timings[mode].append((time.perf_counter() - started) * 1000.0)
 
+    mode_results = {
+        mode: {
+            "requested_outputs": list(MODES[mode]),
+            "returned_bytes_per_call": output_bytes[mode],
+            "returned_mib_per_call": float(output_bytes[mode] / (1024 ** 2)),
+            **_stats(timings[mode]),
+        }
+        for mode in mode_names
+    }
+    stable = mode_results["labels_only_stable_reference"]
+    current = mode_results["cohort_current"]
+    comparison = {
+        "reference_contract": "pre-2026-08-27-stable-cuda-labels-only-transfer",
+        "current_contract": "v8-labels-plus-class-probability",
+        "extra_returned_bytes_per_call": int(
+            current["returned_bytes_per_call"] - stable["returned_bytes_per_call"]
+        ),
+        "extra_returned_mib_per_call": float(
+            current["returned_mib_per_call"] - stable["returned_mib_per_call"]
+        ),
+        "returned_bytes_ratio_current_vs_stable": _ratio(
+            float(current["returned_bytes_per_call"]),
+            float(stable["returned_bytes_per_call"]),
+        ),
+        "median_added_ms_current_vs_stable": float(
+            current["median_ms"] - stable["median_ms"]
+        ),
+        "median_latency_ratio_current_vs_stable": _ratio(
+            float(current["median_ms"]), float(stable["median_ms"])
+        ),
+        "p95_added_ms_current_vs_stable": float(current["p95_ms"] - stable["p95_ms"]),
+        "p95_latency_ratio_current_vs_stable": _ratio(
+            float(current["p95_ms"]), float(stable["p95_ms"])
+        ),
+        "interpretation": (
+            "The labels-only path is a historical transfer-speed reference only. "
+            "It cannot replace v8 production because it lacks the probability information "
+            "required for four soft fractions and three ocular uncertainty means."
+        ),
+    }
+
     result = {
-        "benchmark": "ritnet-final-output-transfer-v1",
+        "benchmark": "ritnet-final-output-transfer-v2-stable-reference",
         "subject": context.subject,
         "source_run": str(context.run_dir),
         "model": str(model),
@@ -155,15 +207,8 @@ def main() -> int:
         "warmup_rounds": int(args.warmup),
         "measured_rounds": int(args.iterations),
         "class_probability_requested_mode_max_abs": probability_max_abs,
-        "modes": {
-            mode: {
-                "requested_outputs": list(MODES[mode]),
-                "returned_bytes_per_call": output_bytes[mode],
-                "returned_mib_per_call": float(output_bytes[mode] / (1024 ** 2)),
-                **_stats(timings[mode]),
-            }
-            for mode in mode_names
-        },
+        "modes": mode_results,
+        "stable_vs_current": comparison,
     }
 
     output = args.output.expanduser().resolve()
