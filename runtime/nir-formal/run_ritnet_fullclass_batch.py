@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from ritnet_fullclass_git import require_clean_code_worktree
+from nir_python_contract import require_nir_gpu_python
 from run_ritnet_fullclass_native_batch import load_config, main
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
@@ -36,5 +37,6 @@ def _enforce_canonical_provenance() -> None:
 
 
 if __name__ == "__main__":
+    require_nir_gpu_python()
     _enforce_canonical_provenance()
     raise SystemExit(main())

@@ -311,4 +311,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    from nir_python_contract import require_nir_gpu_python
+
+    require_nir_gpu_python()
     raise SystemExit(main())

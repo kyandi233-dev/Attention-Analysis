@@ -23,6 +23,7 @@ if str(PACKAGE_ROOT) not in sys.path:
 from formal_completion import validate_completion
 from ritnet_fullclass_contract import FULLCLASS_VERSION, normalize_subject
 from ritnet_label_store import sha256_file
+from nir_python_contract import require_nir_gpu_python
 
 EXTENSION = PACKAGE_ROOT / "run_ritnet_fullclass_extension.py"
 
@@ -280,4 +281,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    require_nir_gpu_python()
     raise SystemExit(main())
