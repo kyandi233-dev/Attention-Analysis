@@ -27,7 +27,7 @@ from ritnet_fullclass_contract import (
 )
 
 
-QC_SELECTION_VERSION = "full-frame-timeline-even-anomaly-v1"
+QC_SELECTION_VERSION = "full-frame-timeline-even-anomaly-v2-lean-fields"
 FRAME_FAILURE_REASONS = {
     "yolo_no_eye": "yolo_no_eye",
     "single_eye_success": "single_eye",
@@ -39,8 +39,6 @@ FRAME_FAILURE_REASONS = {
 }
 EYE_BOOLEAN_REASONS = (
     ("qc_pupil_fragmented", "pupil_fragmented"),
-    ("qc_iris_outer_fragmented", "iris_outer_fragmented"),
-    ("qc_ocular_fragmented", "ocular_fragmented"),
     ("pupil_touches_valid_domain_edge", "pupil_real_boundary"),
     ("iris_outer_touches_valid_domain_edge", "iris_real_boundary"),
     ("ocular_touches_valid_domain_edge", "ocular_real_boundary"),
@@ -128,11 +126,6 @@ def _eye_anomaly_reasons(row: Mapping[str, Any]) -> set[str]:
     if any((_to_float(row.get(field)) or 0.0) > 0.0 for field in EYE_PADDING_COUNT_FIELDS):
         reasons.add("prediction_in_artificial_padding")
 
-    threshold = _to_float(row.get("low_max_probability_threshold"))
-    low_fraction = _to_float(row.get("ocular_low_max_probability_fraction"))
-    if threshold is not None and low_fraction is not None and low_fraction > 0.0:
-        reasons.add("low_model_confidence")
-
     if str(row.get("ritnet_status") or "").strip().lower() == "failed":
         failure = str(row.get("ritnet_failure_reason") or "")
         if failure.startswith("roi_invalid:"):
@@ -217,8 +210,6 @@ def build_qc_selections(
     for phase_reason, keys in sorted(by_phase_reason.items()):
         sampled_reason_keys[phase_reason] = _even_sample_keys(keys, anomaly_limit)
 
-    # Round-robin over phase/reason groups prevents one abundant anomaly type
-    # from consuming the whole global image budget before other reasons appear.
     cursors = {group: 0 for group in sampled_reason_keys}
     groups = sorted(sampled_reason_keys)
     progress = True
@@ -237,8 +228,6 @@ def build_qc_selections(
             if len(selected) >= image_limit:
                 break
 
-    # If a selected frame was selected for one reason, keep every other active
-    # reason on that same frame in the index; this adds metadata, not images.
     for key in selected:
         selected_reasons[key].update(candidate_reasons.get(key, ()))
 
