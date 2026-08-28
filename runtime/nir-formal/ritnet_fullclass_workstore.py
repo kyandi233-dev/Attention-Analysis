@@ -25,6 +25,10 @@ V8_CORE_VERSION = "fullclass-final-core-v8-interface-safe-plain-csv"
 V7_LEGACY_UNCERTAINTY_ALGORITHM_VERSION = "allclass-online-summary-v3-source-valid-softclass"
 V7_LEGACY_UNCERTAINTY_DOMAIN_VERSION = "source-valid-allclass-whole-ocular-boundary-v3"
 
+# These fields define the expensive per-eye numeric result stored in SQLite.
+# Git/config execution provenance is intentionally excluded here: it remains in
+# the full work identity/final manifest, but a checkpoint may be reused across
+# non-numeric execution changes only after strict source-prefix + payload checks.
 SCIENTIFIC_IDENTITY_KEYS = (
     "subject",
     "source_identity",
@@ -112,13 +116,31 @@ def _v7_to_v8_identity_compatible(
     return True
 
 
+def _v8_to_v8_identity_compatible(
+    stored_identity: Mapping[str, Any],
+    current_identity: Mapping[str, Any],
+) -> bool:
+    """Allow checkpoint reuse only when every numeric scientific field matches."""
+    if stored_identity.get("core_version") != V8_CORE_VERSION:
+        return False
+    if current_identity.get("core_version") != V8_CORE_VERSION:
+        return False
+    try:
+        stored = _require_identity_keys(stored_identity, SCIENTIFIC_IDENTITY_KEYS)
+        current = _require_identity_keys(current_identity, SCIENTIFIC_IDENTITY_KEYS)
+    except ValueError:
+        return False
+    return stored == current
+
+
 class FullClassWorkStore:
     def __init__(self, path: Path, *, identity: Mapping[str, Any]) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.identity = dict(identity)
         self.identity_digest = identity_digest(self.identity)
-        self._pending_v7_migration_from_digest: str | None = None
+        self._pending_identity_migration_from_digest: str | None = None
+        self._pending_identity_migration_kind: str | None = None
         self.connection = sqlite3.connect(str(self.path))
         # This database is only an interruption-recovery checkpoint. Final CSV,
         # manifest and completion artifacts are independently hashed/validated.
@@ -178,15 +200,24 @@ class FullClassWorkStore:
         if _v7_to_v8_identity_compatible(stored_identity, self.identity):
             # Do not mutate metadata yet. The strict source prefix and actual
             # successful payload algorithm versions must both pass first.
-            self._pending_v7_migration_from_digest = stored_digest
+            self._pending_identity_migration_from_digest = stored_digest
+            self._pending_identity_migration_kind = "v7_to_v8_scientific_identity"
+            return
+
+        if _v8_to_v8_identity_compatible(stored_identity, self.identity):
+            # v8 numeric rows are independent of Git SHA, branch and non-numeric
+            # config changes. Still require source-prefix and payload validation
+            # before rebinding checkpoint provenance to the current run identity.
+            self._pending_identity_migration_from_digest = stored_digest
+            self._pending_identity_migration_kind = "v8_to_v8_scientific_identity"
             return
 
         if stored_digest != self.identity_digest:
             raise RuntimeError("workstore identity digest differs from current scientific run")
         raise RuntimeError("workstore identity differs from current scientific run")
 
-    def _validate_v7_payload_contract(self, stored_rows: list[tuple[Any, ...]]) -> None:
-        if self._pending_v7_migration_from_digest is None:
+    def _validate_pending_payload_contract(self, stored_rows: list[tuple[Any, ...]]) -> None:
+        if self._pending_identity_migration_from_digest is None:
             return
         expected_analysis = self.identity["analysis_domain_version"]
         expected_uncertainty = self.identity["uncertainty_algorithm_version"]
@@ -200,7 +231,7 @@ class FullClassWorkStore:
                 raise RuntimeError(f"workstore payload is not a JSON object at ordinal {position}")
             if int(payload.get("eye_metrics_schema_version", -1)) != expected_schema:
                 raise RuntimeError(
-                    f"v7 checkpoint payload schema mismatch at ordinal {position}"
+                    f"checkpoint payload schema mismatch at ordinal {position}"
                 )
             if str(payload.get("ritnet_status") or "").lower() != "success":
                 continue
@@ -213,12 +244,13 @@ class FullClassWorkStore:
             for key, expected in checks.items():
                 if payload.get(key) != expected:
                     raise RuntimeError(
-                        f"v7 checkpoint payload {key} mismatch at ordinal {position}: "
+                        f"checkpoint payload {key} mismatch at ordinal {position}: "
                         f"{payload.get(key)!r} != {expected!r}"
                     )
 
-    def _commit_pending_v7_identity_migration(self) -> None:
-        stored_digest = self._pending_v7_migration_from_digest
+    def _commit_pending_identity_migration(self) -> None:
+        stored_digest = self._pending_identity_migration_from_digest
+        migration_kind = self._pending_identity_migration_kind
         if stored_digest is None:
             return
         with self.connection:
@@ -228,13 +260,18 @@ class FullClassWorkStore:
             )
             self.connection.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
+                ("resume_migration_kind", str(migration_kind or "scientific_identity")),
+            )
+            self.connection.execute(
+                "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
                 ("identity_json", canonical_json(self.identity)),
             )
             self.connection.execute(
                 "INSERT OR REPLACE INTO meta(key, value) VALUES (?, ?)",
                 ("identity_digest", self.identity_digest),
             )
-        self._pending_v7_migration_from_digest = None
+        self._pending_identity_migration_from_digest = None
+        self._pending_identity_migration_kind = None
 
     @property
     def stored_rows(self) -> int:
@@ -242,7 +279,7 @@ class FullClassWorkStore:
 
     def validate_prefix(self, source_rows: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...]) -> int:
         """Require stored rows to be exactly source ordinals 0..N-1 with matching keys."""
-        include_payload = self._pending_v7_migration_from_digest is not None
+        include_payload = self._pending_identity_migration_from_digest is not None
         columns = "row_ordinal, phase, phase_segment, frame_idx, eye"
         if include_payload:
             columns += ", payload_json"
@@ -268,13 +305,13 @@ class FullClassWorkStore:
                 )
 
         if include_payload:
-            self._validate_v7_payload_contract(stored)
-            self._commit_pending_v7_identity_migration()
+            self._validate_pending_payload_contract(stored)
+            self._commit_pending_identity_migration()
         return len(stored)
 
     def append_rows(self, items: Iterable[tuple[int, Mapping[str, Any]]]) -> None:
-        if self._pending_v7_migration_from_digest is not None:
-            raise RuntimeError("workstore v7 identity migration requires validate_prefix before append")
+        if self._pending_identity_migration_from_digest is not None:
+            raise RuntimeError("workstore identity migration requires validate_prefix before append")
         records = []
         for ordinal, row in items:
             phase, segment, frame_idx, eye = _key_from_row(row)
