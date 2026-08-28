@@ -14,6 +14,7 @@ def candidate(
     yolo_model_sha256: str | None = "yolo",
     run_id: str = "run-a",
     eyes_sha256: str = "eyes-a",
+    frames_sha256: str = "frames-a",
 ):
     marker = {
         "run_id": run_id,
@@ -36,6 +37,7 @@ def candidate(
         "marker": marker,
         "validation_reason": "valid completion marker",
         "eyes_sha256": eyes_sha256,
+        "frames_sha256": frames_sha256,
         "formal_identity": batch._formal_identity(marker),
     }
 
@@ -66,12 +68,32 @@ def test_select_run_allows_unique_legacy_source_without_yolo_metadata(tmp_path):
     assert selected["marker"].get("yolo_model_sha256") is None
 
 
-def test_select_run_refuses_distinct_historical_sources_instead_of_guessing(tmp_path):
+def test_select_run_refuses_distinct_eye_sources_instead_of_guessing(tmp_path):
     with pytest.raises(RuntimeError, match="Ambiguous validated historical formal sources"):
         batch.select_run(
             [
                 candidate(tmp_path / "first", eyes_sha256="eyes-a"),
                 candidate(tmp_path / "second", eyes_sha256="eyes-b"),
+            ]
+        )
+
+
+def test_select_run_refuses_same_eyes_when_frame_timelines_differ(tmp_path):
+    with pytest.raises(RuntimeError, match="Ambiguous validated historical formal sources"):
+        batch.select_run(
+            [
+                candidate(
+                    tmp_path / "first",
+                    run_id="same",
+                    eyes_sha256="same-eyes",
+                    frames_sha256="frames-a",
+                ),
+                candidate(
+                    tmp_path / "second",
+                    run_id="same",
+                    eyes_sha256="same-eyes",
+                    frames_sha256="frames-b",
+                ),
             ]
         )
 
@@ -89,22 +111,34 @@ def test_select_run_does_not_prefer_current_batch_when_sources_are_distinct(tmp_
 def test_select_run_allows_true_duplicate_deterministically(tmp_path):
     selected, alternatives, reason = batch.select_run(
         [
-            candidate(tmp_path / "z-copy", run_id="same", eyes_sha256="same-eyes"),
-            candidate(tmp_path / "a-copy", run_id="same", eyes_sha256="same-eyes"),
+            candidate(
+                tmp_path / "z-copy",
+                run_id="same",
+                eyes_sha256="same-eyes",
+                frames_sha256="same-frames",
+            ),
+            candidate(
+                tmp_path / "a-copy",
+                run_id="same",
+                eyes_sha256="same-eyes",
+                frames_sha256="same-frames",
+            ),
         ]
     )
     assert selected["run_dir"] == tmp_path / "a-copy"
     assert alternatives == [tmp_path / "z-copy"]
-    assert reason == "equivalent_duplicate_historical_sources_same_identity_and_eyes_sha256"
+    assert reason == "equivalent_duplicate_historical_sources_same_identity_eyes_and_frames_sha256"
 
 
-def test_discovery_uses_strict_completion_validator(monkeypatch, tmp_path):
+def test_discovery_uses_strict_completion_validator_and_freezes_eye_and_frame_hashes(monkeypatch, tmp_path):
     good = tmp_path / "sub-031_formal_good"
     bad = tmp_path / "sub-032_formal_bad"
     good.mkdir()
     bad.mkdir()
     (good / "eyes.csv").write_text("frame_idx,eye\n", encoding="utf-8")
+    (good / "frames.csv").write_text("frame_idx,status\n", encoding="utf-8")
     (bad / "eyes.csv").write_text("frame_idx,eye\n", encoding="utf-8")
+    (bad / "frames.csv").write_text("frame_idx,status\n", encoding="utf-8")
 
     class Result:
         def __init__(self, valid, marker=None):
@@ -131,12 +165,38 @@ def test_discovery_uses_strict_completion_validator(monkeypatch, tmp_path):
         return Result(False)
 
     monkeypatch.setattr(batch, "validate_completion", fake_validate)
-    monkeypatch.setattr(batch, "sha256_file", lambda _: "eyes-hash")
+    monkeypatch.setattr(
+        batch,
+        "sha256_file",
+        lambda path: "eyes-hash" if Path(path).name == "eyes.csv" else "frames-hash",
+    )
 
     grouped = batch.discover_source_runs(tmp_path)
     assert set(grouped) == {"sub-031"}
-    assert grouped["sub-031"][0]["marker"]["run_id"] == "good"
+    item = grouped["sub-031"][0]
+    assert item["marker"]["run_id"] == "good"
+    assert item["eyes_sha256"] == "eyes-hash"
+    assert item["frames_sha256"] == "frames-hash"
     assert validated == [good, bad]
+
+
+def test_discovery_requires_frames_csv_even_when_completion_is_valid(monkeypatch, tmp_path):
+    run = tmp_path / "sub-031_formal_good"
+    run.mkdir()
+    (run / "eyes.csv").write_text("frame_idx,eye\n", encoding="utf-8")
+
+    class Result:
+        valid = True
+        reason = "valid completion marker"
+        marker = {
+            "run_id": "good",
+            "subject": "sub-031",
+            "video": "E:/Data/sub-031_/nir/sub-031_nir.avi",
+        }
+
+    monkeypatch.setattr(batch, "validate_completion", lambda _path: Result())
+    grouped = batch.discover_source_runs(tmp_path)
+    assert grouped == {}
 
 
 def test_discovery_filters_to_requested_subject_before_validation(monkeypatch, tmp_path):
@@ -144,8 +204,9 @@ def test_discovery_filters_to_requested_subject_before_validation(monkeypatch, t
     sub32 = tmp_path / "sub-032_formal_good"
     sub31.mkdir()
     sub32.mkdir()
-    (sub31 / "eyes.csv").write_text("frame_idx,eye\n", encoding="utf-8")
-    (sub32 / "eyes.csv").write_text("frame_idx,eye\n", encoding="utf-8")
+    for run in (sub31, sub32):
+        (run / "eyes.csv").write_text("frame_idx,eye\n", encoding="utf-8")
+        (run / "frames.csv").write_text("frame_idx,status\n", encoding="utf-8")
 
     class Result:
         valid = True
@@ -165,7 +226,7 @@ def test_discovery_filters_to_requested_subject_before_validation(monkeypatch, t
         return Result(path.name.split("_formal_", 1)[0])
 
     monkeypatch.setattr(batch, "validate_completion", fake_validate)
-    monkeypatch.setattr(batch, "sha256_file", lambda _: "eyes-hash")
+    monkeypatch.setattr(batch, "sha256_file", lambda _: "same-hash")
 
     grouped = batch.discover_source_runs(tmp_path, requested_subjects=["sub-031"])
     assert set(grouped) == {"sub-031"}
