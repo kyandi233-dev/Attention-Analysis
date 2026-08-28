@@ -204,10 +204,13 @@ def main() -> int:
             }
         )
 
+    fullclass_cfg = config.get("fullclass", {})
     preview = {
         "fullclass_version": V8_CORE_VERSION,
         "execution_backend": EXECUTION_BACKEND,
         "execution_provider": EXECUTION_PROVIDER,
+        "summary_workers": int(fullclass_cfg.get("summary_workers", 2)),
+        "max_pending_summaries": int(fullclass_cfg.get("max_pending_summaries", 2)),
         "selected_count": len(selections),
         "source_completion_contract_enforced": True,
         "historical_yolo_boxes_reused_as_recorded": True,
