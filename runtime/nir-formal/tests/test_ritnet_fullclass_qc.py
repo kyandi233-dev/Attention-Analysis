@@ -28,8 +28,6 @@ def eye(frame, eye_name="frame_left", *, phase="block1", segment=1, **updates):
         "eye": eye_name,
         "ritnet_status": "success",
         "qc_pupil_fragmented": False,
-        "qc_iris_outer_fragmented": False,
-        "qc_ocular_fragmented": False,
         "pupil_touches_valid_domain_edge": False,
         "iris_outer_touches_valid_domain_edge": False,
         "ocular_touches_valid_domain_edge": False,
@@ -37,8 +35,6 @@ def eye(frame, eye_name="frame_left", *, phase="block1", segment=1, **updates):
         "pupil_predicted_in_padding_pixels": 0,
         "iris_outer_predicted_in_padding_pixels": 0,
         "ocular_predicted_in_padding_pixels": 0,
-        "low_max_probability_threshold": None,
-        "ocular_low_max_probability_fraction": None,
     }
     row.update(updates)
     return row
@@ -72,7 +68,7 @@ def test_same_frame_merges_both_eye_anomalies_into_one_qc_image():
     assert selections[0].eyes == ("frame_left", "frame_right")
 
 
-def test_failure_and_padding_reasons_use_current_final_fields():
+def test_failure_and_padding_reasons_use_only_current_final_fields():
     selections = build_qc_selections(
         frame_coverage_rows=[
             coverage(30, status="final_video_decode_failed"),
@@ -80,12 +76,7 @@ def test_failure_and_padding_reasons_use_current_final_fields():
             coverage(32),
         ],
         eye_metric_rows=[
-            eye(
-                32,
-                ocular_predicted_in_padding_pixels=12,
-                low_max_probability_threshold=0.60,
-                ocular_low_max_probability_fraction=0.25,
-            )
+            eye(32, ocular_predicted_in_padding_pixels=12)
         ],
         anomaly_limit_per_reason_per_phase=5,
         max_image_count=10,
@@ -93,7 +84,24 @@ def test_failure_and_padding_reasons_use_current_final_fields():
     by_frame = {item.frame_idx: set(item.reasons) for item in selections}
     assert "final_video_decode_failed" in by_frame[30]
     assert "roi_invalid" in by_frame[31]
-    assert by_frame[32] == {"prediction_in_artificial_padding", "low_model_confidence"}
+    assert by_frame[32] == {"prediction_in_artificial_padding"}
+
+
+def test_current_uncertainty_means_do_not_create_unvalidated_threshold_anomaly():
+    selections = build_qc_selections(
+        frame_coverage_rows=[coverage(33)],
+        eye_metric_rows=[
+            eye(
+                33,
+                ocular_max_probability_mean=0.2,
+                ocular_top1_top2_margin_mean=0.01,
+                ocular_entropy_mean=1.3,
+            )
+        ],
+        anomaly_limit_per_reason_per_phase=5,
+        max_image_count=10,
+    )
+    assert selections == []
 
 
 def test_anomaly_examples_are_spread_across_phase_not_only_first_rows():
@@ -109,10 +117,10 @@ def test_anomaly_examples_are_spread_across_phase_not_only_first_rows():
     assert all(item.reasons == ("temporal_jump",) for item in selections)
 
 
-def test_global_image_limit_merges_reasons_and_caps_anomalies():
+def test_global_image_limit_merges_current_reasons_and_caps_anomalies():
     frames = [coverage(index, fixed=index in {0, 9}) for index in range(10)]
     eyes = [
-        eye(index, temporal_anomaly=True, qc_ocular_fragmented=True)
+        eye(index, temporal_anomaly=True, pupil_touches_valid_domain_edge=True)
         for index in range(10)
     ]
     selections = build_qc_selections(
