@@ -66,9 +66,12 @@ fullclass:
   qc_artifact_budget_bytes: 268435456
   final_output_limit_bytes: 1073741824
 
-  # Throughput/recovery scheduling only; these do not change scientific values.
-  summary_workers: 2
-  max_pending_summaries: 2
+  # NVIDIA execution tuning only; these values do not change scientific rows.
+  # The pre-2026-08-27 stable CUDA path used four postprocess workers. The v8
+  # batch-level summary pool keeps the same four-way CPU concurrency while
+  # preserving ordered checkpoint consumption and the shared v8 science.
+  summary_workers: 4
+  max_pending_summaries: 4
   checkpoint_rows: 128
   progress_every_batches: 100
 
