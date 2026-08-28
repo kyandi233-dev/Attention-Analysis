@@ -62,7 +62,7 @@ from ritnet_label_store import sha256_file
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
-CORE_VERSION = f"fullclass-geometry-validation-v1::{VALIDATION_GEOMETRY_VERSION}"
+CORE_VERSION = "fullclass-final-core-v8-interface-safe-plain-csv"
 EXECUTION_BACKEND = "onnxruntime-cuda"
 EXECUTION_PROVIDER = "CUDAExecutionProvider"
 VALIDATION_WORK_DIRNAME = ".ritnet-fullclass-geometry-validation-work"
