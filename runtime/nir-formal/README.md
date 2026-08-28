@@ -153,6 +153,9 @@ python -m pytest tests -q
 - padding 不进入科学统计；
 - pupil-only geometry；
 - four soft fractions / three ocular means；
+- full-domain 与 padded-domain 的 cohort uncertainty 公式 parity；
+- padded-domain pupil / iris_outer / ocular 边界 QC 公式 parity；
+- pupil connected-component 定义 parity；
 - production checkpoint 不保存 QC-only null 字段；
 - temporal facts；
 - frame coverage；
@@ -161,6 +164,9 @@ python -m pytest tests -q
 - complete checkpoint 不初始化 DirectML runtime；
 - complete checkpoint → CSV → coverage 的真实调用链；
 - v7 → v8 checkpoint migration；
+- v8 → v8 仅按 numeric scientific identity 恢复；
+- checkpoint prefix/payload 不一致时绝不先改写 identity；
+- engine/workstore v8 core version 同步；
 - completion/manifest/QC integrity。
 
 测试通过不替代真实 AMD DirectML smoke，但它必须在实跑之前通过。
@@ -258,7 +264,7 @@ D:\_AttentionData\Beijing-NIR\amd-directml\.ritnet-fullclass-work\sub-XXX.sqlite
 完整 checkpoint 时：
 
 ```text
-validate identity + source prefix
+validate numeric scientific identity + source prefix + stored payload
 → SQLite rows
 → temporal facts
 → final CSV / coverage
@@ -269,6 +275,10 @@ validate identity + source prefix
 **不会初始化 DirectML，也不会重跑全量 RITnet。**
 
 `sub-034` 已有 80,479-row v7 checkpoint；v8 对该迁移有显式 fail-closed 检查。迁移前不会删除或重写 numeric rows。
+
+v8 partial checkpoint 同样按 numeric scientific identity 判断能否复用。Git commit/branch、整份 config SHA 或 scheduling/QC 等非 numeric provenance 发生变化时，只要 source/model/ROI/schema/数值算法版本完全一致，仍必须先通过 source prefix 与真实 payload 检查，随后才允许把 checkpoint identity 迁移到当前 run。模型、source、ROI、class mapping、analysis/uncertainty/temporal/schema 任一科学身份变化则拒绝恢复。
+
+final `completion.json` 的规则更严格：它代表完整 final artifact contract，不会因为 checkpoint 可复用就自动把不同 final config 的旧结果当作当前完成结果。
 
 ---
 
@@ -326,16 +336,48 @@ QC 对少量选中帧执行 bounded RITnet，这是为了生成可复核 evidenc
 - bounded QC；
 - final integrity pass。
 
-已经删除的重复或无用工作：
+已经删除或合并的重复/无用工作：
 
 - final CSV gzip；
 - sparse NPZ compression；
--高 PNG compression；
+- 高 PNG compression；
 - cohort percentile/boundary/threshold calculations；
--对应 SQLite null placeholders；
+- 对应 SQLite null placeholders；
 - complete-checkpoint DirectML initialization；
 - QC 前完整 CSV readback；
 - completion 后立即第二次全表 validation；
-- dead gzip helper code。
+- dead gzip helper code；
+- padded-domain pupil / iris_outer / ocular 三次重复 boundary dilation（现在一次计算复用）。
 
 `summary_workers=2` 与单 producer 用于将必要 CPU 工作与 DirectML 重叠；实测当前瓶颈是 DirectML，不是 summary，所以不要为了“CPU 看起来更少”把有效 overlap 拆掉。
+
+### 隔离的 DirectML output-transfer benchmark
+
+当前正式 b16 cohort 每次会返回：
+
+```text
+class_probability = [16,4,400,640] float32
+```
+
+仅该张量约 62.5 MiB/call。它当前用于在 CPU 端计算 four soft fractions 与 three ocular uncertainty means。
+
+仓库提供隔离 benchmark：
+
+```powershell
+python benchmark_ritnet_final_output_transfer.py `
+  --run-dir "<任一严格完成的 historical formal run>" `
+  --config config.yaml `
+  --device 0
+```
+
+它只使用同一个当前 ONNX/session 和一张真实 b16 tensor，交错比较：
+
+```text
+labels only
+labels + class_probability   # 当前 cohort contract
+all five outputs
+```
+
+计时前会检查 labels parity，以及两种 probability 请求方式的逐像素一致性。该 benchmark 不写正式科研输出、不修改 checkpoint、也不会改变正式 runner。
+
+只有 AMD 实机结果证明 output transfer 是显著瓶颈后，才考虑开发独立 scalar-output ONNX candidate；candidate 必须先完成 DirectML parity 与 benchmark，不能直接替换正式模型。padded ROI 仍必须保留当前 source-valid 科学定义和可靠 fallback。
