@@ -4,11 +4,18 @@ This entrypoint is the only supported single-subject AMD/DirectML path. It
 reuses the strictly validated historical YOLO formal source, runs the compact
 final numeric core, produces bounded frame-level QC evidence, and publishes a
 completion marker only after end-to-end integrity and <1 GiB checks pass.
+
+Final-subject state policy is intentionally simple:
+- a valid completion with a compatible run contract is skipped;
+- any invalid, incomplete, legacy, or contract-incompatible subject directory
+  is preserved by moving the whole directory into ``_archive``;
+- no existing scientific output is silently deleted or overwritten.
 """
 from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime
 from pathlib import Path
 
 from ritnet_fullclass_final_completion import (
@@ -24,15 +31,11 @@ from ritnet_fullclass_final_engine import (
     run_numeric_core,
 )
 from ritnet_fullclass_git import require_clean_code_worktree
-from ritnet_fullclass_qc_producer import QC_PIXEL_EVIDENCE_NAME, produce_qc_artifacts
+from ritnet_fullclass_qc_producer import produce_qc_artifacts
 from ritnet_fullclass_source import load_source_context
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
-LEGACY_GZIP_DATA_NAMES = (
-    "eye_metrics.csv.gz",
-    "frame_coverage.csv.gz",
-)
 
 
 def parse_args() -> argparse.Namespace:
@@ -89,15 +92,82 @@ def _manifest_work_identity(subject_dir: Path) -> dict:
     return dict(manifest["work_identity"])
 
 
+def _archive_reason_slug(reason: str) -> str:
+    text = "".join(ch.lower() if ch.isalnum() else "-" for ch in str(reason))
+    text = "-".join(part for part in text.split("-") if part)
+    return (text or "stale-state")[:64]
+
+
+def _archive_subject_dir(subject_dir: Path, *, reason: str) -> Path | None:
+    """Move a stale final subject directory into a unique archive path.
+
+    The operation is same-volume rename/move when the output root and archive
+    root are on the same drive. Nothing is deleted. A small archive metadata
+    record is added after the move so later audits can see why it was displaced.
+    """
+    subject_dir = Path(subject_dir)
+    if not subject_dir.exists():
+        return None
+    try:
+        has_contents = any(subject_dir.iterdir())
+    except OSError as exc:
+        raise RuntimeError(f"cannot inspect existing final subject directory: {subject_dir}: {exc}") from exc
+    if not has_contents:
+        return None
+
+    output_root = subject_dir.parent.parent
+    archive_parent = output_root / "_archive" / subject_dir.parent.name / subject_dir.name
+    archive_parent.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    slug = _archive_reason_slug(reason)
+    destination = archive_parent / f"{stamp}__{slug}"
+    suffix = 1
+    while destination.exists():
+        destination = archive_parent / f"{stamp}-{suffix:02d}__{slug}"
+        suffix += 1
+
+    try:
+        subject_dir.replace(destination)
+    except OSError as exc:
+        raise RuntimeError(
+            "existing final subject state needs archiving but Windows refused the directory move. "
+            "Close any Explorer preview/image viewer/VS Code tab that has files open under this subject, "
+            f"then rerun the same command. source={subject_dir} destination={destination} error={exc}"
+        ) from exc
+
+    archive_record = {
+        "archived_at_local": datetime.now().isoformat(timespec="seconds"),
+        "reason": str(reason),
+        "source_subject_dir": str(subject_dir),
+        "archive_dir": str(destination),
+        "policy": "preserve-by-move-no-delete",
+    }
+    (destination / "_archive_reason.json").write_text(
+        json.dumps(archive_record, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    print(
+        json.dumps(
+            {
+                "subject": subject_dir.name,
+                "status": "archived_stale_final_state",
+                "reason": str(reason),
+                "from": str(subject_dir),
+                "to": str(destination),
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return destination
+
+
 def _strict_skip_or_preflight(context, config_path: Path) -> tuple[Path, dict]:
     subject_dir = _subject_dir(context)
     expected_identity = _expected_work_identity(context, config_path)
     completion = subject_dir / COMPLETION_NAME
+
     if completion.exists():
-        # First prove the completed artifact is internally intact under its own
-        # recorded provenance. Then compare the current requested contract while
-        # ignoring only Git SHA/branch. Config/model/source/core/schema drift is
-        # still a hard mismatch and cannot be silently skipped.
         validation = validate_final_completion(
             subject_dir,
             expected_subject=context.subject,
@@ -121,29 +191,28 @@ def _strict_skip_or_preflight(context, config_path: Path) -> tuple[Path, dict]:
                     )
                 )
                 return subject_dir, expected_identity
-            raise RuntimeError(
-                "existing final completion is internally valid but its non-Git run contract differs "
-                "from the current requested config/model/source/core/schema; refusing silent reuse"
+            _archive_subject_dir(
+                subject_dir,
+                reason="valid-completion-contract-mismatch",
             )
-        raise RuntimeError(
-            "existing final completion is invalid; refusing automatic overwrite: " + validation.reason
-        )
+            return subject_dir, expected_identity
 
-    blockers = [
-        subject_dir / "summary.json",
-        subject_dir / "manifest.json",
-        subject_dir / "qc" / "qc_index.csv",
-        subject_dir / "qc" / QC_PIXEL_EVIDENCE_NAME,
-        *(subject_dir / "data" / name for name in LEGACY_GZIP_DATA_NAMES),
-    ]
-    blockers += list((subject_dir / "qc" / "images").glob("*.png")) if (subject_dir / "qc" / "images").is_dir() else []
-    existing = [path for path in blockers if path.exists()]
-    if existing:
-        raise RuntimeError(
-            "incomplete or legacy final artifacts already exist without a valid completion marker; "
-            "refusing automatic deletion/overwrite. Archive them outside the subject directory first: "
-            + ", ".join(str(path) for path in existing[:8])
+        _archive_subject_dir(
+            subject_dir,
+            reason=f"invalid-completion__{validation.reason}",
         )
+        return subject_dir, expected_identity
+
+    if subject_dir.exists():
+        try:
+            has_contents = any(subject_dir.iterdir())
+        except OSError as exc:
+            raise RuntimeError(f"cannot inspect existing final subject directory: {subject_dir}: {exc}") from exc
+        if has_contents:
+            _archive_subject_dir(
+                subject_dir,
+                reason="incomplete-or-legacy-without-valid-completion",
+            )
     return subject_dir, expected_identity
 
 
