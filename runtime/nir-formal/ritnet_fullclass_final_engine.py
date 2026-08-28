@@ -6,7 +6,7 @@ segmentation, pupil-only geometry, compact online uncertainty summaries and
 gap-safe temporal facts.
 
 The production loop is pipelined: source decode/ROI/preprocessing of batch N+1
-overlaps DirectML inference of batch N, while CPU metric reduction of batch N-1
+overlaps CUDA inference of batch N, while CPU metric reduction of batch N-1
 overlaps both.
 """
 from __future__ import annotations
@@ -59,6 +59,8 @@ from ritnet_label_store import sha256_file
 
 PACKAGE_ROOT = Path(__file__).resolve().parent
 CORE_VERSION = "fullclass-final-core-v8-interface-safe-plain-csv"
+EXECUTION_BACKEND = "onnxruntime-cuda"
+EXECUTION_PROVIDER = "CUDAExecutionProvider"
 VIDEO_SEEK_GAP_THRESHOLD = 64
 DEFAULT_CHECKPOINT_ROWS = 128
 DEFAULT_PROGRESS_EVERY_BATCHES = 100
@@ -442,6 +444,8 @@ def _work_identity(
         "git_commit": git_commit,
         "git_branch": git_branch,
         "config_sha256": sha256_file(config_path),
+        "execution_backend": EXECUTION_BACKEND,
+        "execution_provider": EXECUTION_PROVIDER,
         "ritnet_model_sha256": sha256_file(ritnet_model),
         "ritnet_external_data_sha256": sha256_file(ritnet_external_data),
         "ritnet_input": [TARGET_WIDTH, TARGET_HEIGHT],
@@ -495,14 +499,14 @@ def _report_progress(
     remaining = max(0, total_rows - completed_total)
     eta_sec = remaining / rate if rate > 0 else float("inf")
     eta_text = f"{eta_sec / 60.0:.1f}m" if eta_sec != float("inf") else "?"
-    dml_ms = timing_total.get("gpu_and_transfer_ms", 0.0)
+    cuda_ms = timing_total.get("gpu_and_transfer_ms", 0.0)
     summary_ms = timing_total.get("summary_total_ms", 0.0)
     producer_ms = timing_total.get("producer_total_ms", 0.0)
     print(
         f"[FULLCLASS] {subject} batch={batch_count} "
         f"eyes={completed_total}/{total_rows} "
         f"rate={rate:.2f} eyes/s ETA={eta_text} "
-        f"stage_ms(prod={producer_ms:.0f},dml={dml_ms:.0f},summary={summary_ms:.0f})",
+        f"stage_ms(prod={producer_ms:.0f},cuda={cuda_ms:.0f},summary={summary_ms:.0f})",
         flush=True,
     )
 
@@ -564,7 +568,7 @@ def run_numeric_core(
         start_ordinal = store.validate_prefix(context.eye_rows)
         if start_ordinal == len(context.eye_rows):
             # Recovery/finalization from a complete checkpoint must not load the
-            # DirectML session or allocate VRAM again.
+            # CUDA session or allocate VRAM again.
             numeric_rows = list(iter_temporal_facts(store.iter_rows()))
         else:
             runtime = RitnetFullClassFinalRuntime(ritnet_model, device=device)
