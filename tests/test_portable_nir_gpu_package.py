@@ -37,6 +37,8 @@ def test_formal_runtime_config_is_current_nvidia_cuda_v8_baseline():
     assert config["ritnet"]["precision"] == "fp32"
     assert config["package"]["version"] == "0.2.0"
     assert "NVIDIA CUDA" in config["package"]["purpose"]
+    assert config["fullclass"]["summary_workers"] == 4
+    assert config["fullclass"]["max_pending_summaries"] == 4
     assert config["batch"]["subjects"]["exclude"] == ["sub-9504"]
     assert "nvidia-cuda" in config["output"]["root"]
     assert "nvidia-cuda" in config["batch"]["output_root"]
