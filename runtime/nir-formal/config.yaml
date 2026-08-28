@@ -95,7 +95,9 @@ batch:
       - "sub-9504"
   device: "0"
   continue_on_error: true
-  skip_completed: true
+  # Completion policy is canonical and not user-toggled: a valid compatible
+  # completion is skipped; stale/incomplete subject state is preserved in
+  # _archive and the subject is recomputed cleanly.
   output_root: "outputs/amd-directml/formal"
 
 output:
