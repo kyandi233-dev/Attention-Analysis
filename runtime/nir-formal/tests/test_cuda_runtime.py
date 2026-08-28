@@ -1,7 +1,14 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import numpy as np
 import pytest
+
+
+RUNTIME = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(RUNTIME))
 
 import cuda_runtime
 from cuda_runtime import YoloCudaRuntime, create_cuda_session, parse_device_id
