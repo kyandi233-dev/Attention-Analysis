@@ -17,7 +17,7 @@ import numpy as np
 from ritnet_native_metrics import _component_metrics, _ellipse_geometry, validate_native_labels
 
 
-ANALYSIS_DOMAIN_VERSION = "source-backed-output-mask-v2-pupil-geometry-only"
+ANALYSIS_DOMAIN_VERSION = "source-backed-output-mask-v3-primary-pupil-topology"
 CLASS_NAMES = {
     0: "background",
     1: "sclera",
@@ -64,6 +64,61 @@ def _internal_valid_boundary_adjacency(valid: np.ndarray) -> np.ndarray:
     ).astype(bool)
 
 
+def _primary_pupil_component(
+    labels: np.ndarray,
+    valid: np.ndarray,
+) -> np.ndarray:
+    """Select the pupil island belonging to the strongest iris+pupil topology.
+
+    RITnet occasionally predicts multiple disconnected class-3 islands under
+    glasses/reflections. Choosing the largest pupil contour alone can therefore
+    fit a peripheral false-positive instead of the anatomical pupil. We avoid
+    introducing a hand-tuned center/distance threshold: each pupil component is
+    associated with the connected component of ``iris_outer = class 2 | class 3``
+    that contains it. The pupil embedded in the largest such iris_outer structure
+    wins; ties within the same iris_outer structure are resolved by pupil area.
+
+    With zero or one pupil component this is exactly the historical mask, so the
+    change only resolves an otherwise ambiguous fragmented-pupil case.
+    """
+    pupil = np.ascontiguousarray(((labels == 3) & valid).astype(np.uint8))
+    pupil_count, pupil_ids, pupil_stats, _ = cv2.connectedComponentsWithStats(
+        pupil,
+        connectivity=8,
+    )
+    component_count = max(0, int(pupil_count) - 1)
+    if component_count <= 1:
+        return pupil.astype(bool)
+
+    iris_outer = np.ascontiguousarray((((labels >= 2) & valid)).astype(np.uint8))
+    outer_count, outer_ids, outer_stats, _ = cv2.connectedComponentsWithStats(
+        iris_outer,
+        connectivity=8,
+    )
+    if int(outer_count) <= 1:
+        areas = pupil_stats[1:, cv2.CC_STAT_AREA]
+        selected_id = int(np.argmax(areas)) + 1
+        return pupil_ids == selected_id
+
+    candidates: list[tuple[int, int, int]] = []
+    for pupil_id in range(1, int(pupil_count)):
+        component = pupil_ids == pupil_id
+        containing_outer_ids = outer_ids[component]
+        containing_outer_ids = containing_outer_ids[containing_outer_ids > 0]
+        if containing_outer_ids.size == 0:
+            outer_area = 0
+        else:
+            counts = np.bincount(containing_outer_ids)
+            outer_id = int(np.argmax(counts))
+            outer_area = int(outer_stats[outer_id, cv2.CC_STAT_AREA])
+        pupil_area = int(pupil_stats[pupil_id, cv2.CC_STAT_AREA])
+        candidates.append((outer_area, pupil_area, -pupil_id))
+
+    selected_rank = max(candidates)
+    selected_id = -int(selected_rank[2])
+    return pupil_ids == selected_id
+
+
 def summarize_final_hard_metrics(
     labels: np.ndarray,
     valid_source_mask: np.ndarray | None = None,
@@ -73,9 +128,6 @@ def summarize_final_hard_metrics(
     full_source_domain = bool(valid.all())
     valid_count = int(valid.size if full_source_domain else valid.sum())
 
-    # Four-class information is preserved exactly. In the common all-valid case
-    # this is one cheap bincount over uint8 labels; padded eyes count only pixels
-    # backed by the original source video.
     observed = labels.reshape(-1) if full_source_domain else labels[valid]
     counts_array = np.bincount(observed, minlength=4)
     if int(counts_array[:4].sum()) != valid_count:
@@ -94,13 +146,11 @@ def summarize_final_hard_metrics(
     result["hard_ocular_pixels"] = ocular_count
     result["hard_ocular_fraction"] = float(ocular_count / valid_count)
 
-    # Pupil is the only geometric structure retained in the formal NIR cohort.
-    # Iris hard/soft class information remains available, but no iris ellipse or
-    # pupil-to-iris ratio is manufactured from fragmented iris masks.
     pupil = labels == 3
     pupil_analysis = pupil if full_source_domain else (pupil & valid)
-    pupil_geom, _ = _ellipse_geometry(pupil_analysis)
     pupil_components, pupil_largest_fraction = _component_metrics(pupil_analysis)
+    primary_pupil = _primary_pupil_component(labels, valid)
+    pupil_geom, _ = _ellipse_geometry(primary_pupil)
     result["pupil_component_count"] = int(pupil_components)
     result["pupil_largest_component_fraction"] = pupil_largest_fraction
     result["qc_pupil_fragmented"] = bool(pupil_components > 1)
