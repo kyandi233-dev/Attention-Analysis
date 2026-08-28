@@ -67,8 +67,11 @@ fullclass:
   final_output_limit_bytes: 1073741824
 
   # Throughput/recovery scheduling only; these do not change scientific values.
+  # Keep two CPU summary workers so DirectML retains CPU scheduling headroom,
+  # but allow four in-flight summary batches to absorb variable geometry/QC
+  # latency instead of stalling the next DML batch as soon as two are pending.
   summary_workers: 2
-  max_pending_summaries: 2
+  max_pending_summaries: 4
   checkpoint_rows: 128
   progress_every_batches: 100
 
