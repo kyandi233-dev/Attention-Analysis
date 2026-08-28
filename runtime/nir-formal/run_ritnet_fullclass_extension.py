@@ -1,8 +1,8 @@
 """Canonical single-subject final RITnet full-class runner.
 
-This entrypoint is the only supported single-subject AMD/DirectML path. It
-reuses the strictly validated historical YOLO formal source, runs the compact
-final numeric core, produces bounded frame-level QC evidence, and publishes a
+This entrypoint is the supported single-subject NVIDIA/CUDA path. It reuses the
+strictly validated historical YOLO formal source, runs the shared v8 compact
+numeric core, produces bounded frame-level QC evidence, and publishes a
 completion marker only after end-to-end integrity and <1 GiB checks pass.
 """
 from __future__ import annotations
@@ -41,7 +41,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--run-dir", type=Path, required=True, help="Completed historical formal run directory")
     parser.add_argument("--config", type=Path, default=PACKAGE_ROOT / "config.yaml")
-    parser.add_argument("--device", default="0", help="DirectML device id")
+    parser.add_argument("--device", default="0", help="CUDA device id")
     parser.add_argument(
         "--source-selection-reason",
         default="direct_single_subject_run",

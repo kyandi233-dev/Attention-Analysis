@@ -22,6 +22,7 @@ if str(PACKAGE_ROOT) not in sys.path:
 
 from formal_completion import validate_completion
 from ritnet_fullclass_contract import normalize_subject
+from ritnet_fullclass_final_engine import EXECUTION_BACKEND, EXECUTION_PROVIDER
 from ritnet_fullclass_workstore import V8_CORE_VERSION
 from ritnet_label_store import sha256_file
 
@@ -203,8 +204,13 @@ def main() -> int:
             }
         )
 
+    fullclass_cfg = config.get("fullclass", {})
     preview = {
         "fullclass_version": V8_CORE_VERSION,
+        "execution_backend": EXECUTION_BACKEND,
+        "execution_provider": EXECUTION_PROVIDER,
+        "summary_workers": int(fullclass_cfg.get("summary_workers", 2)),
+        "max_pending_summaries": int(fullclass_cfg.get("max_pending_summaries", 2)),
         "selected_count": len(selections),
         "source_completion_contract_enforced": True,
         "historical_yolo_boxes_reused_as_recorded": True,

@@ -1,4 +1,4 @@
-"""Final fixed-b16 RITnet DirectML runtime for compact full-class analysis.
+"""Final fixed-b16 RITnet CUDA runtime for compact full-class analysis.
 
 The frozen ONNX graph still exposes the qualified five-output contract. Cohort
 production requests only hard labels plus four-class probabilities. The three
@@ -17,7 +17,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-from directml_runtime import _fixed_shape, create_directml_session, parse_device_id
+from cuda_runtime import _fixed_shape, create_cuda_session, parse_device_id
 
 
 FIXED_BATCH_SIZE = 16
@@ -80,11 +80,11 @@ class RitnetFullClassFinalRuntime:
     def __init__(self, weights: Path, *, device: str = "0") -> None:
         self.weights = Path(weights)
         self.device_id = parse_device_id(device)
-        self.device = f"dml:{self.device_id}"
+        self.device = f"cuda:{self.device_id}"
         self.precision = "fp32"
         self.input_size = (INPUT_WIDTH, INPUT_HEIGHT)
         self.preprocessing_version = PREPROCESSING_VERSION
-        self.session = create_directml_session(self.weights, self.device_id)
+        self.session = create_cuda_session(self.weights, self.device_id)
         self.providers = list(self.session.get_providers())
         self.cohort_compact_outputs = True
         self._cohort_call_count = 0

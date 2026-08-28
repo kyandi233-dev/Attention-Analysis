@@ -20,8 +20,10 @@ def identity(*, model_hash="m" * 64):
         "subject": "sub-031",
         "source_identity": {"source_video_sha256": "s" * 64, "source_eyes_sha256": "e" * 64},
         "git_commit": "a" * 40,
-        "git_branch": "amd-DirectML",
+        "git_branch": "nvidia-cuda-v8",
         "config_sha256": "c" * 64,
+        "execution_backend": "onnxruntime-cuda",
+        "execution_provider": "CUDAExecutionProvider",
         "ritnet_model_sha256": model_hash,
         "ritnet_external_data_sha256": "d" * 64,
         "ritnet_input": [640, 400],
@@ -82,7 +84,7 @@ def test_v8_checkpoint_rebinds_only_after_prefix_and_payload_validation(tmp_path
     before = meta(path)
     current = identity()
     current["git_commit"] = "b" * 40
-    current["git_branch"] = "analysis/repaired-runner"
+    current["git_branch"] = "analysis/repaired-cuda-runner"
     current["config_sha256"] = "z" * 64
     current["summary_workers"] = 4
     current["qc_image_max_count"] = 40
@@ -145,3 +147,15 @@ def test_v8_checkpoint_rejects_changed_numeric_science(tmp_path):
 
     with pytest.raises(RuntimeError, match="scientific run"):
         FullClassWorkStore(path, identity=identity(model_hash="x" * 64))
+
+
+def test_v8_checkpoint_rejects_directml_execution_identity(tmp_path):
+    path = tmp_path / "work.sqlite"
+    with FullClassWorkStore(path, identity=identity()) as store:
+        store.append_rows([(0, payload())])
+
+    current = identity()
+    current["execution_backend"] = "onnxruntime-directml"
+    current["execution_provider"] = "DmlExecutionProvider"
+    with pytest.raises(RuntimeError, match="scientific run"):
+        FullClassWorkStore(path, identity=current)

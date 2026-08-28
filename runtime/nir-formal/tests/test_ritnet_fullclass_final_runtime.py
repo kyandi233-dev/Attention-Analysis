@@ -38,15 +38,16 @@ class ContractSession:
         return self._outputs
 
     def get_providers(self):
-        return ["DmlExecutionProvider", "CPUExecutionProvider"]
+        return ["CUDAExecutionProvider"]
 
 
 def test_constructor_locks_final_five_output_contract(monkeypatch, tmp_path):
-    monkeypatch.setattr(final_runtime, "create_directml_session", lambda *_: ContractSession())
+    monkeypatch.setattr(final_runtime, "create_cuda_session", lambda *_: ContractSession())
     runtime = RitnetFullClassFinalRuntime(tmp_path / "ritnet-b16-fp32-uncertainty.onnx")
     assert runtime.input_size == (640, 400)
     assert runtime.FIXED_BATCH_SIZE == 16
-    assert runtime.providers[0] == "DmlExecutionProvider"
+    assert runtime.device == "cuda:0"
+    assert runtime.providers[0] == "CUDAExecutionProvider"
 
 
 def test_constructor_rejects_old_aggregate_soft_fraction_contract(monkeypatch, tmp_path):
@@ -57,7 +58,7 @@ def test_constructor_rejects_old_aggregate_soft_fraction_contract(monkeypatch, t
         Node("top1_top2_margin", "tensor(float)", (16, 400, 640)),
         Node("entropy", "tensor(float)", (16, 400, 640)),
     ]
-    monkeypatch.setattr(final_runtime, "create_directml_session", lambda *_: ContractSession(old_outputs))
+    monkeypatch.setattr(final_runtime, "create_cuda_session", lambda *_: ContractSession(old_outputs))
     with pytest.raises(ValueError, match="output names/order mismatch"):
         RitnetFullClassFinalRuntime(tmp_path / "old-aggregate.onnx")
 
@@ -70,7 +71,7 @@ def test_constructor_rejects_wrong_class_probability_shape(monkeypatch, tmp_path
         Node("top1_top2_margin", "tensor(float)", (16, 400, 640)),
         Node("entropy", "tensor(float)", (16, 400, 640)),
     ]
-    monkeypatch.setattr(final_runtime, "create_directml_session", lambda *_: ContractSession(outputs))
+    monkeypatch.setattr(final_runtime, "create_cuda_session", lambda *_: ContractSession(outputs))
     with pytest.raises(ValueError, match="contract mismatch"):
         RitnetFullClassFinalRuntime(tmp_path / "bad-shape.onnx")
 
