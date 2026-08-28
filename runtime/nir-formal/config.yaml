@@ -1,7 +1,7 @@
 package:
   name: nir-formal
   version: 0.2.0
-  purpose: NVIDIA CUDA formal NIR analysis runtime; shared v8 science with CUDA execution
+  purpose: NVIDIA CUDA pupil-geometry shadow validation; shared v8 science with fresh RITnet rerun
 
 data:
   roots:
@@ -49,7 +49,9 @@ ritnet:
   pupil_confidence_min: null
 
 fullclass:
-  output_dirname: "ritnet-fullclass-final"
+  # Validation branch only. Keep fresh-RITnet shadow outputs physically isolated
+  # from any existing production ritnet-fullclass-final subject directory.
+  output_dirname: "ritnet-fullclass-geometry-validation"
   roi:
     target_width: 640
     target_height: 400
@@ -58,18 +60,12 @@ fullclass:
     expand_vertical_each_side: 0.45
     padding_mode: "replicate"
   qc_interval_sec: 30
-  # Fixed timeline anchors remain mandatory. Anomaly examples are bounded to a
-  # human-reviewable sample rather than filling the output directory.
   qc_anomaly_max_per_reason: 5
   qc_image_max_count: 80
   qc_pixel_evidence_max_eyes: 16
   qc_artifact_budget_bytes: 268435456
   final_output_limit_bytes: 1073741824
 
-  # NVIDIA execution tuning only; these values do not change scientific rows.
-  # The pre-2026-08-27 stable CUDA path used four postprocess workers. The v8
-  # batch-level summary pool keeps the same four-way CPU concurrency while
-  # preserving ordered checkpoint consumption and the shared v8 science.
   summary_workers: 4
   max_pending_summaries: 4
   checkpoint_rows: 128
