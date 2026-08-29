@@ -1,0 +1,4 @@
+session_id,include,repeat_participant_id,identity_status,exclusion_reason
+sub-001,true,group-001,temporary_confirmed,
+sub-002,true,group-001,temporary_confirmed,
+sub-003,false,group-003,temporary_confirmed,example_exclusion
