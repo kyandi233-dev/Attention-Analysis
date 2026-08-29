@@ -33,7 +33,6 @@ TIME_JOIN_KEYS = {
     "next_trial_onset_time",
     "block_onset_time",
     "probe_onset_time",
-    "response_time",
     "current_trial_onset_unix_ms",
     "current_next_trial_onset_unix_ms",
     "previous_trial_onset_unix_ms",
@@ -172,7 +171,9 @@ def normalize_known_join_dtypes(
       ``naive_timezone`` is explicitly supplied.
 
     Unknown columns are preserved unchanged. Required keys must exist and may
-    not contain missing values after normalization.
+    not contain missing values after normalization. Fields that are not merge or
+    timeline keys (for example a response latency named ``response_time``) are
+    intentionally left untouched.
     """
     result = frame.copy()
     required = _required_set(required_non_null)
