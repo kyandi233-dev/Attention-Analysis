@@ -4,6 +4,8 @@ from collections.abc import Mapping
 
 import pandas as pd
 
+from .join_keys import normalize_known_join_dtypes
+
 UNIT_KEYS: dict[str, list[str]] = {
     "trial": ["repeat_participant_id", "session_id", "block_id", "trial_id"],
     "probe": ["repeat_participant_id", "session_id", "block_id", "probe_id", "window_name"],
@@ -18,13 +20,13 @@ def keys_for_unit(unit: str) -> list[str]:
     return list(UNIT_KEYS[unit])
 
 
-def validate_merge_ready(
+def _normalize_and_validate(
     table: pd.DataFrame,
     *,
     unit: str,
     modality: str,
     require_group: bool = True,
-) -> dict[str, object]:
+) -> tuple[pd.DataFrame, dict[str, object]]:
     keys = keys_for_unit(unit)
     required = set(keys)
     if not require_group:
@@ -34,21 +36,42 @@ def validate_merge_ready(
         raise ValueError(f"{modality} {unit} 表缺少合并键: {sorted(missing)}")
 
     active_keys = [key for key in keys if key in table.columns]
-    if table[active_keys].isna().any().any():
-        bad = table[active_keys].isna().any(axis=1)
+    normalized = normalize_known_join_dtypes(
+        table,
+        required_non_null=active_keys,
+    )
+    if normalized[active_keys].isna().any().any():
+        bad = normalized[active_keys].isna().any(axis=1)
         raise ValueError(f"{modality} {unit} 表有 {int(bad.sum())} 行合并键缺失，禁止静默填补")
-    if table.duplicated(active_keys).any():
-        dup = int(table.duplicated(active_keys, keep=False).sum())
+    if normalized.duplicated(active_keys).any():
+        dup = int(normalized.duplicated(active_keys, keep=False).sum())
         raise ValueError(f"{modality} {unit} 表主键重复: {dup} rows")
 
-    return {
+    return normalized, {
         "modality": modality,
         "unit": unit,
-        "rows": int(len(table)),
-        "sessions": int(table["session_id"].nunique()) if "session_id" in table else None,
-        "groups": int(table["repeat_participant_id"].nunique()) if "repeat_participant_id" in table else None,
+        "rows": int(len(normalized)),
+        "sessions": int(normalized["session_id"].nunique()) if "session_id" in normalized else None,
+        "groups": int(normalized["repeat_participant_id"].nunique()) if "repeat_participant_id" in normalized else None,
         "keys": active_keys,
+        "key_normalization": "canonical-string-integer-utc-epoch-ms-v1",
     }
+
+
+def validate_merge_ready(
+    table: pd.DataFrame,
+    *,
+    unit: str,
+    modality: str,
+    require_group: bool = True,
+) -> dict[str, object]:
+    _, audit = _normalize_and_validate(
+        table,
+        unit=unit,
+        modality=modality,
+        require_group=require_group,
+    )
+    return audit
 
 
 def merge_modalities(
@@ -67,9 +90,14 @@ def merge_modalities(
     audits = []
     prepared: list[tuple[str, pd.DataFrame]] = []
     for modality, table in tables.items():
-        audits.append(validate_merge_ready(table, unit=unit, modality=modality))
-        nonkeys = [column for column in table.columns if column not in keys]
-        renamed = table.rename(columns={column: f"{modality}__{column}" for column in nonkeys})
+        normalized, audit = _normalize_and_validate(
+            table, unit=unit, modality=modality
+        )
+        audits.append(audit)
+        nonkeys = [column for column in normalized.columns if column not in keys]
+        renamed = normalized.rename(
+            columns={column: f"{modality}__{column}" for column in nonkeys}
+        )
         prepared.append((modality, renamed))
 
     _, merged = prepared[0]

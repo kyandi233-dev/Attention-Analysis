@@ -7,6 +7,7 @@ from typing import Iterable
 import pandas as pd
 
 from .cohort import canonical_session_id
+from .join_keys import normalize_known_join_dtypes
 
 PIR_PATTERNS = (
     re.compile(r"(^|_)pir($|_)", re.IGNORECASE),
@@ -161,6 +162,12 @@ def adapt_nir_frame_table(
     out["nir_source_path"] = pd.NA if source_path is None else str(Path(source_path))
     out["nir_contract"] = "fullclass-final-pupil-only-v2"
 
+    out = normalize_known_join_dtypes(
+        out,
+        required_non_null=[
+            "session_id", "phase", "phase_segment", "frame_idx", "eye", "unix_ms"
+        ],
+    )
     key = ["phase", "phase_segment", "frame_idx", "eye"]
     if out.duplicated(key).any():
         dup_n = int(out.duplicated(key, keep=False).sum())
