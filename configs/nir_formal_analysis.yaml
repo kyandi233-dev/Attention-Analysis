@@ -1,6 +1,6 @@
 pipeline:
   name: attention-analysis-nir-formal-analysis-tables-pupil-only
-  version: 2.5.0
+  version: 2.5.1
   schema_version: 7
   signal_semantics: pupil_geometry_only
   timezone: Asia/Shanghai
@@ -107,7 +107,11 @@ candidate_metrics:
   compare_redundancy: true
   repeat_direction_requires_verified_visit_order: true
   iris_fraction_candidate_allowed: false
-  pir_oar_allowed: false
+  pir_candidate_allowed: false
+  iris_geometry_candidate_allowed: false
+  ocular_aperture_qc_allowed: true
+  ocular_aperture_formal_endpoint: false
+  ocular_aperture_interpretation: producer_visible_ocular_mask_qc_not_ear_not_blink_not_perclos
 
 windows:
   trial:
