@@ -15,6 +15,7 @@ dependencies = [
   "scipy>=1.10",
   "matplotlib>=3.8",
   "statsmodels>=0.14",
+  "pyarrow>=14.0",
 ]
 
 [project.optional-dependencies]
@@ -27,3 +28,7 @@ where = ["src"]
 pythonpath = ["src"]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+  "requires_local_raw_data: legacy/pre-experiment tests that require machine-local raw data or historical absolute-path assets",
+  "legacy_optional_backend: historical ROI-backend tests whose implementation module is no longer part of the active formal pipeline",
+]
