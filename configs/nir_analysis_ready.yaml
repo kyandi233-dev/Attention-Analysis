@@ -1,3 +1,9 @@
+# LEGACY / PROVENANCE ONLY (iris_outer/PIR-based exploratory materialization).
+# Do not use for current formal fullclass-final downstream analysis. The current
+# path-neutral pupil-only contract is configs/formal_multimodal_v2.yaml and
+# scripts/formal_multimodal_analysis.py. This file remains executable only for
+# historical reproducibility and must not be relabelled as current evidence.
+
 pipeline:
   name: attention-analysis-nir-analysis-ready
   version: 1.0.0
@@ -23,7 +29,7 @@ materialization:
   max_eye_time_delta_ms: 1.0
 
 validity:
-  # Primary frame rule frozen by docs/020-nir/212-*.md.
+  # Historical PIR rule; not current fullclass-final pupil-only validity.
   primary:
     require_pupil_fit_valid: true
     require_iris_outer_fit_valid: true
@@ -33,7 +39,6 @@ validity:
     require_pupil_whole_mask_not_edge: false
     require_iris_whole_mask_not_edge: false
     require_roi_not_clipped: false
-  # Historical production rule retained only as strict sensitivity.
   strict:
     require_fullclass_normalization_valid: true
     require_pir_finite: true
@@ -44,8 +49,6 @@ standardization:
   block_centering_primary: false
 
 binocular:
-  # Base analysis-ready layer fuses only after per-eye baseline adjustment.
-  # Coverage and binocular-concordance gates belong to later analysis windows.
   base_layer_input: "primary_centered_pir"
   both_valid: "equal_weight_mean"
   single_eye_fallback: true
@@ -53,8 +56,6 @@ binocular:
   apply_binocular_concordance_gate: false
 
 provenance:
-  # Completion markers are always hashed. Full source CSV hashing roughly doubles
-  # I/O on multi-million-row data, so it is optional for routine re-materialization.
   hash_source_csv: false
 
 reporting:
