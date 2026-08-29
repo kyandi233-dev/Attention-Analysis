@@ -6,7 +6,10 @@ import json
 import sys
 from pathlib import Path
 
-from attention_pipeline.nir_analysis_ready import run_materialization
+from attention_pipeline.nir_analysis_ready import (
+    run_candidate_materialization,
+    run_materialization,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -18,7 +21,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--subjects",
-        help="Optional comma-separated subject override, e.g. sub-031,sub-032",
+        help="Optional comma-separated session override, e.g. sub-031,sub-032",
     )
     parser.add_argument(
         "--output-root",
@@ -39,19 +42,27 @@ def main() -> int:
         subjects = [value.strip() for value in args.subjects.split(",") if value.strip()]
 
     try:
-        result = run_materialization(
+        canonical = run_materialization(
             Path(args.config),
             subjects=subjects,
             output_root_override=args.output_root,
             overwrite_derived=bool(args.overwrite_derived),
         )
+        candidates = run_candidate_materialization(
+            Path(args.config),
+            subjects=subjects,
+            output_root_override=args.output_root,
+            overwrite_derived=bool(args.overwrite_derived),
+        )
+        result = {"canonical": canonical, "candidate_metrics": candidates}
     except Exception as exc:
         print(f"ERROR: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 2
 
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    failed = int(result["summary"].get("n_subjects_failed", 0))
-    return 0 if failed == 0 else 2
+    canonical_failed = int(canonical["summary"].get("n_sessions_failed_this_run", 0))
+    candidate_failed = int(candidates.get("n_sessions_failed", 0))
+    return 0 if canonical_failed == 0 and candidate_failed == 0 else 2
 
 
 if __name__ == "__main__":
