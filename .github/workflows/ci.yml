@@ -55,6 +55,7 @@ jobs:
             src/attention_pipeline/behavior_formal/reporting_contract.py \
             src/attention_pipeline/nir_pupil_only/join.py \
             src/attention_pipeline/nir_pupil_only/contract.py \
+            src/attention_pipeline/nir_analysis_ready/__init__.py \
             src/attention_pipeline/nir_analysis_ready/pupil_only.py \
             src/attention_pipeline/nir_formal_analysis/identity_audit.py \
             src/attention_pipeline/nir_formal_analysis/pupil_tables.py \
@@ -82,6 +83,7 @@ jobs:
             tests/test_formal_analysis_v2.py \
             tests/test_formal_fusion_units.py \
             tests/test_formal_identity_questionnaire.py \
+            tests/test_formal_identity_invariants.py \
             tests/test_formal_cross_modal_contracts.py \
             tests/test_behavior_science_v3_contract.py \
             tests/test_behavior_science_v3_extensions.py \
@@ -99,6 +101,8 @@ jobs:
           python -m pytest -q \
             tests/test_nir_adapter_blockers.py \
             tests/test_nir_pupil_validation_contract.py \
+            tests/test_nir_validation_authority.py \
+            tests/test_nir_authoritative_manifest_semantics.py \
             tests/test_nir_formal_failure_gates.py \
             tests/test_nir_temporal_brightness_gate.py \
             tests/test_nir_pupil_candidate_layer.py \
