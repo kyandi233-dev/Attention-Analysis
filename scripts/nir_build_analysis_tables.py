@@ -3,7 +3,9 @@
 This command never reads production NIR directly. It consumes the authoritative
 pupil-only analysis-ready layer plus the already-produced formal Behavior tables
 and writes 11_analysis_tables. Long overlapping windows are preserved for
-multiscale description but receive an explicit dependence audit.
+multiscale description but receive an explicit dependence audit.  After table
+construction, strict pre-probe behavior/visual exposure semantics are audited and
+repaired before the run is considered successful.
 """
 from __future__ import annotations
 
@@ -11,6 +13,8 @@ import argparse
 import json
 from pathlib import Path
 
+from attention_pipeline.nir_formal_analysis.candidate_validation import run_candidate_validation
+from attention_pipeline.nir_formal_analysis.probe_contract import run_probe_contract_repair
 from attention_pipeline.nir_formal_analysis.pupil_tables import run_cohort
 
 
@@ -39,8 +43,21 @@ def main() -> int:
         subjects=sessions,
         force=bool(args.force),
     )
-    print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
-    return 0 if int(result.get("n_sessions_failed", 0)) == 0 else 2
+    payload: dict[str, object] = {"tables": result}
+    if int(result.get("n_sessions_failed", 0)):
+        print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+        return 2
+
+    probe_contract = run_probe_contract_repair(Path(args.config), subjects=sessions)
+    payload["probe_contract"] = probe_contract
+    if probe_contract.get("status") != "complete":
+        print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+        return 2
+
+    candidate_validation = run_candidate_validation(Path(args.config), subjects=sessions)
+    payload["candidate_validation"] = candidate_validation
+    print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+    return 0 if candidate_validation.get("status") == "complete" else 2
 
 
 if __name__ == "__main__":
