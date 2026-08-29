@@ -1,6 +1,6 @@
 pipeline:
   name: focuswave-formal-multimodal-v2
-  version: 2.2.0
+  version: 2.2.1
   schema_version: 4
   focuswave_release_provenance: "v3.1.3-v3.1.4_science_equivalent"
   evidence_repo: "kyandi233-dev/FocusWave-Formal-Analysis"
@@ -17,8 +17,6 @@ provenance:
   every_active_stage_records_full_code_sha: true
 
 path_contract:
-  # Current active single-modality paths. Legacy/deferred surfaces do not become
-  # required merely because historical compatibility code remains in the repo.
   required_keys:
     - formal_raw_roots
     - cohort_manifest
@@ -133,6 +131,7 @@ nir:
     not_ear: true
     not_blink_event: true
     not_perclos: true
+    never_reconstruct_from_iris_fraction: true
     do_not_reconstruct_from_iris_fraction: true
     cross_validate_with_rgb_eyelid_or_blink: true
   iris_fraction_role: segmentation_qc_only
@@ -195,6 +194,9 @@ fusion:
   status: disabled_deferred
   active_production_merge_allowed: false
   reason: "single-modality analysis and QC must be frozen first"
+  # Retained for compatibility tests and future planning only. Presence of this
+  # list does not make merge.py production-authoritative.
+  units: [trial, probe, cycle, block, session, participant_group]
   canonical_future_participant_key: participant_group_id
   row_locator_policy: "session/event keys locate rows; participant_group_id is grouping metadata and an identity-consistency gate"
   historical_merge_scaffold:
