@@ -1,7 +1,7 @@
 pipeline:
   name: attention-analysis-rgb-formal-downstream
-  version: 2.1.0
-  schema_version: 3
+  version: 2.2.0
+  schema_version: 4
   producer_policy: consume_preserved_raw_only
   rerun_expensive_models: false
   rppg_in_scope: false
@@ -17,8 +17,10 @@ identity:
   repeat_registry_path_key: repeat_registry
   questionnaire_path_key: questionnaire_derived_data
   formal_cluster_key: participant_group_id
-  identity_reconciliation_function: reconcile_cohort_identity
+  identity_reconciliation_function: reconcile_formal_identity
   allow_validated_legacy_repeat_group: true
+  legacy_identity_status_column: identity_status
+  allowed_legacy_identity_statuses: [temporary_confirmed, confirmed, verified, validated, governed]
   forbid_session_id_participant_fallback: true
   unresolved_identity_blocks_group_inference_not_session_qc: true
   cohort_defines_session_membership: true
@@ -66,6 +68,8 @@ pose_confirmation:
     - shoulder_width
     - pose_bbox_area
   radial_candidate_is_physical_displacement: false
+  radial_direction_output: pose_radial_proximity_direction_score
+  radial_direction_output_unit: dimensionless_mean_component_sign
   role: auxiliary_mmwave_motion_qc_candidate
 
 ocular:

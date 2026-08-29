@@ -2,7 +2,7 @@
 
 Authority: ``scripts/rgb_formal_downstream.py -> run_rgb_formal_v2``.
 This downstream runner consumes preserved Parquet outputs only; it never reruns Face/Pose
-models and never writes to the mmWave result namespace. The active default contract is
+models and never writes to the mmWave result namespace.  The active default contract is
 Motion Energy + exposure control, Pose confirmation/direction, and independent algorithm-
 defined Blink candidate events.
 """
@@ -18,18 +18,21 @@ import pandas as pd
 
 from attention_pipeline.config import load_config
 from attention_pipeline.formal_analysis.cohort import canonical_session_id, included_cohort, load_cohort_manifest
+from attention_pipeline.formal_analysis.identity_contract import (
+    DEFAULT_ALLOWED_LEGACY_IDENTITY_STATUSES,
+    reconcile_formal_identity,
+)
 from attention_pipeline.formal_analysis.identity_questionnaire import (
     build_identity_audit,
     load_questionnaire_data,
     load_repeat_registry,
-    reconcile_cohort_identity,
     validate_questionnaire_registry_consistency,
 )
 from .blink_candidates import derive_blink_candidates, read_face_projection
 from .motion_qc import derive_motion_qc
 from .pose_direction import derive_pose_direction
 
-RGB_FORMAL_RUNNER_VERSION = "rgb-formal-downstream-v2.1-lightweight"
+RGB_FORMAL_RUNNER_VERSION = "rgb-formal-downstream-v2.2-lightweight"
 
 
 def _mkdirs(root: Path) -> dict[str, Path]:
@@ -83,19 +86,18 @@ def _session_source_dir(raw_root: Path, session: str) -> Path | None:
 
 
 def _governed_identity(config) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Return reconciled identity without inventing session-level participants.
+    """Return governed session membership plus reconciled participant identity.
 
-    ``reconcile_cohort_identity`` is authoritative: participant_group_id may come from a
-    current participant_key or a validated, non-conflicting legacy repeat-participant group.
-    Unresolved identity is retained as unresolved and only blocks participant-level inference;
-    it does not delete the session from lightweight modality QC.
+    ``reconcile_formal_identity`` applies the same participant contract used by Behavior.
+    Cohort membership is selected before participant-level estimability is required, so an
+    unresolved participant never disappears from lightweight RGB QC.
     """
     identity_cfg = config.section("identity")
     cohort = load_cohort_manifest(
         config,
         path_key=str(identity_cfg.get("cohort_manifest_path_key", "cohort_manifest")),
     )
-    included = included_cohort(cohort, require_groups=True)
+    included = included_cohort(cohort, require_groups=False)
     registry = load_repeat_registry(
         config,
         path_key=str(identity_cfg.get("repeat_registry_path_key", "repeat_registry")),
@@ -105,14 +107,24 @@ def _governed_identity(config) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame
         path_key=str(identity_cfg.get("questionnaire_path_key", "questionnaire_derived_data")),
     )
     consistency = validate_questionnaire_registry_consistency(questionnaire, registry)
-    identity = reconcile_cohort_identity(included, registry)
+    raw_allowed = identity_cfg.get(
+        "allowed_legacy_identity_statuses", sorted(DEFAULT_ALLOWED_LEGACY_IDENTITY_STATUSES)
+    )
+    if not isinstance(raw_allowed, list) or not raw_allowed:
+        raise ValueError("identity.allowed_legacy_identity_statuses must be a non-empty list")
+    identity = reconcile_formal_identity(
+        included,
+        registry,
+        legacy_status_column=str(identity_cfg.get("legacy_identity_status_column", "identity_status")),
+        allowed_legacy_statuses=[str(value) for value in raw_allowed],
+    )
     return included, identity, questionnaire, consistency
 
 
 def participant_inference_gate(identity: pd.DataFrame) -> dict[str, Any]:
     """Describe whether participant-cluster inference could be estimated later.
 
-    This runner does not perform bootstrap/CV/models. The gate is persisted so a later
+    This runner does not perform bootstrap/CV/models.  The gate is persisted so a later
     explicitly enabled science stage cannot silently replace unresolved identity with session_id.
     """
     if identity.empty or "participant_group_id" not in identity.columns:
@@ -158,14 +170,27 @@ def _attach_identity(frame: pd.DataFrame, row: pd.Series, session: str) -> pd.Da
     return out
 
 
-def _component_row(session: str, component: str, status: dict[str, Any], idrow: pd.Series) -> dict[str, Any]:
+def _component_row(
+    session: str,
+    component: str,
+    status: dict[str, Any],
+    idrow: pd.Series,
+) -> dict[str, Any]:
+    # Blink has its own component status because primary-face QC can be generated while
+    # blink events remain not estimable. Never let generic metadata override blink_status.
+    if component == "blink_candidates":
+        component_status = status.get("blink_status") or status.get("status") or "not_estimable"
+        component_reason = status.get("blink_reason") or status.get("reason") or ""
+    else:
+        component_status = status.get("status") or "not_estimable"
+        component_reason = status.get("reason") or ""
     return {
         "session_id": session,
         "participant_group_id": idrow.get("participant_group_id", pd.NA),
         "participant_identity_source": idrow.get("participant_identity_source", pd.NA),
         "component": component,
-        "status": status.get("status") or status.get("blink_status") or "not_estimable",
-        "reason": status.get("reason") or status.get("blink_reason") or "",
+        "status": component_status,
+        "reason": component_reason,
         **{f"detail__{key}": value for key, value in status.items() if key not in {"status", "reason", "blink_status", "blink_reason"}},
     }
 
@@ -223,6 +248,7 @@ def run_rgb_formal_v2(
     failure_rows: list[dict[str, Any]] = []
     source_rows: list[dict[str, Any]] = []
     blink_event_parts: list[pd.DataFrame] = []
+
     questionnaire_sessions = set(questionnaire["session_id"].astype(str)) if "session_id" in questionnaire.columns else set()
 
     for session in sessions:
@@ -260,6 +286,9 @@ def run_rgb_formal_v2(
             "motion_sha256": _sha256_if_file(motion_path),
         })
 
+        component_status: dict[str, dict[str, Any]] = {}
+
+        # Stage 1: Motion-only can complete independently and first.
         try:
             if motion_path is None:
                 motion = pd.DataFrame()
@@ -274,8 +303,10 @@ def run_rgb_formal_v2(
             motion = pd.DataFrame()
             motion_status = {"status": "not_estimable", "reason": f"motion_exception:{type(exc).__name__}:{exc}"}
             failure_rows.append({"session_id": session, "component": "motion", "error_type": type(exc).__name__, "error": str(exc)})
+        component_status["motion"] = motion_status
         component_rows.append(_component_row(session, "motion", motion_status, idrow))
 
+        # Stage 2: Pose confirmation is active by default but cannot invalidate completed Motion.
         pose_active = bool(execution.get("pose_confirmation_active", True))
         try:
             if not pose_active:
@@ -300,8 +331,10 @@ def run_rgb_formal_v2(
             pose = pd.DataFrame()
             pose_status = {"status": "not_estimable", "reason": f"pose_exception:{type(exc).__name__}:{exc}"}
             failure_rows.append({"session_id": session, "component": "pose_confirmation", "error_type": type(exc).__name__, "error": str(exc)})
+        component_status["pose_confirmation"] = pose_status
         component_rows.append(_component_row(session, "pose_confirmation", pose_status, idrow))
 
+        # Stage 3: Blink candidates are independent and never block Motion/Pose output.
         blink_active = bool(execution.get("blink_candidates_active", True))
         try:
             if not blink_active:
@@ -334,6 +367,7 @@ def run_rgb_formal_v2(
             blink_frames = pd.DataFrame(); blink_events = pd.DataFrame()
             blink_status = {"blink_status": "not_estimable", "blink_reason": f"blink_exception:{type(exc).__name__}:{exc}"}
             failure_rows.append({"session_id": session, "component": "blink_candidates", "error_type": type(exc).__name__, "error": str(exc)})
+        component_status["blink_candidates"] = blink_status
         component_rows.append(_component_row(session, "blink_candidates", blink_status, idrow))
 
         session_qc_rows.append({
@@ -364,7 +398,11 @@ def run_rgb_formal_v2(
     _write_csv(all_blinks, dirs["tables"] / "rgb_blink_candidate_events.csv")
 
     mmwave_contract = mmwave_protection_contract()
-    perclos = {"active": False, "status": "disabled_deferred", "reason": "no validated closure-event contract"}
+    perclos = {
+        "active": False,
+        "status": "disabled_deferred",
+        "reason": "no validated closure-event contract",
+    }
     component_table = pd.DataFrame(component_rows)
     generated_n = int(component_table["status"].eq("generated").sum()) if not component_table.empty else 0
     not_estimable_n = int(component_table["status"].eq("not_estimable").sum()) if not component_table.empty else 0

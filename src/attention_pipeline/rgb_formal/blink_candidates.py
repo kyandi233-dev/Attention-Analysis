@@ -105,6 +105,7 @@ def _primary_face_projection(face: pd.DataFrame) -> tuple[pd.DataFrame, dict[str
             ambiguous_frames += 1
             if "face_rank" in frame.columns and pd.to_numeric(frame["face_rank"], errors="coerce").eq(0).any():
                 rank_only_frames += 1
+            # Preserve a timestamp-level placeholder so events cannot bridge this frame.
             selected = frame.iloc[0].copy()
             selected["primary_face_reliable"] = False
             selected["primary_face_selection_source"] = "ambiguous_no_reliable_primary"
@@ -203,6 +204,8 @@ def _event_table(
         if breaks[i]:
             if start is not None:
                 finish(i - 1)
+            # A break row is never allowed to continue a pre-break event.  It can start a new
+            # event only when it is itself observable; unobservable rows have closed=False.
         if closed[i]:
             if start is None:
                 start = i
@@ -265,8 +268,12 @@ def derive_blink_candidates(
         & out["left_eye_observable"].fillna(False).astype(bool)
         & out["right_eye_observable"].fillna(False).astype(bool)
     )
-    out["blink_closed_bilateral_candidate"] = (
+    out["blink_bilateral_valid_for_event"] = (
         out["blink_bilateral_observable"]
+        & out["bilateral_eye_consistent"].fillna(False).astype(bool)
+    )
+    out["blink_closed_bilateral_candidate"] = (
+        out["blink_bilateral_valid_for_event"]
         & out["left_eye_openness_norm"].le(relative_openness_threshold)
         & out["right_eye_openness_norm"].le(relative_openness_threshold)
     )
@@ -283,7 +290,7 @@ def derive_blink_candidates(
         track_reset = tracks.notna() & tracks.shift(1).notna() & tracks.ne(tracks.shift(1))
     else:
         track_reset = pd.Series(False, index=out.index)
-    unreliable = ~out["blink_bilateral_observable"].fillna(False).astype(bool)
+    unreliable = ~out["blink_bilateral_valid_for_event"].fillna(False).astype(bool)
     out["primary_face_track_reset"] = track_reset
     out["blink_segment_break"] = gap_from_time.fillna(True) | source_gap | track_reset | unreliable
     out.loc[out.index[0], "blink_segment_break"] = True
@@ -310,6 +317,7 @@ def derive_blink_candidates(
         "left_eye_observable_rows": int(out["left_eye_observable"].sum()),
         "right_eye_observable_rows": int(out["right_eye_observable"].sum()),
         "bilateral_observable_rows": int(out["blink_bilateral_observable"].sum()),
+        "bilateral_event_valid_rows": int(out["blink_bilateral_valid_for_event"].sum()),
         "bilateral_inconsistent_rows": int((out["blink_bilateral_observable"] & ~out["bilateral_eye_consistent"]).sum()),
         "gap_break_rows": int((gap_from_time.fillna(False) | source_gap).sum()),
         "track_reset_rows": int(track_reset.sum()),

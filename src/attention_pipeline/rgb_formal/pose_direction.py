@@ -54,7 +54,7 @@ def derive_pose_direction(
 
     Positive ``pose_lateral_right_per_sec`` means movement toward increasing image x.
     Positive ``pose_vertical_up_per_sec`` means movement upward on screen (decreasing image y).
-    ``pose_radial_proximity_candidate_per_sec`` is a non-physical composite candidate:
+    ``pose_radial_proximity_direction_score`` is a non-physical direction-agreement score:
     positive values mean the available visual cues jointly move in a camera-proximity-like
     direction. It must never be interpreted as metric displacement or distance.
     """
@@ -178,7 +178,7 @@ def derive_pose_direction(
             "radial_world_z_proximity_rate": world_z_rate,
             "radial_shoulder_width_log_rate": width_rate,
             "radial_bbox_area_log_rate": bbox_rate,
-            "pose_radial_proximity_candidate_per_sec": radial,
+            "pose_radial_proximity_direction_score": radial,
             "pose_radial_component_n": radial_components,
             "pose_direction_interpretation": "auxiliary_qc_candidate_not_physical_displacement",
         }
@@ -200,12 +200,12 @@ def derive_pose_direction(
 
     out = pd.DataFrame(rows)
     valid_direction_rows = int(out["pose_lateral_right_per_sec"].notna().sum()) if not out.empty else 0
-    radial_rows = int(out["pose_radial_proximity_candidate_per_sec"].notna().sum()) if not out.empty else 0
+    radial_rows = int(out["pose_radial_proximity_direction_score"].notna().sum()) if not out.empty else 0
     return out, {
         "status": "generated" if not out.empty else "not_estimable",
         "reason": "" if not out.empty else "no_pose_frames_after_projection",
         "direction_valid_rows": valid_direction_rows,
         "radial_candidate_valid_rows": radial_rows,
         "gap_or_quality_reset_rows": int(out["pose_diff_reset"].sum()) if not out.empty else 0,
-        "radial_interpretation": "auxiliary_qc_candidate_not_physical_displacement",
+        "radial_interpretation": "dimensionless_direction_agreement_score_not_physical_displacement",
     }

@@ -42,28 +42,38 @@ def derive_motion_qc(motion: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, Any]
     out = motion[keep].copy().sort_values("unix_ms").reset_index(drop=True)
 
     if "global_motion_energy_per_sec" in out.columns:
-        body = pd.to_numeric(out["global_motion_energy_per_sec"], errors="coerce")
+        body_raw = pd.to_numeric(out["global_motion_energy_per_sec"], errors="coerce")
         body_source = "global_motion_energy_per_sec"
     elif "global_motion_energy" in out.columns:
-        body = pd.to_numeric(out["global_motion_energy"], errors="coerce")
+        body_raw = pd.to_numeric(out["global_motion_energy"], errors="coerce")
         body_source = "global_motion_energy"
     else:
-        body = pd.Series(np.nan, index=out.index, dtype=float)
+        body_raw = pd.Series(np.nan, index=out.index, dtype=float)
         body_source = None
-    out["body_motion_energy"] = body
+
+    producer_valid = pd.Series(True, index=out.index, dtype=bool)
+    if "motion_valid" in out.columns:
+        producer_valid &= out["motion_valid"].fillna(False).astype(bool)
+    temporal_valid = pd.Series(True, index=out.index, dtype=bool)
+    if "gap_before" in out.columns:
+        temporal_valid &= ~out["gap_before"].fillna(False).astype(bool)
+    if "irregular_dt" in out.columns:
+        temporal_valid &= ~out["irregular_dt"].fillna(False).astype(bool)
+    body_valid = body_raw.notna() & producer_valid & temporal_valid
+    out["body_motion_energy"] = body_raw.where(body_valid)
 
     if "gray_mean_delta" in out.columns:
-        exposure = pd.to_numeric(out["gray_mean_delta"], errors="coerce")
-        out["exposure_change_signed"] = exposure
-        out["exposure_change_abs"] = exposure.abs()
+        exposure_raw = pd.to_numeric(out["gray_mean_delta"], errors="coerce")
         exposure_source = "gray_mean_delta"
     else:
-        out["exposure_change_signed"] = np.nan
-        out["exposure_change_abs"] = np.nan
+        exposure_raw = pd.Series(np.nan, index=out.index, dtype=float)
         exposure_source = None
+    exposure_valid = exposure_raw.notna() & temporal_valid
+    out["exposure_change_signed"] = exposure_raw.where(exposure_valid)
+    out["exposure_change_abs"] = exposure_raw.abs().where(exposure_valid)
 
-    body_valid = out["body_motion_energy"].notna()
-    exposure_valid = out["exposure_change_abs"].notna()
+    out["motion_producer_valid"] = producer_valid
+    out["motion_temporal_valid"] = temporal_valid
     out["body_motion_observable"] = body_valid
     out["exposure_change_observable"] = exposure_valid
     out["motion_exposure_jointly_observable"] = body_valid & exposure_valid
@@ -75,6 +85,8 @@ def derive_motion_qc(motion: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, Any]
         "body_motion_status": "generated" if body_valid.any() else "not_estimable",
         "body_motion_source": body_source,
         "body_motion_valid_rows": int(body_valid.sum()),
+        "producer_invalid_rows": int((~producer_valid).sum()),
+        "temporal_invalid_rows": int((~temporal_valid).sum()),
         "exposure_control_status": "generated" if exposure_valid.any() else "not_estimable",
         "exposure_control_reason": "" if exposure_valid.any() else "gray_mean_delta_missing_or_all_invalid",
         "exposure_control_source": exposure_source,
