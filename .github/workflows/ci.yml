@@ -6,6 +6,7 @@ on:
     branches:
       - nvidia-cuda
       - amd-DirectML
+      - codex/formal-analysis-v2-portable
   pull_request:
 
 jobs:
@@ -29,6 +30,7 @@ jobs:
       - name: Compile formal analysis modules
         run: |
           python -m py_compile \
+            scripts/setup_formal_environment.py \
             scripts/formal_multimodal_analysis.py \
             scripts/sart_formal_analysis.py \
             scripts/nir_formal_pipeline.py \
@@ -48,11 +50,16 @@ jobs:
             src/attention_pipeline/behavior_formal/science_v3.py \
             src/attention_pipeline/behavior_formal/science_v3_extensions.py \
             src/attention_pipeline/behavior_formal/science_v3_figures.py \
-            src/attention_pipeline/behavior_formal/reporting_contract.py
+            src/attention_pipeline/behavior_formal/reporting_contract.py \
+            src/attention_pipeline/rgb_formal/pipeline.py \
+            src/attention_pipeline/rgb_formal/runner.py \
+            src/attention_pipeline/rgb_formal/science.py \
+            src/attention_pipeline/rgb_formal/figures.py
 
       - name: Run formal adapter and ledger contract tests
         run: |
           python -m pytest -q \
+            tests/test_setup_formal_environment.py \
             tests/test_formal_analysis_v2.py \
             tests/test_formal_fusion_units.py \
             tests/test_nir_adapter_blockers.py \
