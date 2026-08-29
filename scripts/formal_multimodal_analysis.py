@@ -12,7 +12,7 @@ import pandas as pd
 
 from attention_pipeline.config import Config, load_config
 from attention_pipeline.formal_analysis.cohort import included_cohort, load_cohort_manifest, summarize_cohort
-from attention_pipeline.formal_analysis.merge import merge_modalities
+from attention_pipeline.formal_analysis.merge import UNIT_KEYS, merge_modalities
 from attention_pipeline.formal_analysis.nir_adapter import adapt_nir_csv
 from attention_pipeline.formal_analysis.provenance import collect_runtime_provenance
 
@@ -127,8 +127,6 @@ def command_nir_adapt(config: Config, *, sessions: list[str] | None, run_id: str
     if manifest.empty:
         raise ValueError("没有可适配的 complete NIR session")
 
-    # Resolve both commits before creating output directories. There is no fixed
-    # SHA fallback: unresolved or dirty checkouts fail closed.
     provenance = _runtime_provenance(config)
 
     run_id = run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -232,7 +230,7 @@ def main() -> int:
     nir.add_argument("--sessions", nargs="*", default=None)
     nir.add_argument("--run-id", default=None)
     merge = sub.add_parser("merge-audit")
-    merge.add_argument("--unit", choices=["trial", "probe", "block", "session"], required=True)
+    merge.add_argument("--unit", choices=sorted(UNIT_KEYS), required=True)
     merge.add_argument("--table", action="append", required=True, dest="tables")
     merge.add_argument("--how", choices=["inner", "outer"], default="inner")
     merge.add_argument("--output", default=None)
