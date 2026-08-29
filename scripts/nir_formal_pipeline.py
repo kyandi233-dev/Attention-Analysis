@@ -7,13 +7,25 @@ Stages:
 
 This runner never invokes YOLO or RITnet, never reconstructs PIR/OAR, and never
 writes production extraction roots.
+
+Structural gates always run for the requested stage. Optional scientific layers
+can be selected with ``--only-steps`` or omitted with ``--skip-steps``. Every
+step is timed and written to ``execution_steps.csv`` / ``execution_manifest.json``.
+A run with deliberately skipped optional analyses is explicitly ``partial_run``.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
+from typing import Callable
 
+from attention_pipeline.config import load_config
+from attention_pipeline.formal_analysis.execution_control import (
+    ExecutionLedger,
+    resolve_optional_steps,
+)
 from attention_pipeline.nir_analysis_ready import (
     run_candidate_materialization,
     run_materialization,
@@ -31,6 +43,26 @@ from attention_pipeline.nir_formal_analysis.repeat_visit_sensitivity import run_
 from attention_pipeline.nir_formal_analysis.scientific_models import run_reference_adjusted_models
 
 
+OPTIONAL_TABLE_STEPS = (
+    "candidate_validation",
+    "visit_sensitivity",
+    "event_response",
+    "reference_models",
+    "adjustment_audit",
+    "figures",
+    "adjustment_figures",
+)
+
+STRUCTURAL_STEPS = (
+    "materialize",
+    "candidate_materialize",
+    "tables",
+    "identity_audit",
+    "baseline_contract",
+    "probe_contract",
+)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -39,13 +71,26 @@ def parse_args() -> argparse.Namespace:
         default="tables",
         help="Default is tables; candidate validation requires matching candidate sidecars in 10_analysis_ready.",
     )
-    parser.add_argument("--subjects", help="Optional comma-separated session-key override.")
-    parser.add_argument("--paths-config", default=None, help="Machine-local path registry used by identity/visit audits.")
+    parser.add_argument("--subjects", help="Optional comma-separated session-key override for smoke/subset runs.")
+    parser.add_argument("--paths-config", default=None, help="Machine-local path registry for all @path references.")
     parser.add_argument("--materialize-config", default="configs/nir_analysis_ready.yaml")
     parser.add_argument("--tables-config", default="configs/nir_formal_analysis.yaml")
     parser.add_argument("--materialize-output-root", help="Optional derived 10_analysis_ready output override.")
     parser.add_argument("--overwrite-derived", action="store_true", help="Allow rebuilding derived 10_analysis_ready outputs only.")
     parser.add_argument("--force-tables", action="store_true", help="Allow rebuilding derived 11_analysis_tables outputs.")
+    parser.add_argument(
+        "--only-steps",
+        help="Comma-separated optional table analyses to run. Structural gates always run.",
+    )
+    parser.add_argument(
+        "--skip-steps",
+        help="Comma-separated optional table analyses to skip. Structural gates always run.",
+    )
+    parser.add_argument(
+        "--list-steps",
+        action="store_true",
+        help="Print structural/optional step names and exit without touching data.",
+    )
     return parser.parse_args()
 
 
@@ -55,95 +100,255 @@ def _sessions(raw: str | None) -> list[str] | None:
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
-def _emit_and_fail(result: dict[str, object]) -> int:
-    print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
-    return 2
+def _require_result(
+    name: str,
+    func: Callable[[], dict[str, object]],
+    *,
+    invalid: Callable[[dict[str, object]], bool],
+) -> dict[str, object]:
+    value = func()
+    if invalid(value):
+        raise RuntimeError(
+            f"NIR formal step {name} did not satisfy its release gate: "
+            + json.dumps(value, ensure_ascii=False, default=str)
+        )
+    return value
+
+
+def _resolve_ledger_root(args: argparse.Namespace) -> Path | None:
+    try:
+        if args.stage in {"tables", "all"}:
+            cfg = load_config(args.tables_config, paths_config=args.paths_config)
+            return cfg.path_value("output_root")
+        cfg = load_config(args.materialize_config, paths_config=args.paths_config)
+        if args.materialize_output_root:
+            return Path(args.materialize_output_root)
+        return cfg.path_value("output_root")
+    except Exception:
+        return None
 
 
 def main() -> int:
     args = parse_args()
+    if args.list_steps:
+        print(json.dumps({
+            "structural_steps": STRUCTURAL_STEPS,
+            "optional_table_steps": OPTIONAL_TABLE_STEPS,
+            "contract": "structural steps cannot be skipped; omitted optional steps make run_status=partial_run",
+        }, ensure_ascii=False, indent=2))
+        return 0
+
+    # Make the CLI path registry authoritative for all nested functions that
+    # independently load configs. This avoids hidden dependence on the current
+    # machine's environment state.
+    if args.paths_config:
+        os.environ["ATTENTION_ANALYSIS_PATHS_CONFIG"] = str(Path(args.paths_config).resolve())
+
+    selected_optional = resolve_optional_steps(
+        OPTIONAL_TABLE_STEPS,
+        only=args.only_steps,
+        skip=args.skip_steps,
+    )
     sessions = _sessions(args.subjects)
-    result: dict[str, object] = {"stage": args.stage, "signal_semantics": "pupil_geometry_only"}
+    ledger = ExecutionLedger(pipeline="nir-formal-pupil-only")
+    ledger_root = _resolve_ledger_root(args)
+    result: dict[str, object] = {
+        "stage": args.stage,
+        "signal_semantics": "pupil_geometry_only",
+        "session_override": sessions,
+        "selected_optional_steps": sorted(selected_optional),
+    }
 
-    if args.stage in {"materialize", "all"}:
-        materialized = run_materialization(
-            Path(args.materialize_config),
-            subjects=sessions,
-            output_root_override=args.materialize_output_root,
-            overwrite_derived=bool(args.overwrite_derived),
-        )
-        result["materialize"] = materialized
-        if int(materialized["summary"].get("n_sessions_failed_this_run", 0)) > 0:
-            return _emit_and_fail(result)
-        candidate_materialized = run_candidate_materialization(
-            Path(args.materialize_config),
-            subjects=sessions,
-            output_root_override=args.materialize_output_root,
-            overwrite_derived=bool(args.overwrite_derived),
-        )
-        result["candidate_materialize"] = candidate_materialized
-        if int(candidate_materialized.get("n_sessions_failed", 0)) > 0:
-            return _emit_and_fail(result)
+    try:
+        if args.stage in {"materialize", "all"}:
+            materialized = ledger.run(
+                "materialize",
+                lambda: _require_result(
+                    "materialize",
+                    lambda: run_materialization(
+                        Path(args.materialize_config),
+                        subjects=sessions,
+                        output_root_override=args.materialize_output_root,
+                        overwrite_derived=bool(args.overwrite_derived),
+                    ),
+                    invalid=lambda x: int(x["summary"].get("n_sessions_failed_this_run", 0)) > 0,
+                ),
+                required=True,
+            )
+            result["materialize"] = materialized
 
-    if args.stage in {"tables", "all"}:
-        table_result = run_cohort(Path(args.tables_config), subjects=sessions, force=bool(args.force_tables))
-        result["tables"] = table_result
-        if int(table_result.get("n_sessions_failed", 0)) > 0:
-            return _emit_and_fail(result)
+            candidate_materialized = ledger.run(
+                "candidate_materialize",
+                lambda: _require_result(
+                    "candidate_materialize",
+                    lambda: run_candidate_materialization(
+                        Path(args.materialize_config),
+                        subjects=sessions,
+                        output_root_override=args.materialize_output_root,
+                        overwrite_derived=bool(args.overwrite_derived),
+                    ),
+                    invalid=lambda x: int(x.get("n_sessions_failed", 0)) > 0,
+                ),
+                required=True,
+            )
+            result["candidate_materialize"] = candidate_materialized
 
-        identity_audit = run_nir_identity_audit(
-            Path(args.tables_config), subjects=sessions, paths_config=args.paths_config
-        )
-        result["identity_audit"] = identity_audit
-        if identity_audit.get("status") != "complete":
-            return _emit_and_fail(result)
+        if args.stage in {"tables", "all"}:
+            table_result = ledger.run(
+                "tables",
+                lambda: _require_result(
+                    "tables",
+                    lambda: run_cohort(
+                        Path(args.tables_config), subjects=sessions, force=bool(args.force_tables)
+                    ),
+                    invalid=lambda x: int(x.get("n_sessions_failed", 0)) > 0,
+                ),
+                required=True,
+            )
+            result["tables"] = table_result
 
-        baseline_contract = run_baseline_contract(Path(args.tables_config))
-        result["baseline_contract"] = baseline_contract
-        if baseline_contract.get("status") != "complete":
-            return _emit_and_fail(result)
+            identity_audit = ledger.run(
+                "identity_audit",
+                lambda: _require_result(
+                    "identity_audit",
+                    lambda: run_nir_identity_audit(
+                        Path(args.tables_config), subjects=sessions, paths_config=args.paths_config
+                    ),
+                    invalid=lambda x: x.get("status") != "complete",
+                ),
+                required=True,
+            )
+            result["identity_audit"] = identity_audit
 
-        probe_contract = run_probe_contract_repair(Path(args.tables_config), subjects=sessions)
-        result["probe_contract"] = probe_contract
-        if probe_contract.get("status") != "complete":
-            return _emit_and_fail(result)
+            baseline_contract = ledger.run(
+                "baseline_contract",
+                lambda: _require_result(
+                    "baseline_contract",
+                    lambda: run_baseline_contract(Path(args.tables_config)),
+                    invalid=lambda x: x.get("status") != "complete",
+                ),
+                required=True,
+            )
+            result["baseline_contract"] = baseline_contract
 
-        candidate_validation = run_candidate_validation(Path(args.tables_config), subjects=sessions)
-        result["candidate_validation"] = candidate_validation
-        if int(candidate_validation.get("n_sessions_failed", 0)) > 0 or candidate_validation.get("status") != "complete":
-            return _emit_and_fail(result)
+            probe_contract = ledger.run(
+                "probe_contract",
+                lambda: _require_result(
+                    "probe_contract",
+                    lambda: run_probe_contract_repair(Path(args.tables_config), subjects=sessions),
+                    invalid=lambda x: x.get("status") != "complete",
+                ),
+                required=True,
+            )
+            result["probe_contract"] = probe_contract
 
-        visit_sensitivity = run_candidate_visit_sensitivity(
-            Path(args.tables_config), subjects=sessions, paths_config=args.paths_config
-        )
-        result["candidate_visit_sensitivity"] = visit_sensitivity
-        if visit_sensitivity.get("status") != "complete":
-            return _emit_and_fail(result)
+            candidate_validation = ledger.run(
+                "candidate_validation",
+                lambda: _require_result(
+                    "candidate_validation",
+                    lambda: run_candidate_validation(Path(args.tables_config), subjects=sessions),
+                    invalid=lambda x: int(x.get("n_sessions_failed", 0)) > 0 or x.get("status") != "complete",
+                ),
+                required=False,
+                requested="candidate_validation" in selected_optional,
+                skip_reason="user omitted candidate_validation",
+            )
+            result["candidate_validation"] = candidate_validation
 
-        event_response = run_event_response_candidates(Path(args.tables_config), subjects=sessions)
-        result["event_response_candidates"] = event_response
-        if int(event_response.get("n_sessions_failed", 0)) > 0:
-            return _emit_and_fail(result)
+            visit_sensitivity = ledger.run(
+                "visit_sensitivity",
+                lambda: _require_result(
+                    "visit_sensitivity",
+                    lambda: run_candidate_visit_sensitivity(
+                        Path(args.tables_config), subjects=sessions, paths_config=args.paths_config
+                    ),
+                    invalid=lambda x: x.get("status") != "complete",
+                ),
+                required=False,
+                requested="visit_sensitivity" in selected_optional,
+                skip_reason="user omitted visit_sensitivity",
+            )
+            result["candidate_visit_sensitivity"] = visit_sensitivity
 
-        reference_models = run_reference_adjusted_models(Path(args.tables_config), subjects=sessions)
-        result["reference_adjusted_models"] = reference_models
-        if reference_models.get("status") == "blocked":
-            return _emit_and_fail(result)
+            event_response = ledger.run(
+                "event_response",
+                lambda: _require_result(
+                    "event_response",
+                    lambda: run_event_response_candidates(Path(args.tables_config), subjects=sessions),
+                    invalid=lambda x: int(x.get("n_sessions_failed", 0)) > 0,
+                ),
+                required=False,
+                requested="event_response" in selected_optional,
+                skip_reason="user omitted event_response",
+            )
+            result["event_response_candidates"] = event_response
 
-        adjustment_audit = run_adjustment_audit(Path(args.tables_config))
-        result["adjustment_audit"] = adjustment_audit
-        if adjustment_audit.get("status") == "not_estimable":
-            return _emit_and_fail(result)
+            reference_models = ledger.run(
+                "reference_models",
+                lambda: _require_result(
+                    "reference_models",
+                    lambda: run_reference_adjusted_models(Path(args.tables_config), subjects=sessions),
+                    invalid=lambda x: x.get("status") == "blocked",
+                ),
+                required=False,
+                requested="reference_models" in selected_optional,
+                skip_reason="user omitted reference_models",
+            )
+            result["reference_adjusted_models"] = reference_models
 
-        figures = generate_nir_figure_pack(Path(args.tables_config), subjects=sessions)
-        result["figures"] = figures
-        if figures.get("status") != "complete":
-            return _emit_and_fail(result)
-        adjustment_figures = run_adjustment_figures(Path(args.tables_config))
-        result["adjustment_figures"] = adjustment_figures
-        if adjustment_figures.get("status") != "complete":
-            return _emit_and_fail(result)
+            adjustment_audit = ledger.run(
+                "adjustment_audit",
+                lambda: _require_result(
+                    "adjustment_audit",
+                    lambda: run_adjustment_audit(Path(args.tables_config)),
+                    invalid=lambda x: x.get("status") == "not_estimable",
+                ),
+                required=False,
+                requested="adjustment_audit" in selected_optional,
+                skip_reason="user omitted adjustment_audit",
+            )
+            result["adjustment_audit"] = adjustment_audit
 
+            figures = ledger.run(
+                "figures",
+                lambda: _require_result(
+                    "figures",
+                    lambda: generate_nir_figure_pack(Path(args.tables_config), subjects=sessions),
+                    invalid=lambda x: x.get("status") != "complete",
+                ),
+                required=False,
+                requested="figures" in selected_optional,
+                skip_reason="user omitted figures",
+            )
+            result["figures"] = figures
+
+            adjustment_figures = ledger.run(
+                "adjustment_figures",
+                lambda: _require_result(
+                    "adjustment_figures",
+                    lambda: run_adjustment_figures(Path(args.tables_config)),
+                    invalid=lambda x: x.get("status") != "complete",
+                ),
+                required=False,
+                requested="adjustment_figures" in selected_optional,
+                skip_reason="user omitted adjustment_figures",
+            )
+            result["adjustment_figures"] = adjustment_figures
+
+    except Exception as exc:
+        result["status"] = "failed"
+        result["error_type"] = type(exc).__name__
+        result["error"] = str(exc)
+        if ledger_root is not None:
+            ledger.write(ledger_root)
+        result["execution"] = ledger.as_dict()
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 2
+
+    if ledger_root is not None:
+        ledger.write(ledger_root)
+    result["status"] = ledger.run_status
+    result["execution"] = ledger.as_dict()
     print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
     return 0
 
