@@ -19,6 +19,7 @@ from attention_pipeline.nir_analysis_ready import (
     run_materialization,
 )
 from attention_pipeline.nir_formal_analysis.candidate_validation import run_candidate_validation
+from attention_pipeline.nir_formal_analysis.probe_contract import run_probe_contract_repair
 from attention_pipeline.nir_formal_analysis.pupil_tables import run_cohort
 
 
@@ -96,6 +97,16 @@ def main() -> int:
         if int(table_result.get("n_sessions_failed", 0)) > 0:
             print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
             return 2
+
+        probe_contract = run_probe_contract_repair(
+            Path(args.tables_config),
+            subjects=sessions,
+        )
+        result["probe_contract"] = probe_contract
+        if probe_contract.get("status") != "complete":
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 2
+
         candidate_validation = run_candidate_validation(
             Path(args.tables_config),
             subjects=sessions,
