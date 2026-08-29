@@ -1,10 +1,10 @@
 pipeline:
-  name: attention-analysis-behavior-formal-v2
-  version: 2.0.0
-  schema_version: 2
+  name: attention-analysis-behavior-formal-v3
+  version: 3.0.0
+  schema_version: 3
   focuswave_release: "v3.1.3"
   timezone: Asia/Shanghai
-  random_seed: 20260824
+  random_seed: 20260829
 
 data:
   roots_path_key: formal_raw_roots
@@ -15,6 +15,11 @@ cohort:
   session_column: session_id
   include_column: include
   repeat_group_column: repeat_participant_id
+  # Current formal queue contract. Update these three values together only when the
+  # governed cohort manifest changes; they are distinct counting axes.
+  expected_session_count: 44
+  expected_group_count: 38
+  expected_double_session_repeat_groups: 6
 
 paths:
   output_root:
@@ -40,20 +45,50 @@ behavior:
   cycle_bins: 6
   rt_cv_min_n: 20
   rt_slope_min_n: 5
+  rt_valid_min_ms: 100
+  rt_valid_max_ms: null
   rt_qc_ms:
     very_early: 100
     early: 150
     long: 1000
     beyond_nominal: 1150
+  primary_probe_window_seconds: 30
+  probe_windows_seconds: [10, 20, 30]
   probe_preceding_go_trials: 8
 
 stats:
   bootstrap_iterations: 20000
-  seed: 20260824
-  main_metrics: [commission_rate, omission_rate, dprime_loglinear, c, beta, go_rt_median_ms, rt_cv, exg_tau]
+  seed: 20260829
+  q1_reference_category: 1
+  minimum_model_rows: 24
+  minimum_participant_groups: 6
+  prediction_folds: 5
+  sdt_min_go_opportunities: 4
+  sdt_min_nogo_opportunities: 2
+  main_metrics:
+    - go_correct_rt_mean_ms
+    - go_correct_rt_median_ms
+    - go_correct_rt_sd_ms
+    - go_correct_rt_mad_ms
+    - go_correct_rt_iqr_ms
+    - go_correct_rt_cv
+    - go_correct_rt_theilsen_slope_ms_per_s
+    - omission_rate
+    - commission_rate
+    - dprime_loglinear
+    - criterion_c
+    - beta
 
 analysis_policy:
   require_repeat_participant_id_for_inference: true
   allow_legacy_session_level_stats: false
   old_bbb_results_are_historical_only: true
-  no_hardcoded_cohort_size: true
+  no_hardcoded_cohort_size: false
+  cohort_counts_are_governed_config_not_inferred_participant_count: true
+  go_omission_and_nogo_commission_are_separate_outcomes: true
+  q1_is_nominal_four_class: true
+  q2_is_ordinal_four_level_clustered: true
+  probe_anchor_trial_excluded: true
+  probe_window_sensitivity_does_not_increase_primary_n: true
+  failed_models_must_be_written: true
+  participant_disjoint_prediction: true

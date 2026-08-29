@@ -297,5 +297,6 @@ def test_science_boundary_config_keeps_oar_qc_only_and_mmwave_external_validatio
     assert oar["never_reconstruct_from_iris_fraction"] is True
     assert "fullclass_pupil_to_iris_diameter_ratio" in config["nir"]["forbidden_formal_metrics"]
     assert config["mmwave"]["no_external_ecg_rsp_validation_claim"] is True
-    assert config["cohort"]["expected_session_count"] is None
-    assert config["cohort"]["expected_group_count"] is None
+    assert config["cohort"]["expected_session_count"] == 44
+    assert config["cohort"]["expected_group_count"] == 38
+    assert config["cohort"]["expected_double_session_repeat_groups"] == 6
