@@ -19,6 +19,7 @@ from attention_pipeline.nir_analysis_ready import (
     run_materialization,
 )
 from attention_pipeline.nir_formal_analysis.adjustment_audit import run_adjustment_audit
+from attention_pipeline.nir_formal_analysis.adjustment_figures import run_adjustment_figures
 from attention_pipeline.nir_formal_analysis.baseline_contract import run_baseline_contract
 from attention_pipeline.nir_formal_analysis.candidate_validation import run_candidate_validation
 from attention_pipeline.nir_formal_analysis.event_response import run_event_response_candidates
@@ -26,6 +27,7 @@ from attention_pipeline.nir_formal_analysis.figures import generate_nir_figure_p
 from attention_pipeline.nir_formal_analysis.identity_audit import run_nir_identity_audit
 from attention_pipeline.nir_formal_analysis.probe_contract import run_probe_contract_repair
 from attention_pipeline.nir_formal_analysis.pupil_tables import run_cohort
+from attention_pipeline.nir_formal_analysis.repeat_visit_sensitivity import run_candidate_visit_sensitivity
 from attention_pipeline.nir_formal_analysis.scientific_models import run_reference_adjusted_models
 
 
@@ -38,7 +40,7 @@ def parse_args() -> argparse.Namespace:
         help="Default is tables; candidate validation requires matching candidate sidecars in 10_analysis_ready.",
     )
     parser.add_argument("--subjects", help="Optional comma-separated session-key override.")
-    parser.add_argument("--paths-config", default=None, help="Machine-local path registry used by identity audit.")
+    parser.add_argument("--paths-config", default=None, help="Machine-local path registry used by identity/visit audits.")
     parser.add_argument("--materialize-config", default="configs/nir_analysis_ready.yaml")
     parser.add_argument("--tables-config", default="configs/nir_formal_analysis.yaml")
     parser.add_argument("--materialize-output-root", help="Optional derived 10_analysis_ready output override.")
@@ -84,9 +86,7 @@ def main() -> int:
             return _emit_and_fail(result)
 
     if args.stage in {"tables", "all"}:
-        table_result = run_cohort(
-            Path(args.tables_config), subjects=sessions, force=bool(args.force_tables)
-        )
+        table_result = run_cohort(Path(args.tables_config), subjects=sessions, force=bool(args.force_tables))
         result["tables"] = table_result
         if int(table_result.get("n_sessions_failed", 0)) > 0:
             return _emit_and_fail(result)
@@ -113,6 +113,13 @@ def main() -> int:
         if int(candidate_validation.get("n_sessions_failed", 0)) > 0 or candidate_validation.get("status") != "complete":
             return _emit_and_fail(result)
 
+        visit_sensitivity = run_candidate_visit_sensitivity(
+            Path(args.tables_config), subjects=sessions, paths_config=args.paths_config
+        )
+        result["candidate_visit_sensitivity"] = visit_sensitivity
+        if visit_sensitivity.get("status") != "complete":
+            return _emit_and_fail(result)
+
         event_response = run_event_response_candidates(Path(args.tables_config), subjects=sessions)
         result["event_response_candidates"] = event_response
         if int(event_response.get("n_sessions_failed", 0)) > 0:
@@ -131,6 +138,10 @@ def main() -> int:
         figures = generate_nir_figure_pack(Path(args.tables_config), subjects=sessions)
         result["figures"] = figures
         if figures.get("status") != "complete":
+            return _emit_and_fail(result)
+        adjustment_figures = run_adjustment_figures(Path(args.tables_config))
+        result["adjustment_figures"] = adjustment_figures
+        if adjustment_figures.get("status") != "complete":
             return _emit_and_fail(result)
 
     print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
