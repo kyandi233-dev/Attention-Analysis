@@ -208,6 +208,7 @@ fusion:
     cycle: [repeat_participant_id, session_id, block_id, cycle_bin]
     block: [repeat_participant_id, session_id, block_id]
     session: [repeat_participant_id, session_id]
+    participant_group: [repeat_participant_id]
   model_ladder: [design_baseline, behavior_context_baseline, single_modality, theory_supported_pairwise, full_multimodal]
   validation:
     participant_disjoint: true
