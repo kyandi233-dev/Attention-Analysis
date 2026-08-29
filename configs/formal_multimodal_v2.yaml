@@ -1,9 +1,10 @@
 pipeline:
   name: focuswave-formal-multimodal-v2
-  version: 2.0.0
-  schema_version: 2
+  version: 2.1.0
+  schema_version: 3
   focuswave_release: "v3.1.3"
   evidence_repo: "kyandi233-dev/FocusWave-Formal-Analysis"
+  evidence_branch: "codex/code-fix-ledger"
   timezone: Asia/Shanghai
 
 provenance:
@@ -11,6 +12,9 @@ provenance:
   require_clean_git_checkout: true
   fixed_commit_fallback_allowed: false
   unresolved_commit_behavior: fail_closed
+  every_stage_requires_manifest: true
+  every_stage_records_config_digest: true
+  every_stage_records_full_code_sha: true
 
 path_contract:
   required_keys:
@@ -32,8 +36,10 @@ cohort:
   repeat_group_column: repeat_participant_id
   require_repeat_group_for_inference: true
   require_session_unique: true
-  expected_session_count: null
-  expected_group_count: null
+  expected_session_count: 44
+  expected_group_count: 38
+  expected_double_session_repeat_groups: 6
+  note: "44 sessions / 38 current anonymous analysis groups / 6 double-session repeat groups are three distinct counting axes."
 
 identity:
   statistical_unit: repeat_participant_id
@@ -41,31 +47,75 @@ identity:
   participant_disjoint_folds: true
   forbid_session_as_independent_participant: true
   regenerate_folds_after_cohort_append: true
+  prediction_preprocessing_inside_training_fold: true
 
 behavior:
   config: "configs/behavior_formal_v2.yaml"
-  units: [trial, probe, block, session]
+  formal_pipeline: behavior-science-v3
+  units: [trial, probe, cycle, block, session, participant_group]
   outcomes:
-    trial: [go_rt_ms, go_omission, nogo_commission]
-    probe: [rt_median_ms, rt_cv, rt_slope, q1_raw, q2_ordered_vigilance]
-    block_session: [commission_rate, omission_rate, dprime_loglinear, c, beta, rt_median_ms, rt_cv, rt_slope]
+    trial: [go_omission, nogo_commission, correct_go_rt_ms]
+    probe:
+      - go_correct_rt_mean_ms
+      - go_correct_rt_median_ms
+      - go_correct_rt_sd_ms
+      - go_correct_rt_mad_ms
+      - go_correct_rt_iqr_ms
+      - go_correct_rt_cv
+      - go_correct_rt_theilsen_slope_ms_per_s
+      - omission_rate
+      - commission_rate
+      - dprime_loglinear
+      - criterion_c
+      - beta
+      - q1_nominal_4class
+      - q2_ordinal_4level
+    cycle_block_session:
+      - go_correct_rt_mean_ms
+      - go_correct_rt_median_ms
+      - go_correct_rt_sd_ms
+      - go_correct_rt_mad_ms
+      - go_correct_rt_iqr_ms
+      - go_correct_rt_cv
+      - go_correct_rt_theilsen_slope_ms_per_s
+      - omission_rate
+      - commission_rate
+      - dprime_loglinear
+      - criterion_c
+      - beta
   policy:
     old_bbb_results_are_historical_only: true
-    existing_12_probe_features_are_not_complete_outcomes: true
-    signal_detection_requires_sufficient_opportunities: true
-    no_formal_inference_before_repeat_grouping: true
+    go_omission_and_nogo_commission_separate_denominators: true
+    primary_probe_one_row_per_event: true
+    probe_window_sensitivity_seconds: [10, 20, 30]
+    probe_sensitivity_rows_not_independent_primary_samples: true
+    q1_model: nominal_four_class_reference_1_participant_clustered
+    q2_model: ordinal_gee_repeat_participant_clustered
+    b1_b2: session_pair_then_participant_cluster_bootstrap
+    cycle: nested_block_session_participant_with_block_by_cycle_gee
+    error_trajectory: separate_error_events_with_participant_centered_rt
+    two_session_reliability_claim: not_estimable
+    failed_models_must_be_written: true
 
 nir:
   source_manifest_path_key: nir_source_manifest
   standardized_output_path_key: nir_standardized_root
-  source_contract: fullclass-final
-  canonical_contract: fullclass-final-pupil-only-v2
+  production_source_contract: fullclass-final
+  canonical_adapter_contract: fullclass-final-pupil-only-v2
+  stage_chain:
+    - 10_analysis_ready
+    - 11_analysis_tables
+    - formal_pipeline
+    - 12_pipeline_validation
+  validation_config: "configs/nir_pipeline_validation.yaml"
   join_clock: unix_ms
   join_time_unit: ms
   join_timezone: UTC
   formal_phases: [block1, block2]
   reject_historical_pir: true
+  reject_oar_without_validated_geometry: true
   reject_fake_time_from_frame_idx: true
+  direct_validation_read_from_production: false
   normalize_eye_labels_in_memory_only: true
   preserve_eye_raw: true
   primary_metric_candidates:
@@ -77,17 +127,7 @@ nir:
     - pupil_axis_b
     - hard_pupil_fraction
     - soft_pupil_fraction
-  optional_eye_opening_candidates:
-    - ocular_aperture_ratio_median
-    - ocular_aperture_ratio_p90
-  ocular_aperture_policy:
-    role: nir_eye_opening_candidate_qc
-    preferred_summary: ocular_aperture_ratio_median
-    not_ear: true
-    not_blink_event: true
-    not_perclos: true
-    never_reconstruct_from_iris_fraction: true
-    cross_validate_with_rgb_eyelid_or_blink: true
+  iris_fraction_role: segmentation_qc_only
   forbidden_formal_metrics:
     - fullclass_pupil_to_iris_diameter_ratio
     - binocular_PIR
@@ -106,23 +146,43 @@ nir:
     artificial_padding_not_scientific_denominator: true
     do_not_auto_exclude_whole_session: true
   standardization_candidates: [raw, session_eye_baseline_subtracted, within_session_robust_z, event_local_baseline_subtracted]
+  repeated_session_baseline_policy: "session-eye baselines remain session-specific; repeat sessions do not share baselines"
   visual_confound_audit:
     enabled: true
     properties_path_key: stimulus_visual_properties
     current_stimulus: [relative_luminance, rms_contrast, stimulus_size, stimulus_code]
     previous_stimulus: [relative_luminance, rms_contrast, stimulus_size, stimulus_code]
-    general_covariates: [time_on_task, block, eye, quality_coverage]
-    note: "数字sRGB视觉属性，不作为物理cd/m²测量。"
+    current_visual_for_pre_stimulus_window: forbidden
+    previous_visual_for_pre_stimulus_window: allowed_if_strictly_previous
+    temporal_tolerance_ms: 0
+    require_time_direction_and_match_status: true
+    note: "数字 sRGB 视觉属性，不作为物理 cd/m² 测量。"
+  validation:
+    figure01_10_required: true
+    failed_model_status: not_estimable
+    participant_exclusive_prediction: true
+    majority_baseline_required: true
+    metrics: [accuracy, balanced_accuracy, macro_f1, auroc, pr_auc]
 
 mmwave:
-  role: external_merge_ready_modality
+  authority_repository: "greenboo26/focuswave-multimodal-attention-analysis"
+  role: external_producer_then_formal_ingest
+  do_not_duplicate_producer_engine_here: true
+  current_registered_sessions: 44
+  current_loadable_sessions: 39
+  current_analysis_groups: 33
+  current_double_session_repeat_groups: 6
+  structural_missing_sessions: ["036", "038", "040", "041", "047"]
+  structural_missing_policy: "explicit_missing_not_zero_not_success"
   current_loadable_status_must_come_from_manifest: true
   hr_rr_separate: true
   no_external_ecg_rsp_validation_claim: true
   hrv_core_claim_allowed: false
   preserve_motion_and_qc: true
+  required_dependency_provenance: [sktime, vmdpy]
   known_code_gates: [summary_field_contract, finite_candidate_selection, formal_method_dependencies]
   missing_sessions_are_missing_not_zero: true
+  required_status_layers: [computable, engineering_quality, external_physiology_validation, behavior_association, report_usable]
 
 rgb:
   role: external_merge_ready_modality
@@ -133,10 +193,11 @@ rgb:
   perclos_requires_validated_closure_events: true
 
 fusion:
-  units: [trial, probe, block, session]
+  units: [trial, probe, cycle, block, session, participant_group]
   key_contract:
     trial: [repeat_participant_id, session_id, block_id, trial_id]
     probe: [repeat_participant_id, session_id, block_id, probe_id, window_name]
+    cycle: [repeat_participant_id, session_id, block_id, cycle_bin]
     block: [repeat_participant_id, session_id, block_id]
     session: [repeat_participant_id, session_id]
   model_ladder: [design_baseline, behavior_context_baseline, single_modality, theory_supported_pairwise, full_multimodal]
@@ -146,11 +207,21 @@ fusion:
     common_cohort_paired_comparison: true
     report_coverage_alongside_performance: true
     no_missingness_identity_leakage: true
+    majority_baseline_required: true
   inference:
     separate_within_between_person_effects: true
     explanation_and_prediction_separate: true
     do_not_average_pvalues_or_auc_across_batches: true
     refit_after_appending_compatible_sessions: true
+
+ledger_release_gates:
+  behavior_science_v3_contract_passes: true
+  nir_pupil_stage_contract_passes: true
+  nir_figure01_10_manifest_required: true
+  nir_temporal_visual_gate_required: true
+  model_failure_tables_required: true
+  mmwave_missingness_manifest_required: true
+  real_data_full_run_authorized_by_config_alone: false
 
 analysis_policy:
   no_outcome_driven_window_selection: true
@@ -158,3 +229,4 @@ analysis_policy:
   preserve_failed_and_blocked_results: true
   no_source_file_overwrite: true
   fail_on_schema_or_key_mismatch: true
+  no_real_full_run_before_supervised_release: true
