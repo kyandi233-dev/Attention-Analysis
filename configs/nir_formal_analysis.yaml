@@ -1,17 +1,16 @@
 pipeline:
   name: attention-analysis-nir-formal-analysis-tables-pupil-only
-  version: 2.2.0
-  schema_version: 4
+  version: 2.3.0
+  schema_version: 5
   signal_semantics: pupil_geometry_only
   timezone: Asia/Shanghai
 
 paths:
   behavior_config: "configs/behavior_formal.yaml"
-  analysis_ready_root: "../Attention-Analysis-local/nir-behavior-v2/10_analysis_ready"
-  output_root: "../Attention-Analysis-local/nir-behavior-v2/11_analysis_tables"
-  # Existing reconstructed SART visual-property table. The strict pre-probe
-  # exposure builder uses only stimuli that occurred before the anchoring probe.
-  stimulus_visual_table: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v1/stimulus_visual_properties.csv"
+  analysis_ready_root: "@path:nir_analysis_ready_root"
+  output_root: "@path:nir_analysis_tables_root"
+  # Strict pre-probe exposure builder reads this governed reconstructed visual table.
+  stimulus_visual_table: "@path:stimulus_visual_properties"
 
 sessions:
   # Empty = discover completed pupil-only session folders in 10_analysis_ready.
@@ -190,3 +189,4 @@ analysis_policy:
   run_formal_statistics: false
   session_centering_reference_must_not_be_reported_as_resting_baseline: true
   inference_and_prediction_must_remain_separate: true
+  machine_absolute_paths_allowed_in_science_config: false
