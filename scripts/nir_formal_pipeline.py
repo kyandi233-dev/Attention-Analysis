@@ -14,7 +14,10 @@ import argparse
 import json
 from pathlib import Path
 
-from attention_pipeline.nir_analysis_ready import run_materialization
+from attention_pipeline.nir_analysis_ready import (
+    run_candidate_materialization,
+    run_materialization,
+)
 from attention_pipeline.nir_formal_analysis.pupil_tables import run_cohort
 
 
@@ -69,6 +72,16 @@ def main() -> int:
         )
         result["materialize"] = materialized
         if int(materialized["summary"].get("n_sessions_failed_this_run", 0)) > 0:
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 2
+        candidate_materialized = run_candidate_materialization(
+            Path(args.materialize_config),
+            subjects=sessions,
+            output_root_override=args.materialize_output_root,
+            overwrite_derived=bool(args.overwrite_derived),
+        )
+        result["candidate_materialize"] = candidate_materialized
+        if int(candidate_materialized.get("n_sessions_failed", 0)) > 0:
             print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
             return 2
 
