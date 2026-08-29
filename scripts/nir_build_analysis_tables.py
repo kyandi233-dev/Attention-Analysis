@@ -5,8 +5,8 @@ pupil-only analysis-ready layer plus the already-produced formal Behavior tables
 and writes 11_analysis_tables. Long overlapping windows are preserved for
 multiscale description but receive an explicit dependence audit. After table
 construction, strict pre-probe semantics, candidate validation, event-response
-candidates, and reference unadjusted/adjusted model interfaces are audited before
-success is returned.
+candidates, reference unadjusted/adjusted model interfaces, and the adjustment
+audit are required before success is returned.
 """
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ import argparse
 import json
 from pathlib import Path
 
+from attention_pipeline.nir_formal_analysis.adjustment_audit import run_adjustment_audit
 from attention_pipeline.nir_formal_analysis.candidate_validation import run_candidate_validation
 from attention_pipeline.nir_formal_analysis.event_response import run_event_response_candidates
 from attention_pipeline.nir_formal_analysis.probe_contract import run_probe_contract_repair
@@ -71,8 +72,14 @@ def main() -> int:
 
     reference_models = run_reference_adjusted_models(Path(args.config), subjects=sessions)
     payload["reference_adjusted_models"] = reference_models
+    if reference_models.get("status") == "blocked":
+        print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+        return 2
+
+    adjustment_audit = run_adjustment_audit(Path(args.config))
+    payload["adjustment_audit"] = adjustment_audit
     print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
-    return 0 if reference_models.get("status") != "blocked" else 2
+    return 0 if adjustment_audit.get("status") != "not_estimable" else 2
 
 
 if __name__ == "__main__":
