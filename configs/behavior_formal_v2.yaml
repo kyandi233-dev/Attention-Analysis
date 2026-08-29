@@ -1,7 +1,7 @@
 pipeline:
   name: attention-analysis-behavior-formal-v3
-  version: 3.2.0
-  schema_version: 6
+  version: 3.3.0
+  schema_version: 7
   # v3.1.3/v3.1.4 share the same final BB scientific task structure; the
   # internal application version is provenance, not a required report label.
   focuswave_science_structure: "formaltest_BB_v3.1.0_plus"
@@ -23,6 +23,15 @@ cohort:
   repeat_group_column: repeat_participant_id
   identity_registry_path_key: repeat_registry
   questionnaire_path_key: questionnaire_derived_data
+  legacy_identity_status_column: identity_status
+  allowed_legacy_identity_statuses:
+    - temporary_confirmed
+    - confirmed
+    - verified
+    - validated
+    - governed
+  formal_cluster_key: participant_group_id
+  legacy_repeat_group_is_source_not_canonical_statistical_key: true
   expected_session_count: 44
   expected_group_count: 38
   expected_double_session_repeat_groups: 6
@@ -120,8 +129,11 @@ figures:
   require_participant_and_session_n_where_relevant: true
 
 analysis_policy:
-  require_repeat_participant_id_for_inference: true
+  require_participant_group_id_for_inference: true
+  repeat_participant_id_compatibility_alias_only: true
   require_participant_group_identity_source: true
+  participant_identity_unresolved_blocks_inference_not_session_qc: true
+  forbid_session_id_participant_fallback: true
   cohort_manifest_defines_session_membership: true
   current_44_38_6_is_analysis_subset_not_study_total: true
   questionnaire_must_left_join_sessions: true
