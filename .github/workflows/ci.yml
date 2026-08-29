@@ -9,7 +9,7 @@ on:
   pull_request:
 
 jobs:
-  current-baseline:
+  formal-adapter-contract:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -26,11 +26,38 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[test]"
 
+      - name: Compile touched formal adapter modules
+        run: |
+          python -m py_compile \
+            scripts/formal_multimodal_analysis.py \
+            src/attention_pipeline/formal_analysis/join_keys.py \
+            src/attention_pipeline/formal_analysis/provenance.py \
+            src/attention_pipeline/formal_analysis/merge.py \
+            src/attention_pipeline/formal_analysis/nir_adapter.py \
+            src/attention_pipeline/nir_pupil_only/join.py
+
       - name: Run formal analysis contract tests
         run: |
           python -m pytest -q \
             tests/test_formal_analysis_v2.py \
             tests/test_nir_adapter_blockers.py
+
+  current-baseline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install package and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
 
       - name: Run current repository baseline tests
         run: |
