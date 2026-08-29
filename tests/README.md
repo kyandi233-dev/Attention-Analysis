@@ -21,8 +21,31 @@
 | `test_behavior_science_v3_contract.py` 等 | Go/No-Go 分母、RT、多尺度、probe 锚点、Q1/Q2、cluster/bootstrap/CV 合同 |
 | `test_nir_*` 正式合同组 | staged pupil-only materialization、身份 parity、时间/视觉 gate、候选与 failure tables |
 | `test_nir_validation_authority.py` | 包级默认 NIR validation 必须指向 pupil-only；旧 PIR runner 只能显式 legacy 导入 |
-| `test_rgb_formal_lightweight.py` | Motion/Pose/Blink 轻量路线、双眼一致性、时间断点、identity gate、mmWave 保护 |
+| `test_nir_authoritative_manifest_semantics.py` | 正式 NIR manifest 必须把 PIR/iris geometry refusal 与 ocular-aperture QC preservation 分开，旧 `pir_oar_*` 混合键不能继续出现在权威输出 |
+| `test_rgb_formal_lightweight.py` | Motion/Pose/Blink 轻量路线、双眼一致性、时间断点、identity gate；某模态/组件不可用不能伪装成 0 或成功 |
 | `test_portable_nir_gpu_package.py` | `runtime/nir-formal/` 仓库级结构与配置检查 |
+
+本轮新增的 identity invariant、NIR validation authority 和 NIR manifest semantics tests 同时进入 targeted `formal-adapter-contract`；即使 full suite 尚未跑完，也能更快定位当前正式合同倒退。
+
+## 模态缺失在测试中的正确解释
+
+participant/session identity 与 modality availability 是两层合同。当前测试和未来新增测试应遵循：
+
+```text
+known governed session
+  + RGB/mmWave/NIR source missing
+  != participant missing
+```
+
+应测试的是：
+
+- 缺模态有明确 `source_missing/not_estimable`；
+- 其他模态 session 不被删除；
+- 不自动填 0；
+- 不自动重跑昂贵 producer；
+- paired multimodal subset 只能显式构造。
+
+不应为了制造 44/44 coverage 而给缺失模态造 synthetic success 行。
 
 ## 两类显式历史 skip
 
@@ -52,4 +75,4 @@ runtime/nir-formal/tests/
 └── 自包含正式 NIR 生产运行包内部测试
 ```
 
-当前正式入口以 `configs/README.md` 与 `docs/060-formal-analysis/` 的最新索引为准；历史测试文件名或历史 package API 不得反向定义当前生产路线。
+当前正式入口以 `ANALYSIS_SETUP_FIRST.md`、`configs/README.md` 与 `docs/060-formal-analysis/009-正式管线修复后完整复审_20260830.md` 为准；历史测试文件名或历史 package API 不得反向定义当前生产路线。
