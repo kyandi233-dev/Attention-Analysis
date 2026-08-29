@@ -19,7 +19,17 @@ def test_event_response_reports_peak_latency_and_recovery() -> None:
         max_gap_sec=0.1,
         late_recovery_window_ms=150.0,
     )
-    out = event_response_features(times, values, onset_ms=onset, config=cfg)
+    # This compact fixture ends at 1300 ms rather than spanning the full 1150-ms
+    # response window. Give the function an explicit next-boundary/effective
+    # response end so the late-recovery window is defined by protocol rather
+    # than silently inferred from the last available pupil sample.
+    out = event_response_features(
+        times,
+        values,
+        onset_ms=onset,
+        response_end_ms=1350.0,
+        config=cfg,
+    )
     assert out["event_response_status"] == "estimable"
     assert np.isclose(out["baseline_median"], 10.0)
     assert np.isclose(out["dilation_peak_amplitude"], 2.0)
@@ -28,6 +38,24 @@ def test_event_response_reports_peak_latency_and_recovery() -> None:
     assert out["recovery_status"] == "recovered_within_response_window"
     assert out["recovery_time_after_onset_ms"] >= out["dominant_peak_latency_ms"]
     assert np.isfinite(out["late_recovery_abs_residual"])
+
+
+def test_event_response_does_not_infer_late_window_from_last_sample() -> None:
+    onset = 1000.0
+    times = np.array([800, 850, 900, 950, 1000, 1050, 1100, 1150, 1200, 1250, 1300], dtype=float)
+    values = np.array([10.0, 10.1, 9.9, 10.0, 10.0, 11.0, 12.0, 11.0, 10.4, 10.1, 10.0], dtype=float)
+    cfg = EventResponseConfig(
+        min_baseline_valid_n=3,
+        min_response_valid_n=5,
+        min_late_recovery_valid_n=2,
+        max_gap_sec=0.1,
+        late_recovery_window_ms=150.0,
+    )
+    out = event_response_features(times, values, onset_ms=onset, config=cfg)
+    assert out["event_response_status"] == "estimable"
+    assert out["late_recovery_valid_n"] == 0
+    assert out["late_recovery_status"] == "not_estimable_low_late_recovery_valid_n"
+    assert np.isnan(out["late_recovery_abs_residual"])
 
 
 def test_event_response_fails_closed_on_low_baseline_samples() -> None:
