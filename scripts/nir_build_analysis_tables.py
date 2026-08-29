@@ -4,8 +4,9 @@ This command never reads production NIR directly. It consumes the authoritative
 pupil-only analysis-ready layer plus the already-produced formal Behavior tables
 and writes 11_analysis_tables. Long overlapping windows are preserved for
 multiscale description but receive an explicit dependence audit. After table
-construction, strict pre-probe semantics, candidate validation, and reference
-unadjusted/adjusted model interfaces are audited before success is returned.
+construction, strict pre-probe semantics, candidate validation, event-response
+candidates, and reference unadjusted/adjusted model interfaces are audited before
+success is returned.
 """
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ import json
 from pathlib import Path
 
 from attention_pipeline.nir_formal_analysis.candidate_validation import run_candidate_validation
+from attention_pipeline.nir_formal_analysis.event_response import run_event_response_candidates
 from attention_pipeline.nir_formal_analysis.probe_contract import run_probe_contract_repair
 from attention_pipeline.nir_formal_analysis.pupil_tables import run_cohort
 from attention_pipeline.nir_formal_analysis.scientific_models import run_reference_adjusted_models
@@ -58,6 +60,12 @@ def main() -> int:
     candidate_validation = run_candidate_validation(Path(args.config), subjects=sessions)
     payload["candidate_validation"] = candidate_validation
     if candidate_validation.get("status") != "complete":
+        print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+        return 2
+
+    event_response = run_event_response_candidates(Path(args.config), subjects=sessions)
+    payload["event_response_candidates"] = event_response
+    if int(event_response.get("n_sessions_failed", 0)):
         print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
         return 2
 
