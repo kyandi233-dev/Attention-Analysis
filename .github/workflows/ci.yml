@@ -54,6 +54,7 @@ jobs:
         run: |
           python -m pytest -q \
             tests/test_formal_analysis_v2.py \
+            tests/test_formal_fusion_units.py \
             tests/test_nir_adapter_blockers.py \
             tests/test_behavior_science_v3_contract.py \
             tests/test_behavior_science_v3_extensions.py \
