@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import shutil
 
+import numpy as np
 import pandas as pd
 
 from attention_pipeline.config import load_config
@@ -85,6 +86,36 @@ def _normalize_failures(*frames: pd.DataFrame) -> pd.DataFrame:
     return failures
 
 
+def _annotate_scale(
+    frame: pd.DataFrame,
+    *,
+    unit: str,
+    rt_cv_min_n: int,
+    rt_slope_min_n: int,
+    is_probe: bool = False,
+) -> pd.DataFrame:
+    """Make observation units/sample denominators and RT estimability explicit."""
+    out = frame.copy()
+    if out.empty:
+        return out
+    out["unit"] = unit
+    out["session_n"] = 1
+    out["participant_group_n"] = 1
+    out["probe_n"] = 1 if is_probe else 0
+    n = pd.to_numeric(out.get("correct_go_rt_opportunities"), errors="coerce")
+    out["rt_variability_valid_n"] = n
+    out["rt_cv_min_n"] = int(rt_cv_min_n)
+    out["rt_slope_min_n"] = int(rt_slope_min_n)
+    out["rt_cv_status"] = np.where(n.ge(rt_cv_min_n), "estimable", "not_estimable_low_rt_n")
+    out["rt_slope_status"] = np.where(n.ge(rt_slope_min_n), "estimable", "not_estimable_low_rt_n")
+    if "go_correct_rt_cv" in out:
+        out.loc[n.lt(rt_cv_min_n) | n.isna(), "go_correct_rt_cv"] = np.nan
+    if "go_correct_rt_theilsen_slope_ms_per_s" in out:
+        out.loc[n.lt(rt_slope_min_n) | n.isna(), "go_correct_rt_theilsen_slope_ms_per_s"] = np.nan
+    out["rt_slope_fit_scope"] = "within current observation unit using valid correct-Go RT time positions"
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="configs/behavior_formal_v2.yaml")
@@ -116,6 +147,33 @@ def main() -> int:
 
     tables = build_multiscale_tables(trials, cfg)
     primary_probe, probe_sensitivity = build_probe_windows(trials, cfg)
+    behavior_cfg = config.section("behavior")
+    rt_cv_min_n = int(behavior_cfg.get("rt_cv_min_n", 20))
+    rt_slope_min_n = int(behavior_cfg.get("rt_slope_min_n", 5))
+    tables["session"] = _annotate_scale(
+        tables["session"], unit="session", rt_cv_min_n=rt_cv_min_n, rt_slope_min_n=rt_slope_min_n
+    )
+    tables["block"] = _annotate_scale(
+        tables["block"], unit="block", rt_cv_min_n=rt_cv_min_n, rt_slope_min_n=rt_slope_min_n
+    )
+    tables["cycle"] = _annotate_scale(
+        tables["cycle"], unit="cycle", rt_cv_min_n=rt_cv_min_n, rt_slope_min_n=rt_slope_min_n
+    )
+    primary_probe = _annotate_scale(
+        primary_probe,
+        unit="probe",
+        rt_cv_min_n=rt_cv_min_n,
+        rt_slope_min_n=rt_slope_min_n,
+        is_probe=True,
+    )
+    probe_sensitivity = _annotate_scale(
+        probe_sensitivity,
+        unit="probe_window_sensitivity",
+        rt_cv_min_n=rt_cv_min_n,
+        rt_slope_min_n=rt_slope_min_n,
+        is_probe=True,
+    )
+
     pairs, pair_failures = build_b1_b2_pairs(tables["block"])
     topology = validate_topology(tables["session"], expected=_expected(config))
 
@@ -201,6 +259,8 @@ def main() -> int:
         "q1_contract": "nominal_four_class_reference_1",
         "q2_contract": "ordinal_gee_repeat_participant_cluster",
         "repeat_reliability_contract": "descriptive_only_when_two_sessions",
+        "rt_cv_min_n": rt_cv_min_n,
+        "rt_slope_min_n": rt_slope_min_n,
     }
     (output_root / "run_manifest.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
