@@ -20,6 +20,11 @@ def _clean(value: object) -> str | None:
     return text or None
 
 
+def _clean_series(series: pd.Series) -> pd.Series:
+    out = series.astype("string").str.strip()
+    return out.mask(out.isin(["", "nan", "<NA>"]))
+
+
 def reconcile_formal_identity(
     cohort: pd.DataFrame,
     registry: pd.DataFrame,
@@ -86,6 +91,7 @@ def reconcile_formal_identity(
         "no verified participant_key or governance-approved legacy identity"
     )
     out["participant_identity_resolved_for_clustering"] = ~unresolved
+    assert_participant_group_contract(out, require_resolved=False)
     return out
 
 
@@ -95,11 +101,10 @@ def assert_participant_group_contract(
     require_resolved: bool = True,
     compatibility_alias: str = LEGACY_PARTICIPANT_ALIAS,
 ) -> None:
-    """Fail closed on participant-key drift or session-as-participant fallback."""
+    """Fail closed on participant-key drift, alias drift, or session fallback."""
     if CANONICAL_PARTICIPANT_GROUP_COLUMN not in frame.columns:
         raise ValueError("participant_group_id missing from formal analysis table")
-    groups = frame[CANONICAL_PARTICIPANT_GROUP_COLUMN].astype("string").str.strip()
-    groups = groups.mask(groups.isin(["", "nan", "<NA>"]))
+    groups = _clean_series(frame[CANONICAL_PARTICIPANT_GROUP_COLUMN])
     if require_resolved and groups.isna().any():
         raise ValueError("participant_group_id contains unresolved sessions")
 
@@ -111,11 +116,31 @@ def assert_participant_group_contract(
         if (groups.notna() & groups.eq(sessions)).any():
             raise ValueError("session_id must never be used as participant_group_id")
 
-    if compatibility_alias in frame.columns:
-        alias = frame[compatibility_alias].astype("string").str.strip()
-        alias = alias.mask(alias.isin(["", "nan", "<NA>"]))
-        mismatch = groups.notna() & alias.notna() & groups.ne(alias)
+    # A verified questionnaire participant key is the highest-priority source.
+    # If present on a row, the resolved grouping interface must equal it exactly.
+    if "participant_key" in frame.columns:
+        participant = _clean_series(frame["participant_key"])
+        mismatch = participant.notna() & (groups.isna() | groups.ne(participant))
         if mismatch.any():
+            raise ValueError("participant_group_id drifted from verified participant_key")
+
+    # If a compatibility alias is present, it is not a second identity namespace:
+    # both missingness and value must be identical to the canonical group column.
+    if compatibility_alias in frame.columns:
+        alias = _clean_series(frame[compatibility_alias])
+        missingness_mismatch = groups.isna().ne(alias.isna())
+        value_mismatch = groups.notna() & alias.notna() & groups.ne(alias)
+        if (missingness_mismatch | value_mismatch).any():
             raise ValueError(
                 f"{compatibility_alias} drifted from participant_group_id; compatibility alias is not a second identity"
             )
+
+    if "participant_identity_source" in frame.columns:
+        source = _clean_series(frame["participant_identity_source"])
+        if (source.eq("unresolved") & groups.notna()).any():
+            raise ValueError("participant_identity_source=unresolved cannot carry participant_group_id")
+
+    if "participant_identity_resolved_for_clustering" in frame.columns:
+        resolved = frame["participant_identity_resolved_for_clustering"].fillna(False).astype(bool)
+        if resolved.ne(groups.notna()).any():
+            raise ValueError("participant_identity_resolved_for_clustering disagrees with participant_group_id")
