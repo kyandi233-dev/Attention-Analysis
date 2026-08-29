@@ -10,14 +10,21 @@ SUPPORTED_SOURCE_SCHEMAS = {6, 7}
 OUTPUT_SCHEMA_VERSION = 2
 PRIMARY_KEY = ["session_id", "phase", "phase_segment", "frame_idx", "eye"]
 
+# These fields require iris geometry or encode historical pupil/iris ratios and
+# therefore remain forbidden in the pupil-only formal output. The producer's
+# fullclass ocular-aperture ratios are intentionally NOT in this set: they are
+# eye-opening QC candidates derived from the visible ocular mask, not iris diameter.
 FORBIDDEN_IRIS_DERIVED_FIELDS = {
     "pir",
     "oar",
     "pupil_to_iris_ratio",
     "fullclass_pupil_to_iris_diameter_ratio",
+}
+
+OCULAR_APERTURE_QC_FIELDS = (
     "fullclass_ocular_aperture_ratio_median",
     "fullclass_ocular_aperture_ratio_p90",
-}
+)
 
 FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "pupil_axis_a": ("pupil_short_axis", "pupil_axis_a"),
@@ -79,12 +86,13 @@ COPY_FIELDS = (
     "soft_pupil_fraction",
     "hard_iris_fraction",
     "soft_iris_fraction",
+    *OCULAR_APERTURE_QC_FIELDS,
     "temporal_anomaly",
 )
 
 
 class IrisGeometryUnavailableError(ValueError):
-    """PIR/OAR cannot be derived from the accepted pupil-only source contract."""
+    """PIR/iris-geometry metrics cannot be derived from the pupil-only contract."""
 
 
 @dataclass(frozen=True)
@@ -317,6 +325,14 @@ def adapt_session_rows(
     out["source_commit"] = identity.source_commit
     out["output_schema_version"] = OUTPUT_SCHEMA_VERSION
 
+    aperture = pd.concat(
+        [pd.to_numeric(out[name], errors="coerce") for name in OCULAR_APERTURE_QC_FIELDS],
+        axis=1,
+    )
+    out["ocular_aperture_available"] = np.isfinite(aperture).any(axis=1)
+    out["ocular_aperture_role"] = "nir_eye_opening_candidate_qc"
+    out["ocular_aperture_interpretation"] = "not_ear_not_blink_not_perclos"
+
     forbidden = FORBIDDEN_IRIS_DERIVED_FIELDS & {name.lower() for name in out.columns}
     if forbidden:
         raise AssertionError(f"forbidden iris-derived columns in pupil-only output: {sorted(forbidden)}")
@@ -364,7 +380,9 @@ def validate_cohort_topology(
 
 def refuse_iris_derived_metrics(*_: Any, **__: Any) -> None:
     raise IrisGeometryUnavailableError(
-        "PIR/OAR refused: accepted fullclass-final sources provide pupil geometry "
-        "but no independently validated iris geometry. Iris class fractions are "
-        "segmentation proportions and must not be treated as iris diameter."
+        "PIR/iris-geometry metrics refused: accepted fullclass-final sources provide "
+        "pupil geometry but no independently validated iris geometry. Iris class "
+        "fractions are segmentation proportions and must not be treated as iris diameter. "
+        "Producer ocular-aperture ratios are separate eye-opening QC candidates and are "
+        "not EAR, blink events, or PERCLOS."
     )
