@@ -82,13 +82,13 @@ tracks:
       source_mode_column: binocular_strict_source_mode
 
     - name: left_strict
-      family: eye_preserved
+      family: strict_sensitivity
       value_column: left_strict_centered_pupil
       valid_column: left_pupil_valid_strict
       source_mode_column: null
 
     - name: right_strict
-      family: eye_preserved
+      family: strict_sensitivity
       value_column: right_strict_centered_pupil
       valid_column: right_pupil_valid_strict
       source_mode_column: null
