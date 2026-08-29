@@ -1,3 +1,8 @@
+# LEGACY / PROTOTYPE ALIGNMENT CONFIG.
+# It keeps the old sub-031 safety gate and machine-specific roots for historical
+# reproducibility. Current formal cross-machine analysis must use
+# configs/formal_multimodal_v2.yaml + an external paths registry/source manifest.
+
 pipeline:
   name: attention-analysis-nir-behavior-alignment
   version: 0.1.2
@@ -14,17 +19,15 @@ paths:
   output_root: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v1"
 
 subjects:
-  # Prototype safety gate. Replace with [] only after sub-031 schema/QC is accepted.
+  # Prototype safety gate. Retained only for historical reproduction.
   include:
     - "sub-031"
 
 behavior_qc:
-  # Candidate sequence label only; not a final exclusion threshold.
   carryover_candidate_ms: 200
 
 windows:
   trial:
-    # Event-adjacent windows: useful for timing/PLR separation, not identical to tonic attention.
     - name: "pre_200ms"
       family: "event"
       start_offset_ms: -200
@@ -37,8 +40,6 @@ windows:
       family: "event"
       start_offset_ms: 200
       end_offset_ms: 1150
-
-    # State/prediction candidates. All are retained now; primary inferential windows are frozen later.
     - name: "pre_1s"
       family: "state"
       start_offset_ms: -1000
@@ -67,7 +68,6 @@ windows:
       family: "state"
       start_offset_ms: -60000
       end_offset_ms: 0
-
   probe:
     - name: "pre_10s"
       family: "probe_state"
@@ -87,13 +87,9 @@ windows:
       end_offset_ms: 0
 
 diagnostics:
-  # Plotting only. If consecutive one-second summaries are separated by more
-  # than this interval, break the line rather than visually interpolating.
   max_line_gap_sec: 2.5
 
 visual_covariates:
-  # Phase 1 keeps exact stimulus_name/size and previous-stimulus identity in trial_level.
-  # Rendered luminance/contrast will be joined later from a versioned 27-condition table.
   properties_csv: null
 
 analysis_policy:
