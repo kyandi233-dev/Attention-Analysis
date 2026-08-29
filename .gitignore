@@ -11,6 +11,11 @@ build/
 artifacts/
 /outputs/
 
+# Machine-local formal-analysis path registries. Scientific configs must refer
+# to logical path keys; drive letters and private roots stay outside Git.
+configs/paths.local.yaml
+configs/paths.*.local.yaml
+
 # Local NIR runtime model binaries
 runtime/nir-formal/models/*.onnx
 runtime/nir-formal/models/*.onnx.data
