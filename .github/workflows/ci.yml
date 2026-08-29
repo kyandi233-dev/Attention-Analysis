@@ -29,6 +29,15 @@ jobs:
       - name: Run pupil-only adapter tests
         run: python -m pytest tests/test_nir_pupil_only_adapter.py -q
 
+      - name: Run NIR rejected-v2 contract regressions
+        run: python -m pytest tests/test_nir_formal_v2_rejected_rework.py -q
+
+      - name: Compile NIR rework modules
+        run: |
+          python -m py_compile \
+            src/attention_pipeline/nir_formal_analysis/rejected_rework.py \
+            src/attention_pipeline/nir_pipeline_validation/report_admission.py
+
       - name: Run current repository baseline tests
         run: |
           pytest -q \
