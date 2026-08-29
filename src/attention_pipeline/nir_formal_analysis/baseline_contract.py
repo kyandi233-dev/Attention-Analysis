@@ -9,7 +9,7 @@ import pandas as pd
 
 from attention_pipeline.config import load_config
 
-BASELINE_CONTRACT_VERSION = "nir-baseline-semantics-v1"
+BASELINE_CONTRACT_VERSION = "nir-baseline-semantics-v2"
 
 
 def _resolve_output(config) -> Path:
@@ -49,18 +49,34 @@ def baseline_contract_rows() -> list[dict[str, Any]]:
             "interpretation_zh": "单试次刺激前局部参考，用于瞬时瞳孔响应；不等于整场静息基线。",
         },
         {
-            "reference_name": "resting_or_task_start_baseline",
-            "status": "not_defined_without_protocol_evidence",
-            "implementation": "none",
-            "scope": "not admitted",
-            "window": "not defined",
-            "estimator": "not defined",
-            "purpose": "would require a protocol-verified stable resting/task-start segment",
+            "reference_name": "resting_task_start_interval",
+            "status": "protocol_interval_verified_reference_pending_observability_gate",
+            "implementation": "nir_formal_analysis.resting_observability.run_resting_observability",
+            "scope": "per session; formal program timeline interval only",
+            "window": "master_timeline baseline_start <= unix_ms < baseline_stop (nominally ~180 s)",
+            "estimator": "observability/QC audit first; exploratory pupil median/MAD only after prefrozen observability gates",
+            "purpose": "exploratory task-start resting reference when the eye is measurably observable",
             "resting_physiological_baseline": True,
             "cross_session_shared": False,
-            "interpretation_zh": "当前实验协议证据不足，不从视频开头任意截取时间段冒充静息基线。",
+            "interpretation_zh": (
+                "正式程序已确认约3分钟静息区间，但并非所有场次都一定有可用瞳孔。"
+                "必须先按时间轴事件和眼部可观测性审计；阈值未预先冻结前不授权静息瞳孔参考，"
+                "不可探测也不得自动解释为闭眼。"
+            ),
         },
     ]
+
+
+def _resting_gate_state(config) -> dict[str, Any]:
+    resting = config.section("resting_observability")
+    min_fraction = resting.get("min_primary_valid_fraction")
+    min_run = resting.get("min_longest_primary_valid_sec")
+    frozen = min_fraction not in (None, "") and min_run not in (None, "")
+    return {
+        "thresholds_frozen": bool(frozen),
+        "min_primary_valid_fraction": None if min_fraction in (None, "") else float(min_fraction),
+        "min_longest_primary_valid_sec": None if min_run in (None, "") else float(min_run),
+    }
 
 
 def run_baseline_contract(config_path: str | Path) -> dict[str, Any]:
@@ -70,14 +86,25 @@ def run_baseline_contract(config_path: str | Path) -> dict[str, Any]:
     table = pd.DataFrame(baseline_contract_rows())
     csv_path = root / "nir_baseline_semantics_contract.csv"
     table.to_csv(csv_path, index=False, encoding="utf-8-sig")
+    gate = _resting_gate_state(config)
     manifest = {
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "contract_version": BASELINE_CONTRACT_VERSION,
         "status": "complete",
         "session_centering_must_not_be_reported_as_resting_baseline": True,
         "pre_event_baseline_is_local_not_resting": True,
+        "resting_interval_protocol_verified": True,
+        "resting_interval_source": "master_timeline baseline_start -> baseline_stop",
+        "fixed_video_head_180s_substitution_allowed": False,
+        "resting_observability_thresholds_frozen": gate["thresholds_frozen"],
         "resting_baseline_admitted": False,
-        "resting_baseline_reason": "no protocol-verified stable resting/task-start segment has been frozen",
+        "resting_baseline_reason": (
+            "protocol interval is verified, but a resting pupil reference remains exploratory and "
+            "is not authorized as a main-model baseline; observability thresholds must be prefrozen"
+            if not gate["thresholds_frozen"]
+            else "observability thresholds are configured, but resting reference remains exploratory only"
+        ),
+        "resting_not_observed_may_be_called_eyes_closed": False,
         "output": str(csv_path),
     }
     (root / "nir_baseline_semantics_manifest.json").write_text(
