@@ -82,6 +82,7 @@ jobs:
             tests/test_behavior_error_taxonomy.py \
             tests/test_behavior_omission_candidate_validation.py \
             tests/test_behavior_omission_endpoints.py \
+            tests/test_behavior_omission_probe_models.py \
             tests/test_behavior_visit_sensitivity.py \
             tests/test_behavior_figure_contract_complete.py
 
