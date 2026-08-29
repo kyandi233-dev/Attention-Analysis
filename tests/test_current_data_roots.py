@@ -114,14 +114,23 @@ def test_batch_rejects_exit_zero_without_valid_completion_marker(monkeypatch, tm
     video.parent.mkdir(parents=True)
     video.touch()
     output_root = tmp_path / "output" / "amd-directml"
+    yolo_model = tmp_path / "nir-eye-yolo26n-best-b8.onnx"
+    ritnet_model = tmp_path / "ritnet-b16-fp32.onnx"
+    yolo_model.write_bytes(b"synthetic-yolo-model")
+    ritnet_model.write_bytes(b"synthetic-ritnet-model")
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
         """
 package:
-  version: 0.1.1
+  version: 0.2.0
 data:
   roots: [DATA_ROOT]
   subject_pattern: sub-*_/nir/*_nir.avi
+models:
+  yolo_formal: YOLO_MODEL
+  ritnet: RITNET_MODEL
+yolo:
+  batch_size: 8
 formal:
   min_subject_number: 31
   focuswave_release: v3.1.3
@@ -142,6 +151,8 @@ output:
   root: OUTPUT_ROOT
 """.replace("DATA_ROOT", json.dumps(str(data_root))).replace(
             "OUTPUT_ROOT", json.dumps(str(output_root))
+        ).replace("YOLO_MODEL", json.dumps(str(yolo_model))).replace(
+            "RITNET_MODEL", json.dumps(str(ritnet_model))
         ),
         encoding="utf-8",
     )
