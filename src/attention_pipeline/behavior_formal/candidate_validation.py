@@ -1,6 +1,6 @@
 """Candidate validation for formal SART behavior endpoints.
 
-This module is intentionally descriptive/admission-oriented.  It does not select
+This module is intentionally descriptive/admission-oriented. It does not select
 endpoints by p-value and it does not infer visit order from session identifiers.
 """
 from __future__ import annotations
@@ -12,7 +12,13 @@ from typing import Iterable, Mapping
 import numpy as np
 import pandas as pd
 
+from .behavior_error_taxonomy import FORMAL_OMISSION_ENDPOINT_METRICS
 from .science_v3 import CANONICAL_METRICS
+
+
+FORMAL_BEHAVIOR_ENDPOINT_METRICS = tuple(dict.fromkeys(
+    (*CANONICAL_METRICS, *FORMAL_OMISSION_ENDPOINT_METRICS)
+))
 
 
 @dataclass(frozen=True)
@@ -27,6 +33,9 @@ _PRIORITY = (
     "go_correct_rt_median_ms",
     "go_correct_rt_cv",
     "go_correct_rt_theilsen_slope_ms_per_s",
+    "raw_go_omission_rate",
+    "clean_go_omission_rate",
+    "timing_ambiguous_go_omission_rate",
     "omission_rate",
     "commission_rate",
     "dprime_loglinear",
@@ -51,11 +60,7 @@ def decompose_within_between(
     *,
     participant_col: str = "repeat_participant_id",
 ) -> pd.DataFrame:
-    """Add participant mean and within-participant deviation for each metric.
-
-    The output is suitable for later explanatory models.  No participant order or
-    visit order is inferred here.
-    """
+    """Add participant mean and within-participant deviation for each metric."""
     if participant_col not in frame:
         raise ValueError(f"missing participant column: {participant_col}")
     out = frame.copy()
@@ -105,7 +110,7 @@ def _metric_row(
 
     floor_fraction = math.nan
     ceiling_fraction = math.nan
-    if metric in {"omission_rate", "commission_rate"} and n_valid:
+    if metric.endswith("_rate") and n_valid:
         floor_fraction = float((finite <= 0.02).mean())
         ceiling_fraction = float((finite >= 0.98).mean())
 
@@ -151,7 +156,12 @@ def _metric_row(
         "spearman_like_time_rho": time_rho,
         "admission_status": "eligible_candidate" if not reasons else "needs_review",
         "admission_reasons": ";".join(reasons) if reasons else "",
-        "decision_basis": "coverage/distribution/within-between/time-trend; no p-value selection",
+        "endpoint_role": (
+            "prespecified_formal_omission_endpoint"
+            if metric in FORMAL_OMISSION_ENDPOINT_METRICS
+            else "formal_behavior_candidate"
+        ),
+        "decision_basis": "prespecified role + coverage/distribution/within-between/time-trend; no p-value selection",
     }
 
 
@@ -173,7 +183,7 @@ def build_candidate_validation(
     for scale, frame in frames.items():
         if frame is None or frame.empty:
             continue
-        available = [m for m in CANONICAL_METRICS if m in frame]
+        available = [m for m in FORMAL_BEHAVIOR_ENDPOINT_METRICS if m in frame]
         for metric in available:
             rows.append(_metric_row(frame, scale=scale, metric=metric, cfg=cfg))
 
@@ -182,6 +192,10 @@ def build_candidate_validation(
         for i, a in enumerate(available):
             for b in available[i + 1 :]:
                 r = corr.loc[a, b] if a in corr.index and b in corr.columns else math.nan
+                structural_omission_pair = (
+                    a in FORMAL_OMISSION_ENDPOINT_METRICS
+                    and b in FORMAL_OMISSION_ENDPOINT_METRICS
+                )
                 redundancy_rows.append({
                     "scale": scale,
                     "metric_a": a,
@@ -190,6 +204,8 @@ def build_candidate_validation(
                     "abs_r": abs(float(r)) if np.isfinite(r) else math.nan,
                     "redundant_flag": bool(np.isfinite(r) and abs(float(r)) >= cfg.redundancy_abs_r),
                     "threshold": cfg.redundancy_abs_r,
+                    "structural_omission_pair": structural_omission_pair,
+                    "automatic_drop_allowed": False if structural_omission_pair else True,
                 })
 
         validation_by_metric = {r["metric"]: r for r in rows if r["scale"] == scale}
@@ -197,13 +213,20 @@ def build_candidate_validation(
         for metric in [m for m in _PRIORITY if m in available]:
             v = validation_by_metric[metric]
             if v["admission_status"] != "eligible_candidate":
-                role = "not_admitted_pending_review"
+                role = "prespecified_endpoint_needs_review" if metric in FORMAL_OMISSION_ENDPOINT_METRICS else "not_admitted_pending_review"
                 reason = str(v["admission_reasons"])
+            elif metric in FORMAL_OMISSION_ENDPOINT_METRICS:
+                # The three omission rates are deliberately retained together.
+                # raw = clean + timing-ambiguous and all use the Go denominator,
+                # so redundancy cannot be used as an automatic drop rule.
+                role = "prespecified_formal_endpoint"
+                reason = "formal omission decomposition retained regardless of structural redundancy"
+                kept.append(metric)
             else:
                 redundant_with = None
                 for earlier in kept:
                     pair = next((r for r in redundancy_rows if r["scale"] == scale and {r["metric_a"], r["metric_b"]} == {metric, earlier}), None)
-                    if pair and pair["redundant_flag"]:
+                    if pair and pair["redundant_flag"] and not pair.get("structural_omission_pair", False):
                         redundant_with = earlier
                         break
                 if redundant_with:
@@ -218,8 +241,12 @@ def build_candidate_validation(
                 "metric": metric,
                 "candidate_role_recommendation": role,
                 "reason": reason,
-                "final_endpoint_freeze_status": "pending_real_data_scientific_review",
-                "selection_rule": "prespecified priority + coverage/distribution/redundancy; never p-value screening",
+                "final_endpoint_freeze_status": (
+                    "prespecified_formal_endpoint_pending_real_data_stability_review"
+                    if metric in FORMAL_OMISSION_ENDPOINT_METRICS
+                    else "pending_real_data_scientific_review"
+                ),
+                "selection_rule": "prespecified role + coverage/distribution/redundancy; never p-value screening",
             })
 
     return pd.DataFrame(rows), pd.DataFrame(redundancy_rows), pd.DataFrame(decisions)
