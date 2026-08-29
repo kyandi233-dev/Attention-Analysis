@@ -113,8 +113,11 @@ def _datetime_time_to_ms(
     result = pd.Series(pd.NA, index=series.index, dtype="Int64")
     valid = parsed.notna()
     if valid.any():
-        result.loc[valid] = (
-            parsed.loc[valid].astype("int64") // 1_000_000
+        # Do not divide the Series' raw integer storage: pandas 3 may preserve
+        # microsecond resolution for parsed datetimes. Timestamp.value is
+        # explicitly nanoseconds since epoch across datetime64 resolutions.
+        result.loc[valid] = parsed.loc[valid].map(
+            lambda value: int(value.value // 1_000_000)
         ).astype("int64")
     return result
 
