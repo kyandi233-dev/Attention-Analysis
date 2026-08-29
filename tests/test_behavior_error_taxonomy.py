@@ -43,7 +43,7 @@ def test_omission_taxonomy_rates_use_go_opportunities_not_nogo_opportunities() -
     assert summary["omission_taxonomy_denominator"] == 5
     assert summary["omission_motor_timing_ambiguous_n"] == 3
     assert np.isclose(summary["omission_motor_timing_ambiguous_rate"], 3 / 5)
-    assert summary["omission_subtype_partition_check"] is True
+    assert bool(summary["omission_subtype_partition_check"])
     assert summary["late_go_response_candidate_n"] == 1
 
 
