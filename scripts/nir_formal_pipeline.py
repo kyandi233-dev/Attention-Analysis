@@ -21,6 +21,7 @@ from attention_pipeline.nir_analysis_ready import (
 from attention_pipeline.nir_formal_analysis.candidate_validation import run_candidate_validation
 from attention_pipeline.nir_formal_analysis.probe_contract import run_probe_contract_repair
 from attention_pipeline.nir_formal_analysis.pupil_tables import run_cohort
+from attention_pipeline.nir_formal_analysis.scientific_models import run_reference_adjusted_models
 
 
 def parse_args() -> argparse.Namespace:
@@ -113,6 +114,15 @@ def main() -> int:
         )
         result["candidate_validation"] = candidate_validation
         if int(candidate_validation.get("n_sessions_failed", 0)) > 0 or candidate_validation.get("status") != "complete":
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 2
+
+        reference_models = run_reference_adjusted_models(
+            Path(args.tables_config),
+            subjects=sessions,
+        )
+        result["reference_adjusted_models"] = reference_models
+        if reference_models.get("status") == "blocked":
             print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
             return 2
 
