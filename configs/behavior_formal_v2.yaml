@@ -1,0 +1,59 @@
+pipeline:
+  name: attention-analysis-behavior-formal-v2
+  version: 2.0.0
+  schema_version: 2
+  focuswave_release: "v3.1.3"
+  timezone: Asia/Shanghai
+  random_seed: 20260824
+
+data:
+  roots_path_key: formal_raw_roots
+  behavior_dir: "beh"
+
+cohort:
+  manifest_path_key: cohort_manifest
+  session_column: session_id
+  include_column: include
+  repeat_group_column: repeat_participant_id
+
+paths:
+  output_root:
+    path_key: behavior_output_root
+
+formal:
+  expected_blocks: 2
+  blocks:
+    - number: 1
+      condition: "B"
+    - number: 2
+      condition: "B"
+
+validation:
+  expected_trials_per_block: null
+  expected_nogo_per_block: null
+  expected_probes_per_block: null
+  require_cross_subject_count_consistency: true
+  require_probe_position_consistency: false
+  timestamp_tolerance_ms: 25
+
+behavior:
+  cycle_bins: 6
+  rt_cv_min_n: 20
+  rt_slope_min_n: 5
+  rt_qc_ms:
+    very_early: 100
+    early: 150
+    long: 1000
+    beyond_nominal: 1150
+  probe_preceding_go_trials: 8
+
+stats:
+  bootstrap_iterations: 20000
+  seed: 20260824
+  main_metrics: [commission_rate, omission_rate, dprime_loglinear, c, beta, go_rt_median_ms, rt_cv, exg_tau]
+
+analysis_policy:
+  require_repeat_participant_id_for_inference: true
+  allow_legacy_session_level_stats: false
+  old_bbb_results_are_historical_only: true
+  no_hardcoded_cohort_size: true
