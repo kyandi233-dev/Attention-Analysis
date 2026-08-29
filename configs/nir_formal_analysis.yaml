@@ -1,21 +1,18 @@
 pipeline:
   name: attention-analysis-nir-formal-analysis-tables-pupil-only
-  version: 2.4.0
-  schema_version: 6
+  version: 2.5.0
+  schema_version: 7
   signal_semantics: pupil_geometry_only
   timezone: Asia/Shanghai
 
 paths:
-  behavior_config: "configs/behavior_formal.yaml"
+  # NIR-linked Behavior trials must use the same authoritative portable Behavior config/runtime.
+  behavior_config: "configs/behavior_formal_v2.yaml"
   analysis_ready_root: "@path:nir_analysis_ready_root"
   output_root: "@path:nir_analysis_tables_root"
-  # Strict pre-probe exposure builder reads this governed reconstructed visual table.
   stimulus_visual_table: "@path:stimulus_visual_properties"
 
 sessions:
-  # Empty = discover completed pupil-only session folders in 10_analysis_ready.
-  # Identity audit then requires every selected session to be inside the governed
-  # formal cohort; modality-specific missing sessions are allowed.
   include: []
 
 identity:
@@ -25,6 +22,10 @@ identity:
   cohort_session_column: session_id
   cohort_include_column: include
   legacy_repeat_group_column: repeat_participant_id
+  legacy_identity_status_column: identity_status
+  allowed_legacy_identity_statuses: [temporary_confirmed, confirmed, verified, validated, governed]
+  formal_cluster_key: participant_group_id
+  analysis_group_token_role: nir_compatibility_alias_only
   selected_sessions_must_be_subset_of_governed_cohort: true
   analysis_group_token_partition_must_match_participant_group: true
   participant_key_must_never_be_inferred_from_session_number: true
@@ -41,16 +42,11 @@ baseline_semantics:
   video_head_fixed_180s_may_substitute_for_timeline: false
 
 resting_observability:
-  # The final FocusWave program writes these Unix-ms events to each
-  # <session>/beh/master_timeline.csv around show_resting_baseline().
   start_event: baseline_start
   stop_event: baseline_stop
   expected_duration_sec: 180
   duration_tolerance_sec: 30
   max_contiguous_gap_sec: 0.25
-  # Intentionally NOT frozen yet. The audit may be run to inspect measurement
-  # coverage, but an exploratory resting pupil reference is not authorized until
-  # these gates are predeclared without consulting downstream Behavior outcomes.
   min_primary_valid_fraction: null
   min_longest_primary_valid_sec: null
   not_observed_may_be_called_eyes_closed: false
@@ -66,13 +62,9 @@ figures:
   require_event_response_feature_families: true
 
 behavior_qc:
-  # Candidate flag only; does not become a final outcome-tuned exclusion threshold.
   carryover_candidate_ms: 200
 
 tracks:
-  # Legacy reference signal for the existing 11_analysis_tables interface.
-  # This is NOT a scientific declaration that geom-mean diameter is the final
-  # winning pupil metric; candidate sidecars are validated separately first.
   primary: binocular_primary
   include:
     - name: binocular_primary
@@ -80,31 +72,26 @@ tracks:
       value_column: binocular_pupil
       valid_column: null
       source_mode_column: binocular_source_mode
-
     - name: left_primary
       family: eye_preserved
       value_column: left_centered_pupil
       valid_column: left_pupil_valid_primary
       source_mode_column: null
-
     - name: right_primary
       family: eye_preserved
       value_column: right_centered_pupil
       valid_column: right_pupil_valid_primary
       source_mode_column: null
-
     - name: binocular_strict
       family: strict_sensitivity
       value_column: binocular_strict_pupil
       valid_column: null
       source_mode_column: binocular_strict_source_mode
-
     - name: left_strict
       family: strict_sensitivity
       value_column: left_strict_centered_pupil
       valid_column: left_pupil_valid_strict
       source_mode_column: null
-
     - name: right_strict
       family: strict_sensitivity
       value_column: right_strict_centered_pupil
@@ -124,64 +111,21 @@ candidate_metrics:
 
 windows:
   trial:
-    - name: pre_200ms
-      family: event_baseline
-      start_offset_ms: -200
-      end_offset_ms: 0
-    - name: post_200ms
-      family: event_response
-      start_offset_ms: 0
-      end_offset_ms: 200
-    - name: post_200_1150ms
-      family: event_response
-      start_offset_ms: 200
-      end_offset_ms: 1150
-    - name: pre_1s
-      family: state
-      start_offset_ms: -1000
-      end_offset_ms: 0
-    - name: pre_3s
-      family: state
-      start_offset_ms: -3000
-      end_offset_ms: 0
-    - name: pre_5s
-      family: state
-      start_offset_ms: -5000
-      end_offset_ms: 0
-    - name: pre_10s
-      family: state
-      start_offset_ms: -10000
-      end_offset_ms: 0
-    - name: pre_20s
-      family: state
-      start_offset_ms: -20000
-      end_offset_ms: 0
-    - name: pre_30s
-      family: state
-      start_offset_ms: -30000
-      end_offset_ms: 0
-    - name: pre_60s
-      family: state
-      start_offset_ms: -60000
-      end_offset_ms: 0
-
+    - {name: pre_200ms, family: event_baseline, start_offset_ms: -200, end_offset_ms: 0}
+    - {name: post_200ms, family: event_response, start_offset_ms: 0, end_offset_ms: 200}
+    - {name: post_200_1150ms, family: event_response, start_offset_ms: 200, end_offset_ms: 1150}
+    - {name: pre_1s, family: state, start_offset_ms: -1000, end_offset_ms: 0}
+    - {name: pre_3s, family: state, start_offset_ms: -3000, end_offset_ms: 0}
+    - {name: pre_5s, family: state, start_offset_ms: -5000, end_offset_ms: 0}
+    - {name: pre_10s, family: state, start_offset_ms: -10000, end_offset_ms: 0}
+    - {name: pre_20s, family: state, start_offset_ms: -20000, end_offset_ms: 0}
+    - {name: pre_30s, family: state, start_offset_ms: -30000, end_offset_ms: 0}
+    - {name: pre_60s, family: state, start_offset_ms: -60000, end_offset_ms: 0}
   probe:
-    - name: pre_10s
-      family: probe_state
-      start_offset_ms: -10000
-      end_offset_ms: 0
-    - name: pre_20s
-      family: probe_state
-      start_offset_ms: -20000
-      end_offset_ms: 0
-    - name: pre_30s
-      family: probe_state
-      start_offset_ms: -30000
-      end_offset_ms: 0
-    - name: pre_60s
-      family: probe_state
-      start_offset_ms: -60000
-      end_offset_ms: 0
+    - {name: pre_10s, family: probe_state, start_offset_ms: -10000, end_offset_ms: 0}
+    - {name: pre_20s, family: probe_state, start_offset_ms: -20000, end_offset_ms: 0}
+    - {name: pre_30s, family: probe_state, start_offset_ms: -30000, end_offset_ms: 0}
+    - {name: pre_60s, family: probe_state, start_offset_ms: -60000, end_offset_ms: 0}
 
 time_on_task:
   bin_sec: 1.0
@@ -212,3 +156,4 @@ analysis_policy:
   resting_not_observed_must_not_be_called_eyes_closed: true
   inference_and_prediction_must_remain_separate: true
   machine_absolute_paths_allowed_in_science_config: false
+  behavior_runtime_must_use_shared_portable_path_registry: true

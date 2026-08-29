@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 from ..behavior_formal import extract as behavior_extract
 from ..config import Config, load_config
+from ..formal_analysis.behavior_adapter import prepare_behavior_runtime_config
 from .contract import FULLCLASS_EXTENSION_VERSION, normalize_subject, parse_subject_list
 
 
@@ -40,10 +41,18 @@ def alignment_output_root(config: Config) -> Path:
 
 
 def behavior_config(config: Config) -> Config:
+    """Load Behavior science config while preserving the caller's path registry.
+
+    NIR must not silently fall back to environment-only path discovery when the
+    parent NIR command was given an explicit --paths-config registry.
+    """
     raw = config.section("paths").get("behavior_config")
     if raw is None:
         raise KeyError("alignment config missing paths.behavior_config")
-    return load_config(resolve_repo_path(config, raw))
+    loaded = load_config(resolve_repo_path(config, raw), use_env_paths=False)
+    if config.path_registry is not None:
+        loaded = replace(loaded, path_registry=config.path_registry)
+    return loaded
 
 
 def nir_source_roots(config: Config) -> list[Path]:
@@ -93,7 +102,6 @@ def _completion_candidates(config: Config, subject: str) -> list[tuple[Path, dic
             if marker.get("extension_version") != FULLCLASS_EXTENSION_VERSION:
                 continue
             if bool(marker.get("pupil_validation_mode")):
-                # Validation-mode outputs are parity checks, not production sources.
                 continue
             csv_path = path.with_name(path.name.replace("_completion.json", ".csv"))
             if not csv_path.is_file():
@@ -166,5 +174,11 @@ def selected_subjects(config: Config, override: list[str] | None = None) -> list
 
 
 def load_behavior_trials(config: Config, subject: str):
+    """Read NIR-linked Behavior trials through the authoritative Behavior v2 runtime."""
     bconfig = behavior_config(config)
-    return behavior_extract.extract_formal_trials(bconfig, normalize_subject(subject))
+    runtime, cohort = prepare_behavior_runtime_config(bconfig)
+    session = normalize_subject(subject)
+    governed = set(cohort.loc[cohort["include"].eq(True), "session_id"].astype(str))
+    if session not in governed:
+        raise ValueError(f"{session}: NIR-linked Behavior request is outside governed cohort")
+    return behavior_extract.extract_formal_trials(runtime, session)

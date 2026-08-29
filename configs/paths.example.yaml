@@ -3,7 +3,7 @@
 # This is the ONLY machine-specific path file. Replace ${...} values locally;
 # never commit D:/ E:/ F:/ J:/ or another computer's absolute paths into science configs.
 
-version: 2
+version: 3
 
 paths:
   formal_raw_roots:
@@ -12,14 +12,16 @@ paths:
   repeat_registry: "${FOCUSWAVE_REPEAT_REGISTRY}"
   questionnaire_derived_data: "${FOCUSWAVE_QUESTIONNAIRE_DERIVED_DATA}"
 
-  nir_source_manifest: "${FOCUSWAVE_NIR_SOURCE_MANIFEST}"
+  # Authoritative staged NIR pupil-only materializer manifest. JSON object with sessions[].
+  nir_analysis_ready_source_manifest_json: "${FOCUSWAVE_NIR_ANALYSIS_READY_SOURCE_MANIFEST_JSON}"
+  # Legacy CSV manifest consumed only by scripts/formal_multimodal_analysis.py nir-adapt.
+  # It is not the authoritative 10_analysis_ready input and must not share the JSON path.
+  nir_source_manifest: "${FOCUSWAVE_NIR_ADAPTER_SOURCE_MANIFEST_CSV_LEGACY}"
   nir_standardized_root: "${FOCUSWAVE_NIR_STANDARDIZED_ROOT}"
   nir_analysis_ready_root: "${FOCUSWAVE_NIR_ANALYSIS_READY_ROOT}"
   nir_analysis_tables_root: "${FOCUSWAVE_NIR_ANALYSIS_TABLES_ROOT}"
   stimulus_visual_properties: "${FOCUSWAVE_STIMULUS_VISUAL_PROPERTIES}"
 
-  # Existing expensive RGB producer outputs. These should contain subject-level
-  # *_face_raw.parquet, *_pose_landmarks.parquet and *_motion_raw.parquet assets.
   rgb_raw_output_root: "${FOCUSWAVE_RGB_RAW_OUTPUT_ROOT}"
   rgb_analysis_ready_root: "${FOCUSWAVE_RGB_ANALYSIS_READY_ROOT}"
   rgb_analysis_tables_root: "${FOCUSWAVE_RGB_ANALYSIS_TABLES_ROOT}"
