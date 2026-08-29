@@ -36,7 +36,7 @@ ENVIRONMENTS: dict[str, EnvironmentSpec] = {
         analysis="nir",
         env_name="attention-nir-formal",
         yaml_path=REPO_ROOT / "environments" / "nir-pupil-formal.yml",
-        import_check="import numpy,pandas,scipy,statsmodels,matplotlib,yaml; print('NIR pupil-only formal environment OK')",
+        import_check="import numpy,pandas,pyarrow,scipy,statsmodels,matplotlib,yaml; print('NIR pupil-only formal environment OK')",
         description="NIR pupil-only downstream; no YOLO/RITnet producer dependencies",
     ),
     "rgb": EnvironmentSpec(
@@ -121,6 +121,9 @@ def create_or_update_environment(spec: EnvironmentSpec, *, update: bool) -> None
         _run([conda, "env", "create", "-f", str(spec.yaml_path)])
 
     # Install the checked-out repository into the selected formal environment.
+    # pyarrow is deliberately included in NIR/RGB import checks because the
+    # package dependency is installed by this editable install and missing Arrow
+    # support should fail during bootstrap rather than during a later data read.
     _run([conda, "run", "-n", spec.env_name, "python", "-m", "pip", "install", "-e", "."])
     _run([conda, "run", "-n", spec.env_name, "python", "-c", spec.import_check])
 
