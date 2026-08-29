@@ -1,0 +1,3 @@
+session_id,status,eye_metrics_csv,frame_coverage_csv,schema_version,source_pipeline_version,source_commit,source_selection_reason
+sub-001,complete,relative/path/sub-001_eye_metrics.csv,relative/path/sub-001_frame_coverage.csv,6,fullclass-final,EXAMPLE,unique_validated_source
+sub-002,incomplete,relative/path/sub-002_eye_metrics.csv,relative/path/sub-002_frame_coverage.csv,7,fullclass-final,EXAMPLE,awaiting_completion
