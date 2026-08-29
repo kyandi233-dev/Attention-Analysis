@@ -1,7 +1,7 @@
 pipeline:
   name: attention-analysis-nir-formal-analysis-tables-pupil-only
-  version: 2.1.0
-  schema_version: 3
+  version: 2.2.0
+  schema_version: 4
   signal_semantics: pupil_geometry_only
   timezone: Asia/Shanghai
 
@@ -15,7 +15,37 @@ paths:
 
 sessions:
   # Empty = discover completed pupil-only session folders in 10_analysis_ready.
+  # Identity audit then requires every selected session to be inside the governed
+  # formal cohort; modality-specific missing sessions are allowed.
   include: []
+
+identity:
+  cohort_manifest_path_key: cohort_manifest
+  repeat_registry_path_key: repeat_registry
+  questionnaire_path_key: questionnaire_derived_data
+  cohort_session_column: session_id
+  cohort_include_column: include
+  legacy_repeat_group_column: repeat_participant_id
+  selected_sessions_must_be_subset_of_governed_cohort: true
+  analysis_group_token_partition_must_match_participant_group: true
+  participant_key_must_never_be_inferred_from_session_number: true
+
+baseline_semantics:
+  session_centering_reference_name: session_eye_centering_reference
+  session_centering_is_resting_baseline: false
+  event_local_baseline_name: pre_event_local_baseline
+  event_local_baseline_start_ms: -200
+  event_local_baseline_end_ms: 0
+  resting_task_start_baseline_status: not_defined_without_protocol_evidence
+
+figures:
+  internal_title_allowed: false
+  caption_is_external: true
+  require_chinese_axes_legends: true
+  require_metric_scale_coverage_audit: true
+  require_all_pupil_candidates: true
+  require_window_feature_families: true
+  require_event_response_feature_families: true
 
 behavior_qc:
   # Candidate flag only; does not become a final outcome-tuned exclusion threshold.
@@ -52,13 +82,13 @@ tracks:
       source_mode_column: binocular_strict_source_mode
 
     - name: left_strict
-      family: strict_sensitivity
+      family: eye_preserved
       value_column: left_strict_centered_pupil
       valid_column: left_pupil_valid_strict
       source_mode_column: null
 
     - name: right_strict
-      family: strict_sensitivity
+      family: eye_preserved
       value_column: right_strict_centered_pupil
       valid_column: right_pupil_valid_strict
       source_mode_column: null
@@ -76,8 +106,6 @@ candidate_metrics:
 
 windows:
   trial:
-    # Event windows are retained so phasic pupil change can be defined against an
-    # explicit pre-event baseline rather than mixing state and response semantics.
     - name: pre_200ms
       family: event_baseline
       start_offset_ms: -200
@@ -90,8 +118,6 @@ windows:
       family: event_response
       start_offset_ms: 200
       end_offset_ms: 1150
-    # Long windows are state/tonic descriptors. They are intentionally preserved
-    # but their overlap is audited and they are not IID trial-level inferential units.
     - name: pre_1s
       family: state
       start_offset_ms: -1000
@@ -155,9 +181,12 @@ analysis_policy:
   production_nir_read_directly: false
   preserve_left_right_eyes: true
   preserve_repeat_group_token: true
+  participant_partition_identity_audit_required: true
   overlap_audit_required: true
   session_autocorrelation_control_required: true
   choose_window_from_outcome: false
   auto_exclude_sessions: false
   auto_exclude_eyes: false
   run_formal_statistics: false
+  session_centering_reference_must_not_be_reported_as_resting_baseline: true
+  inference_and_prediction_must_remain_separate: true
