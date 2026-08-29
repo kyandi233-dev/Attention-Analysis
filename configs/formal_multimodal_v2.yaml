@@ -127,6 +127,14 @@ nir:
     - pupil_axis_b
     - hard_pupil_fraction
     - soft_pupil_fraction
+  ocular_aperture_policy:
+    role: nir_eye_opening_candidate_qc
+    preferred_summary: ocular_aperture_ratio_median
+    not_ear: true
+    not_blink_event: true
+    not_perclos: true
+    never_reconstruct_from_iris_fraction: true
+    cross_validate_with_rgb_eyelid_or_blink: true
   iris_fraction_role: segmentation_qc_only
   forbidden_formal_metrics:
     - fullclass_pupil_to_iris_diameter_ratio
