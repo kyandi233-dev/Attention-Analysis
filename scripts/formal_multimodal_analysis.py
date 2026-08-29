@@ -1,4 +1,14 @@
-"""Portable formal multimodal preflight, NIR adaptation, and merge-contract audit."""
+"""Portable formal preflight plus explicitly legacy/deferred compatibility audits.
+
+Current authoritative modality entrypoints are:
+- Behavior: ``scripts/sart_formal_analysis.py``
+- NIR: ``scripts/nir_formal_pipeline.py`` (staged pupil-only)
+- RGB: ``scripts/rgb_formal_downstream.py``
+
+The ``nir-adapt`` command below is retained only for historical CSV-adapter
+reproducibility. ``merge-audit`` is a deferred scaffold and does not authorize
+multimodal production analysis.
+"""
 
 from __future__ import annotations
 
@@ -45,6 +55,7 @@ def command_preflight(config: Config) -> dict[str, object]:
         values = config.registry_paths(str(key))
         paths[str(key)] = [{"path": str(path), "exists": path.exists()} for path in values]
     return {
+        "route_status": "current_single_modality_preflight",
         "science_config": str(config.path),
         "science_config_digest": config.digest,
         "paths_config": str(config.path_registry.path),
@@ -94,12 +105,33 @@ def _optional_record_text(record: dict[str, object], key: str) -> str | None:
     return text or None
 
 
+def _legacy_nir_adapter_contract(config: Config) -> dict[str, object]:
+    nir_cfg = config.section("nir")
+    raw = nir_cfg.get("legacy_csv_adapter", {})
+    legacy = dict(raw) if isinstance(raw, dict) else {}
+    source_key = legacy.get("source_manifest_path_key", nir_cfg.get("source_manifest_path_key"))
+    output_key = legacy.get("standardized_output_path_key", nir_cfg.get("standardized_output_path_key"))
+    if source_key in (None, "") or output_key in (None, ""):
+        raise ValueError("legacy NIR adapter path keys are not configured")
+    return {
+        "status": str(legacy.get("status", "legacy_compatibility_only")),
+        "active_in_formal_pipeline": bool(legacy.get("active_in_formal_pipeline", False)),
+        "source_manifest_path_key": str(source_key),
+        "standardized_output_path_key": str(output_key),
+        "may_authorize_formal_statistics": bool(legacy.get("may_authorize_formal_statistics", False)),
+        "may_replace_staged_analysis_ready": bool(legacy.get("may_replace_staged_analysis_ready", False)),
+    }
+
+
 def command_nir_adapt(config: Config, *, sessions: list[str] | None, run_id: str | None) -> dict[str, object]:
+    """Run the retained CSV NIR adapter for historical compatibility only."""
     if config.path_registry is None:
         raise ValueError("nir-adapt requires --paths-config or ATTENTION_ANALYSIS_PATHS_CONFIG")
-    nir_cfg = config.section("nir")
-    source_manifest = config.registry_path(str(nir_cfg["source_manifest_path_key"]))
-    output_base = config.registry_path(str(nir_cfg["standardized_output_path_key"]))
+    legacy = _legacy_nir_adapter_contract(config)
+    if legacy["active_in_formal_pipeline"]:
+        raise ValueError("legacy NIR adapter must not be marked active in the formal pipeline")
+    source_manifest = config.registry_path(str(legacy["source_manifest_path_key"]))
+    output_base = config.registry_path(str(legacy["standardized_output_path_key"]))
     manifest = pd.read_csv(source_manifest, encoding="utf-8-sig")
     required = {"session_id", "status", "eye_metrics_csv", "schema_version"}
     missing = required - set(manifest.columns)
@@ -121,14 +153,14 @@ def command_nir_adapt(config: Config, *, sessions: list[str] | None, run_id: str
         missing_requested = requested - set(manifest["session_id"].astype(str))
         if missing_requested:
             raise ValueError(
-                "请求场次不在 complete NIR source manifest/cohort 交集中: "
+                "请求场次不在 complete legacy NIR source manifest/cohort 交集中: "
                 + ", ".join(sorted(missing_requested))
             )
     if manifest.empty:
-        raise ValueError("没有可适配的 complete NIR session")
+        raise ValueError("没有可适配的 complete legacy NIR session")
 
     provenance = _runtime_provenance(config)
-
+    nir_cfg = config.section("nir")
     run_id = run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_root = output_base / run_id
     if run_root.exists():
@@ -156,11 +188,14 @@ def command_nir_adapt(config: Config, *, sessions: list[str] | None, run_id: str
         }
         adapted["qc_provenance"] = {
             "preserved_in_frame_level_output": True,
-            "tracks": list(config.section("nir").get("qc_tracks", {}).keys()),
+            "tracks": list(nir_cfg.get("qc_tracks", {}).keys()),
         }
         rows.append(adapted)
 
     result = {
+        "route_status": "legacy_compatibility_only",
+        "formal_statistics_authorized": False,
+        "may_replace_staged_analysis_ready": False,
         "run_id": run_id,
         "science_config_digest": config.digest,
         "paths_config_digest": config.path_registry.digest,
@@ -178,19 +213,15 @@ def command_nir_adapt(config: Config, *, sessions: list[str] | None, run_id: str
             "groups": cohort_summary.groups,
             "repeated_groups": cohort_summary.repeated_groups,
             "repeated_sessions": cohort_summary.repeated_sessions,
-            "anonymous_grouping_is_provisional": True,
-            "full_remap_required_after_cohort_append": True,
         },
         "science_boundaries": {
+            "authoritative_nir_route": "scripts/nir_formal_pipeline.py",
             "nir_primary_line": "pupil-only",
             "pir_or_iris_outer_formal_line_allowed": False,
             "oar_role": "eye-opening-or-eyelid-candidate-qc-only",
-            "oar_must_not_be_reconstructed_from_iris_fraction": True,
             "oar_is_not_blink_rate_or_perclos": True,
-            "engineering_validation_is_measurement_validity": False,
             "behavior_window_gate_modified_here": False,
             "mmwave_contract_modified_here": False,
-            "mmwave_external_ecg_rsp_validation_claim_allowed": False,
         },
         "sessions": rows,
     }
@@ -199,6 +230,10 @@ def command_nir_adapt(config: Config, *, sessions: list[str] | None, run_id: str
 
 
 def command_merge_audit(config: Config, *, unit: str, table_specs: list[str], how: str, output: str | None) -> dict[str, object]:
+    """Audit the retained historical merge scaffold; never authorize production fusion."""
+    fusion = config.section("fusion")
+    if str(fusion.get("status", "disabled_deferred")) != "disabled_deferred":
+        raise ValueError("multimodal fusion must remain disabled_deferred until explicitly re-frozen")
     tables: dict[str, pd.DataFrame] = {}
     for spec in table_specs:
         if "=" not in spec:
@@ -209,7 +244,14 @@ def command_merge_audit(config: Config, *, unit: str, table_specs: list[str], ho
             raise ValueError("modality 名不能为空")
         tables[modality] = pd.read_csv(_resolve_external(config, raw.strip()), encoding="utf-8-sig")
     merged, audit = merge_modalities(tables, unit=unit, how=how)
-    result = {"unit": unit, "how": how, "rows": int(len(merged)), "modalities": audit.to_dict("records")}
+    result: dict[str, object] = {
+        "route_status": "legacy_deferred_audit_only",
+        "production_fusion_authorized": False,
+        "unit": unit,
+        "how": how,
+        "rows": int(len(merged)),
+        "modalities": audit.to_dict("records"),
+    }
     if output:
         target = _resolve_external(config, output)
         if target.exists():
@@ -221,15 +263,17 @@ def command_merge_audit(config: Config, *, unit: str, table_specs: list[str], ho
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="FocusWave formal multimodal v2 portable analysis interface")
+    parser = argparse.ArgumentParser(
+        description="FocusWave formal single-modality preflight with legacy/deferred audit surfaces"
+    )
     parser.add_argument("--config", default="configs/formal_multimodal_v2.yaml")
     parser.add_argument("--paths-config", default=None)
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("preflight")
-    nir = sub.add_parser("nir-adapt")
+    nir = sub.add_parser("nir-adapt", help="LEGACY compatibility adapter; not the staged formal NIR route")
     nir.add_argument("--sessions", nargs="*", default=None)
     nir.add_argument("--run-id", default=None)
-    merge = sub.add_parser("merge-audit")
+    merge = sub.add_parser("merge-audit", help="DEFERRED merge-contract audit; not production fusion")
     merge.add_argument("--unit", choices=sorted(UNIT_KEYS), required=True)
     merge.add_argument("--table", action="append", required=True, dest="tables")
     merge.add_argument("--how", choices=["inner", "outer"], default="inner")
