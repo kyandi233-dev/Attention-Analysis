@@ -1,7 +1,7 @@
 pipeline:
   name: attention-analysis-nir-analysis-ready-pupil-only
-  version: 2.0.0
-  schema_version: 2
+  version: 2.1.0
+  schema_version: 3
   signal_semantics: pupil_geometry_only
   timezone: Asia/Shanghai
 
@@ -13,12 +13,9 @@ cohort_topology:
   double_session_repeat_groups: 6
 
 paths:
-  # Site-local, read-only manifest. Do not commit the real manifest: it contains
-  # local source locations and anonymous analysis-group tokens used for leakage-safe
-  # grouping. Override this path in a local config when needed.
-  source_manifest: "../Attention-Analysis-local/nir_topology_pupil_only.json"
-  # Portable derived default; production runs may use --output-root.
-  output_root: "../Attention-Analysis-local/nir-behavior-v2/10_analysis_ready"
+  # Machine-specific locations are resolved exclusively through the local path registry.
+  source_manifest: "@path:nir_source_manifest"
+  output_root: "@path:nir_analysis_ready_root"
 
 source_contract:
   accepted_eye_metrics_schemas: [6, 7]
@@ -58,25 +55,27 @@ quality_tracks:
     - interpolation_only
 
 standardization:
-  primary: "session_eye_median_centered_across_block1_block2"
+  per_session_per_eye: true
+  baseline_statistic: median
+  baseline_spread: MAD
   robust_z_scale: 1.4826
-  repeat_sessions_share_baseline: false
-  rationale: "repeat sessions remain separate to avoid cross-session leakage"
+  preserve_raw_diameter: true
+  preserve_centered_diameter: true
+  preserve_robust_z: true
 
 binocular:
-  base_layer_input: "centered_pupil_diameter"
-  both_valid: equal_weight_mean
-  single_eye_fallback: true
-  preserve_left_right_tracks: true
+  primary_rule: mean_when_both_valid_else_valid_eye
+  strict_rule: mean_when_both_strict_else_strict_eye
+  preserve_source_mode: true
+
+sessions:
+  # Empty means source-manifest governed discovery. Do not derive cohort from questionnaire.
+  include: []
 
 analysis_policy:
-  enforce_expected_topology: true
-  production_read_only: true
-  max_eye_time_delta_ms: 1.0
-  auto_exclude_sessions: false
-  auto_exclude_eyes: false
-  auto_exclude_blocks: false
-  choose_quality_threshold_from_outcome: false
-  choose_window_from_outcome: false
-  run_formal_statistics: false
-  interpretation_boundary: "engineering and analysis-readiness only"
+  production_nir_read_directly: false
+  rerun_yolo_allowed: false
+  rerun_ritnet_allowed: false
+  pir_oar_reconstruction_allowed: false
+  endpoint_freeze: pending_real_data_scientific_review
+  machine_absolute_paths_allowed_in_science_config: false
