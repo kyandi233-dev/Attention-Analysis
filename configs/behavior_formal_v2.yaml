@@ -1,8 +1,11 @@
 pipeline:
   name: attention-analysis-behavior-formal-v3
-  version: 3.1.0
-  schema_version: 4
-  focuswave_release: "v3.1.3"
+  version: 3.2.0
+  schema_version: 6
+  # v3.1.3/v3.1.4 share the same final BB scientific task structure; the
+  # internal application version is provenance, not a required report label.
+  focuswave_science_structure: "formaltest_BB_v3.1.0_plus"
+  focuswave_release_provenance: "v3.1.3-v3.1.4_science_equivalent"
   timezone: Asia/Shanghai
   random_seed: 20260829
 
@@ -11,19 +14,19 @@ data:
   behavior_dir: "beh"
 
 cohort:
-  # The cohort manifest alone decides which sessions are in the formal queue.
+  # This is the CURRENT analysis cohort, not the total formal-study sample.
+  # The cohort manifest alone decides which sessions are in this execution queue.
   # Questionnaire rows never create/delete cohort sessions.
   manifest_path_key: cohort_manifest
   session_column: session_id
   include_column: include
   repeat_group_column: repeat_participant_id
-  # The new questionnaire-derived identity source overlays participant identity
-  # and verified visit order while preserving the governed cohort boundary.
   identity_registry_path_key: repeat_registry
   questionnaire_path_key: questionnaire_derived_data
   expected_session_count: 44
   expected_group_count: 38
   expected_double_session_repeat_groups: 6
+  current_queue_is_full_study_sample: false
 
 paths:
   output_root:
@@ -51,6 +54,8 @@ behavior:
   rt_slope_min_n: 5
   rt_valid_min_ms: 100
   rt_valid_max_ms: null
+  # Motor-timing ambiguity screen; this is a prespecified sensitivity/QC rule,
+  # not an outcome-tuned exclusion threshold.
   carryover_candidate_ms: 200
   rt_qc_ms:
     very_early: 100
@@ -60,6 +65,15 @@ behavior:
   primary_probe_window_seconds: 30
   probe_windows_seconds: [10, 20, 30]
   probe_preceding_go_trials: 8
+  omission_endpoints:
+    raw: raw_go_omission_rate
+    clean: clean_go_omission_rate
+    timing_ambiguous: timing_ambiguous_go_omission_rate
+    shared_denominator: valid_go_opportunities
+    partition_contract: "raw_go_omission_rate = clean_go_omission_rate + timing_ambiguous_go_omission_rate"
+    clean_interpretation: "no detected prestimulus/carry-over motor-timing ambiguity; not proven attentional lapse"
+    finer_prestimulus_carryover_subtypes_role: qc_descriptive_only
+    late_gt_1150_role: timing_diagnostic_only
 
 stats:
   bootstrap_iterations: 20000
@@ -78,11 +92,25 @@ stats:
     - go_correct_rt_iqr_ms
     - go_correct_rt_cv
     - go_correct_rt_theilsen_slope_ms_per_s
-    - omission_rate
+    - raw_go_omission_rate
+    - clean_go_omission_rate
+    - timing_ambiguous_go_omission_rate
     - commission_rate
     - dprime_loglinear
     - criterion_c
     - beta
+  compatibility_aliases:
+    omission_rate: raw_go_omission_rate
+    omission_no_detected_motor_timing_ambiguity_rate: clean_go_omission_rate
+    omission_motor_timing_ambiguous_rate: timing_ambiguous_go_omission_rate
+
+execution:
+  record_step_timing: true
+  execution_steps_csv_required: true
+  execution_manifest_json_required: true
+  skipped_optional_step_marks_partial_run: true
+  structural_steps_cannot_be_skipped: true
+  subset_subjects_write_isolated_smoke_output: true
 
 figures:
   internal_title_allowed: false
@@ -95,10 +123,14 @@ analysis_policy:
   require_repeat_participant_id_for_inference: true
   require_participant_group_identity_source: true
   cohort_manifest_defines_session_membership: true
+  current_44_38_6_is_analysis_subset_not_study_total: true
   questionnaire_must_left_join_sessions: true
   questionnaire_missing_does_not_drop_session: true
   preserve_raw_omission_scoring: true
-  omission_subtypes_are_candidate_qc_until_task_semantics_review: true
+  raw_clean_timing_ambiguous_omission_are_prespecified_formal_endpoints: true
+  clean_plus_timing_ambiguous_must_equal_raw_omission: true
+  finer_prestimulus_carryover_subtypes_are_qc_only: true
+  late_response_candidate_is_timing_diagnostic_only: true
   allow_legacy_session_level_stats: false
   old_bbb_results_are_historical_only: true
   no_hardcoded_cohort_size: false
