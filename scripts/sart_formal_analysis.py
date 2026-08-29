@@ -11,8 +11,14 @@ import pandas as pd
 
 from attention_pipeline.config import load_config
 from attention_pipeline.behavior_formal import extract as fex
+from attention_pipeline.behavior_formal.candidate_validation import (
+    build_candidate_validation,
+    build_sensitivity_status,
+    decompose_within_between,
+)
 from attention_pipeline.behavior_formal.science_v3 import (
     BehaviorScienceConfig,
+    CANONICAL_METRICS,
     MODEL_FAILURE_COLUMNS,
     build_b1_b2_pairs,
     build_multiscale_tables,
@@ -205,6 +211,21 @@ def main() -> int:
     )
     qc = qc_denominators(trials, primary_probe, tables)
 
+    candidate_validation, metric_redundancy, endpoint_decisions = build_candidate_validation(
+        tables, primary_probe
+    )
+    sensitivity_status = build_sensitivity_status(tables["session"])
+    decomposition_metrics = [m for m in CANONICAL_METRICS if m in primary_probe.columns]
+    probe_within_between = (
+        decompose_within_between(primary_probe, decomposition_metrics)
+        if not primary_probe.empty else primary_probe.copy()
+    )
+    session_decomposition_metrics = [m for m in CANONICAL_METRICS if m in tables["session"].columns]
+    session_within_between = (
+        decompose_within_between(tables["session"], session_decomposition_metrics)
+        if not tables["session"].empty else tables["session"].copy()
+    )
+
     trials.to_csv(output_root / "trial_metrics.csv", index=False, encoding="utf-8-sig")
     validation.to_csv(output_root / "validation.csv", index=False, encoding="utf-8-sig")
     tables["session"].to_csv(output_root / "session_metrics.csv", index=False, encoding="utf-8-sig")
@@ -213,6 +234,24 @@ def main() -> int:
     primary_probe.to_csv(output_root / "probe_primary_30s.csv", index=False, encoding="utf-8-sig")
     probe_sensitivity.to_csv(
         output_root / "probe_window_sensitivity.csv", index=False, encoding="utf-8-sig"
+    )
+    probe_within_between.to_csv(
+        output_root / "probe_primary_30s_within_between.csv", index=False, encoding="utf-8-sig"
+    )
+    session_within_between.to_csv(
+        output_root / "session_metrics_within_between.csv", index=False, encoding="utf-8-sig"
+    )
+    candidate_validation.to_csv(
+        output_root / "behavior_candidate_metric_validation.csv", index=False, encoding="utf-8-sig"
+    )
+    metric_redundancy.to_csv(
+        output_root / "behavior_metric_redundancy.csv", index=False, encoding="utf-8-sig"
+    )
+    endpoint_decisions.to_csv(
+        output_root / "behavior_endpoint_decisions.csv", index=False, encoding="utf-8-sig"
+    )
+    sensitivity_status.to_csv(
+        output_root / "behavior_sensitivity_status.csv", index=False, encoding="utf-8-sig"
     )
     pairs.to_csv(output_root / "b1_b2_pairs.csv", index=False, encoding="utf-8-sig")
     b1b2_clustered.to_csv(
@@ -239,7 +278,7 @@ def main() -> int:
 
     manifest = {
         "pipeline": "behavior-science-v3",
-        "schema_version": 3,
+        "schema_version": 4,
         "config": str(config.path),
         "config_digest": config.digest,
         "runtime_provenance": {"code": code_provenance},
@@ -251,6 +290,8 @@ def main() -> int:
         "probe_primary_rows": int(len(primary_probe)),
         "error_event_rows": int(len(error_events)),
         "model_failure_rows": int(len(failures)),
+        "candidate_validation_rows": int(len(candidate_validation)),
+        "endpoint_decision_rows": int(len(endpoint_decisions)),
         "figure_files": figure_files,
         "formal_inference_contract": "session pairing then repeat_participant_id clustering",
         "cycle_contract": "cycle nested block/session/repeat_participant_id; block_by_cycle GEE",
@@ -259,6 +300,8 @@ def main() -> int:
         "q1_contract": "nominal_four_class_reference_1",
         "q2_contract": "ordinal_gee_repeat_participant_cluster",
         "repeat_reliability_contract": "descriptive_only_when_two_sessions",
+        "candidate_selection_contract": "coverage/distribution/within-between/redundancy; no p-value screening; final freeze pending real-data review",
+        "sensitivity_contract": "visit-order analyses fail closed until a verified order field exists; never infer order from session_id",
         "rt_cv_min_n": rt_cv_min_n,
         "rt_slope_min_n": rt_slope_min_n,
     }
