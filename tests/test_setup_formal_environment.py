@@ -4,6 +4,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import yaml
+
 
 def _load_module():
     root = Path(__file__).resolve().parents[1]
@@ -48,10 +50,26 @@ def test_paths_only_parser_does_not_require_conda():
     assert args.paths_only is True
 
 
+def _declared_dependency_names(path: Path) -> set[str]:
+    payload = yaml.safe_load(path.read_text(encoding="utf-8"))
+    names: set[str] = set()
+    for item in payload.get("dependencies", []):
+        if isinstance(item, str):
+            names.add(item.split("=", 1)[0].split("<", 1)[0].split(">", 1)[0].strip().lower())
+        elif isinstance(item, dict):
+            for nested in item.values():
+                if isinstance(nested, list):
+                    for value in nested:
+                        if isinstance(value, str):
+                            names.add(value.split("=", 1)[0].split("<", 1)[0].split(">", 1)[0].strip().lower())
+    return names
+
+
 def test_rgb_environment_is_downstream_only():
     module = _load_module()
-    text = module.ENVIRONMENTS["rgb"].yaml_path.read_text(encoding="utf-8").lower()
-    assert "pyarrow" in text
-    assert "mediapipe" not in text
-    assert "onnxruntime-directml" not in text
-    assert "pytorch" not in text
+    deps = _declared_dependency_names(module.ENVIRONMENTS["rgb"].yaml_path)
+    assert "pyarrow" in deps
+    assert "mediapipe" not in deps
+    assert "onnxruntime-directml" not in deps
+    assert "pytorch" not in deps
+    assert "torch" not in deps
