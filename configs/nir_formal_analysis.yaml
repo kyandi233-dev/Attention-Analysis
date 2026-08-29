@@ -1,3 +1,9 @@
+# LEGACY / PROVENANCE ONLY (PIR-based exploratory analysis).
+# Do not use this file for current formal downstream analysis. The current
+# fullclass-final contract is pupil-only and is defined by
+# configs/formal_multimodal_v2.yaml plus scripts/formal_multimodal_analysis.py.
+# This historical config is intentionally retained for reproducibility.
+
 pipeline:
   name: attention-analysis-nir-formal-analysis-tables
   version: 1.0.0
