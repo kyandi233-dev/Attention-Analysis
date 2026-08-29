@@ -1,23 +1,29 @@
 # Copy to configs/paths.local.yaml (gitignored), or place an equivalent registry
 # elsewhere and set ATTENTION_ANALYSIS_PATHS_CONFIG to its path.
-# Analysis code never needs to know whether data are on D:, E:, F:, another
-# computer, network storage, or a later merged dataset.
+# This is the ONLY machine-specific path file. Replace ${...} values locally;
+# never commit D:/ E:/ F:/ J:/ or another computer's absolute paths into science configs.
 
-version: 1
+version: 2
 
 paths:
   formal_raw_roots:
     - "${FOCUSWAVE_FORMAL_RAW_ROOT}"
-  # Governed formal-session membership. This remains the source of which sessions
-  # are in the current queue; questionnaire rows never define the cohort.
   cohort_manifest: "${FOCUSWAVE_COHORT_MANIFEST}"
-  # Questionnaire-derived anonymous identity/visit-order registry.
   repeat_registry: "${FOCUSWAVE_REPEAT_REGISTRY}"
-  # Derived questionnaire analysis table (one row per questionnaire/session).
   questionnaire_derived_data: "${FOCUSWAVE_QUESTIONNAIRE_DERIVED_DATA}"
+
   nir_source_manifest: "${FOCUSWAVE_NIR_SOURCE_MANIFEST}"
   nir_standardized_root: "${FOCUSWAVE_NIR_STANDARDIZED_ROOT}"
+  nir_analysis_ready_root: "${FOCUSWAVE_NIR_ANALYSIS_READY_ROOT}"
+  nir_analysis_tables_root: "${FOCUSWAVE_NIR_ANALYSIS_TABLES_ROOT}"
   stimulus_visual_properties: "${FOCUSWAVE_STIMULUS_VISUAL_PROPERTIES}"
+
+  # Existing expensive RGB producer outputs. These should contain subject-level
+  # *_face_raw.parquet, *_pose_landmarks.parquet and *_motion_raw.parquet assets.
+  rgb_raw_output_root: "${FOCUSWAVE_RGB_RAW_OUTPUT_ROOT}"
+  rgb_analysis_ready_root: "${FOCUSWAVE_RGB_ANALYSIS_READY_ROOT}"
+  rgb_analysis_tables_root: "${FOCUSWAVE_RGB_ANALYSIS_TABLES_ROOT}"
+
   behavior_output_root: "${FOCUSWAVE_BEHAVIOR_OUTPUT_ROOT}"
   rgb_output_root: "${FOCUSWAVE_RGB_OUTPUT_ROOT}"
   mmwave_output_root: "${FOCUSWAVE_MMWAVE_OUTPUT_ROOT}"
