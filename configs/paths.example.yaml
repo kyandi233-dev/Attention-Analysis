@@ -1,0 +1,19 @@
+# Copy to configs/paths.local.yaml (gitignored), or place an equivalent registry
+# elsewhere and set ATTENTION_ANALYSIS_PATHS_CONFIG to its path.
+# Analysis code never needs to know whether data are on D:, E:, F:, another
+# computer, network storage, or a later merged dataset.
+
+version: 1
+
+paths:
+  formal_raw_roots:
+    - "${FOCUSWAVE_FORMAL_RAW_ROOT}"
+  cohort_manifest: "${FOCUSWAVE_COHORT_MANIFEST}"
+  repeat_registry: "${FOCUSWAVE_REPEAT_REGISTRY}"
+  nir_source_manifest: "${FOCUSWAVE_NIR_SOURCE_MANIFEST}"
+  nir_standardized_root: "${FOCUSWAVE_NIR_STANDARDIZED_ROOT}"
+  stimulus_visual_properties: "${FOCUSWAVE_STIMULUS_VISUAL_PROPERTIES}"
+  behavior_output_root: "${FOCUSWAVE_BEHAVIOR_OUTPUT_ROOT}"
+  rgb_output_root: "${FOCUSWAVE_RGB_OUTPUT_ROOT}"
+  mmwave_output_root: "${FOCUSWAVE_MMWAVE_OUTPUT_ROOT}"
+  fusion_output_root: "${FOCUSWAVE_FUSION_OUTPUT_ROOT}"
