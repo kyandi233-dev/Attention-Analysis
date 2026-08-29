@@ -1,9 +1,10 @@
 """Behavior science v3 contract for the formal FocusWave analysis line.
 
 This module is the formal replacement for the historical session-as-participant
-statistics.  It keeps Go omission and No-Go commission separate, produces the
-same canonical metrics at probe/block/session/cycle scales, preserves the
-44-session/38-analysis-group repeated structure, and fail-closes model failures.
+statistics. It keeps Go omission and No-Go commission separate, produces the
+same canonical metrics at probe/block/session/cycle scales, preserves governed
+participant clustering, and fail-closes model failures. The 44/38/6 topology is
+a current analysis-cohort contract, not the study-wide sample definition.
 """
 from __future__ import annotations
 
@@ -30,6 +31,17 @@ CANONICAL_METRICS = (
     "dprime_loglinear",
     "criterion_c",
     "beta",
+)
+# Probe models should report the explicit formal omission names rather than the
+# historical ``omission_rate`` compatibility alias.  The latter is the same raw
+# program omission and would otherwise duplicate ``raw_go_omission_rate``.
+PROBE_MODEL_METRICS = tuple(
+    [m for m in CANONICAL_METRICS if m != "omission_rate"]
+    + [
+        "raw_go_omission_rate",
+        "clean_go_omission_rate",
+        "timing_ambiguous_go_omission_rate",
+    ]
 )
 EXPECTED_TOPOLOGY = {
     "sessions": 44,
@@ -355,7 +367,7 @@ def fit_q1_nominal(primary_probe: pd.DataFrame, cfg: BehaviorScienceConfig | Non
     cfg = cfg or BehaviorScienceConfig()
     results: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
-    for predictor in CANONICAL_METRICS:
+    for predictor in PROBE_MODEL_METRICS:
         if predictor not in primary_probe:
             continue
         d = primary_probe[["q1_nominal_4class", predictor, "repeat_participant_id", "session_id"]].copy()
@@ -412,7 +424,7 @@ def fit_q2_ordinal(primary_probe: pd.DataFrame, cfg: BehaviorScienceConfig | Non
     cfg = cfg or BehaviorScienceConfig()
     results: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
-    for predictor in CANONICAL_METRICS:
+    for predictor in PROBE_MODEL_METRICS:
         if predictor not in primary_probe:
             continue
         d = primary_probe[["q2_ordinal_4level", predictor, "repeat_participant_id", "session_id"]].copy()
@@ -472,9 +484,10 @@ def write_chinese_result_summary(output: Path, topology: dict[str, int],
                                  failures: pd.DataFrame) -> None:
     lines = ["# FocusWave 行为正式分析结果说明", "",
              "本文件由行为科学 v3 正式合同生成。所有样本量均标明观察单位，重复参加场次不会被当作独立参与者。", "",
-             f"当前队列：{topology['sessions']} 场，{topology['analysis_groups']} 个匿名参与者分析组，其中 {topology['double_session_repeat_groups']} 组包含双场重复参加。", "",
+             f"当前分析队列：{topology['sessions']} 场，{topology['analysis_groups']} 个匿名参与者分析组，其中 {topology['double_session_repeat_groups']} 组包含双场重复参加；该队列不等于研究总体样本。", "",
              "## 指标口径", "",
              "Go 遗漏与 No-Go 误按使用不同机会数作为分母；RT 仅汇总正确 Go 反应。RT 输出均值、中位数、SD、MAD、IQR、CV 与 Theil–Sen 时间斜率；同时输出 d′、c 与 β。", "",
+             "原始 Go omission、clean Go omission 与 timing-ambiguous Go omission 均为预先定义结局，并共享 Go 分母；clean + timing-ambiguous 必须等于 raw。clean 仅表示未检出当前定义的运动时序歧义，不等同于已证明的注意失败。", "",
              "探针主分析每个 probe 只占一行，默认 30 秒窗；10/20 秒仅用于窗口敏感性，不增加主分析样本量。探针锚定试次被严格排除。", "",
              "## Q1 / Q2", "",
              f"Q1 名义四分类模型可估计结果行数：{len(q1_results)}；Q2 有序重复测量 GEE 可估计结果行数：{len(q2_results)}。", "",
