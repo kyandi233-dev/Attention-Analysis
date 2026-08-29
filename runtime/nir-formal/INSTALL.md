@@ -29,16 +29,22 @@ git pull --ff-only
 
 ## 2. 创建独立环境
 
-当前 NVIDIA 工作站实际使用的 Conda 路径环境为：
+当前 NVIDIA 工作站正式 NIR 使用的 Conda 路径环境为：
 
 ```text
-D:\conda_envs\eye-ai
+D:\CondaEnvs\nir-nvidia
+```
+
+正式 launcher 会直接调用这个环境的解释器，不依赖当前 shell 的 PATH，也不使用裸 `python`：
+
+```text
+D:\CondaEnvs\nir-nvidia\python.exe
 ```
 
 已有成功环境时优先直接激活，不要无理由重建：
 
 ```powershell
-conda activate D:\conda_envs\eye-ai
+conda activate D:\CondaEnvs\nir-nvidia
 python --version
 where.exe python
 ```
@@ -46,8 +52,8 @@ where.exe python
 若新电脑完全没有该环境，推荐 Python 3.10/3.11 的独立 Conda 环境。示例：
 
 ```powershell
-conda create -p D:\conda_envs\eye-ai python=3.11 -y
-conda activate D:\conda_envs\eye-ai
+conda create -p D:\CondaEnvs\nir-nvidia python=3.11 -y
+conda activate D:\CondaEnvs\nir-nvidia
 ```
 
 先按目标 NVIDIA 驱动/CUDA 环境安装可用的 PyTorch CUDA 版本，再进入 runtime 安装其余依赖：
@@ -132,7 +138,7 @@ python run_formal_batch.py --dry-run
 但当前 RITnet 四分类补跑应使用自己的 batch dry-run：
 
 ```powershell
-python run_ritnet_fullclass_batch.py `
+& "D:\CondaEnvs\nir-nvidia\python.exe" run_ritnet_fullclass_batch.py `
   --output "D:\Project\厚粲杯\11_数据\01_Attention-Analysis_nvidia-cuda_formal_NIR" `
   --device 0 `
   --postprocess-workers 4 `
@@ -176,7 +182,7 @@ python run_formal_batch.py --subjects sub-031 --force
 首名 RTX 5070 完整被试验收：
 
 ```powershell
-python run_ritnet_fullclass_batch.py `
+& "D:\CondaEnvs\nir-nvidia\python.exe" run_ritnet_fullclass_batch.py `
   --output "D:\Project\厚粲杯\11_数据\01_Attention-Analysis_nvidia-cuda_formal_NIR" `
   --subjects "sub-XXX" `
   --device 0 `
@@ -196,6 +202,24 @@ python run_ritnet_fullclass_batch.py `
 ```
 
 production 不加 `--validate-pupil`，使用 labels-only CUDA inference；不重新跑 YOLO。
+
+正式生产也可以直接调用固定 launcher。它会枚举 Conda 和
+`site-packages\nvidia\*\bin` DLL 目录供子进程继承，并在启动前强制检查
+`CUDAExecutionProvider`；错误解释器、CUDA 不可用或 CPU fallback 都会 fail-closed：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File ".\runtime\nir-formal\run_nvidia_final_topology.ps1" `
+  -Config ".\runtime\nir-formal\config.yaml" `
+  -Device 0
+```
+
+当前正式输出根为：
+
+```text
+D:\Project\厚粲杯\11_数据\01_Attention-Analysis_nvidia-cuda_formal_NIR
+```
+
+不要用旧的 `.venv_nir_gpu` launcher，也不要另开第二条 GPU 队列。
 
 ## 7. 单被试完整主链诊断
 

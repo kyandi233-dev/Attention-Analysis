@@ -49,7 +49,11 @@ NIR timestamp CSV 第一列是采集设备的 `capture_frame_idx`，不是 AVI �
 
 ## 环境安装
 
-新 NVIDIA/CUDA 机器从 [`INSTALL.md`](INSTALL.md) 开始。安装完成后，在本目录执行：
+新 NVIDIA/CUDA 机器从 [`INSTALL.md`](INSTALL.md) 开始。当前正式 full-class
+队列固定使用 `D:\CondaEnvs\nir-nvidia\python.exe` 和
+`run_nvidia_final_topology.ps1`；不要用裸 `python` 或历史 `.venv_nir_gpu` 启动。
+
+安装完成后，在本目录执行：
 
 ```powershell
 python -m pytest tests -q

@@ -257,10 +257,10 @@ python run_formal_batch.py --dry-run
 
 `nir_supervisor.py` 是本机 NVIDIA 正式批次的低频监督器。它每 30 秒检查一次，但只在状态变化、CUDA/未处理失败、孤立状态、重复实例或全部完成时写入事件，不连续刷屏。
 
-启动方式（必须使用项目 N 卡环境）：
+启动方式（监督器只读；必须使用项目 N 卡 Conda 环境）：
 
 ```powershell
-python nir_supervisor.py `
+& "D:\CondaEnvs\nir-nvidia\python.exe" nir_supervisor.py `
   --output-root "D:\Project\厚粲杯\11_数据\01_Attention-Analysis_nvidia-cuda_formal_NIR" `
   --runtime "D:\Project\厚粲杯\08_算法\01_Attention-Analysis_nvidia-cuda\runtime\nir-formal" `
   --interval 30
@@ -273,3 +273,8 @@ python nir_supervisor.py `
 - 无有效进程时，最多自动重试孤立状态或可恢复 CUDA/未处理失败 2 次；
 - 不强制终止有效进程，不手工修改 `completion.json`，不删除已有结果；
 - 其他异常只记录事件，交由执行者根据事件内容处理。
+
+正式生产 launcher 与监督器是两件事：launcher 负责启动唯一正式 batch，监督器只
+读取进程、锁和 completion 状态。关闭监督窗口不会影响已脱离终端运行的正式队列。
+当前正式 launcher 固定为 `D:\CondaEnvs\nir-nvidia\python.exe`；旧的
+`.venv_nir_gpu` 路径属于历史实现，不得用于新的正式启动。

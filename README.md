@@ -21,7 +21,7 @@
 
 | 任务 | NVIDIA Conda 环境 | 主要入口 | 当前状态 |
 |---|---|---|---|
-| NIR 正式 CUDA runtime / RITnet full-class | `D:\conda_envs\eye-ai` | `runtime/nir-formal/` | 已存在、已用于 RTX 5070；当前 full-class 队列约 72 人，以 dry-run discovery 为准 |
+| NIR 正式 CUDA runtime / RITnet full-class | `D:\CondaEnvs\nir-nvidia` | `runtime/nir-formal/` | 当前正式 launcher 固定使用该 Conda 解释器；队列进度见 `docs/020-nir/NIR_STATUS_TODAY.md` |
 | Behavior 正式 SART BB | `D:\conda_envs\attention-behavior` | `scripts/sart_formal_analysis.py` | **需要首次创建**；正式 v3.1.3 BB |
 | NIR × Behavior 对齐 | `D:\conda_envs\attention-behavior` | `scripts/nir_behavior_alignment.py` | 与 Behavior 共用环境；schema 2 已建立，当前 config 仍有 prototype gate |
 | RGB Motion / Pose / sampling / QC | `D:\conda_envs\attention-rgb` | `scripts/rgb_analysis.py` | **需要首次创建**；共享科学层已进入主线 |
@@ -169,18 +169,18 @@ git push origin nvidia-cuda
 
 # 5. 第一次搭建 Conda 环境
 
-## 5.1 NIR：沿用已有 `eye-ai`
+## 5.1 NIR：沿用已有 `nir-nvidia`
 
 当前 RTX 5070 已经有：
 
 ```text
-D:\conda_envs\eye-ai
+D:\CondaEnvs\nir-nvidia
 ```
 
 激活：
 
 ```powershell
-conda activate "D:\conda_envs\eye-ai"
+conda activate "D:\CondaEnvs\nir-nvidia"
 where.exe python
 python --version
 ```
@@ -365,7 +365,7 @@ GPU == NVIDIA GeForce RTX 5070
 每次进入：
 
 ```powershell
-conda activate "D:\conda_envs\eye-ai"
+conda activate "D:\CondaEnvs\nir-nvidia"
 cd "D:\Project\厚粲杯\08_算法\01_Attention-Analysis_nvidia-cuda\runtime\nir-formal"
 ```
 
@@ -746,7 +746,7 @@ Py-Feat 2.1.1 Detectorv2 scientific core
 cd "D:\Project\厚粲杯\08_算法\01_Attention-Analysis_nvidia-cuda"
 git status --short --branch
 git pull --ff-only
-conda activate "D:\conda_envs\eye-ai"
+conda activate "D:\CondaEnvs\nir-nvidia"
 cd runtime\nir-formal
 python run_ritnet_fullclass_batch.py --output "D:\Project\厚粲杯\11_数据\01_Attention-Analysis_nvidia-cuda_formal_NIR" --device 0 --postprocess-workers 4 --dry-run
 ```

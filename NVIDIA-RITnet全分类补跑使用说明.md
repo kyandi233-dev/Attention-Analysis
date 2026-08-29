@@ -34,7 +34,7 @@ QC stride: 3000 frames + phase anchors + bounded anomaly samples
 
 ```text
 Conda 环境：
-D:\conda_envs\eye-ai
+D:\CondaEnvs\nir-nvidia
 
 仓库根目录：
 D:\Project\厚粲杯\08_算法\01_Attention-Analysis_nvidia-cuda
@@ -53,12 +53,13 @@ D:\Project\厚粲杯\11_数据\01_Attention-Analysis_nvidia-cuda_formal_NIR
 推荐 Anaconda PowerShell Prompt 或已经完成 Conda 初始化的 VS Code PowerShell。
 
 ```powershell
-conda activate D:\conda_envs\eye-ai
+conda activate D:\CondaEnvs\nir-nvidia
 where.exe python
 python --version
 ```
 
-`where.exe python` 的首个 Python 应位于 `D:\conda_envs\eye-ai\`。如果不是，先解决环境激活问题。
+`where.exe python` 的首个 Python 应位于 `D:\CondaEnvs\nir-nvidia\`。正式 launcher 会直接
+调用 `D:\CondaEnvs\nir-nvidia\python.exe`，并在子进程继承的 PATH 中注入 Conda/NVIDIA DLL 目录。
 
 ---
 
@@ -378,7 +379,7 @@ docs/030-behavior/035-NIR与正式SART行为数据对齐分析方法.md
 已经确认本机环境存在时，按以下顺序执行：
 
 ```powershell
-conda activate D:\conda_envs\eye-ai
+conda activate D:\CondaEnvs\nir-nvidia
 
 cd "D:\Project\厚粲杯\08_算法\01_Attention-Analysis_nvidia-cuda"
 git switch nvidia-cuda
