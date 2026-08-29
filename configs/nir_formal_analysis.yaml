@@ -1,7 +1,7 @@
 pipeline:
   name: attention-analysis-nir-formal-analysis-tables-pupil-only
-  version: 2.0.0
-  schema_version: 2
+  version: 2.1.0
+  schema_version: 3
   signal_semantics: pupil_geometry_only
   timezone: Asia/Shanghai
 
@@ -9,6 +9,9 @@ paths:
   behavior_config: "configs/behavior_formal.yaml"
   analysis_ready_root: "../Attention-Analysis-local/nir-behavior-v2/10_analysis_ready"
   output_root: "../Attention-Analysis-local/nir-behavior-v2/11_analysis_tables"
+  # Existing reconstructed SART visual-property table. The strict pre-probe
+  # exposure builder uses only stimuli that occurred before the anchoring probe.
+  stimulus_visual_table: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v1/stimulus_visual_properties.csv"
 
 sessions:
   # Empty = discover completed pupil-only session folders in 10_analysis_ready.
@@ -19,10 +22,13 @@ behavior_qc:
   carryover_candidate_ms: 200
 
 tracks:
+  # Legacy reference signal for the existing 11_analysis_tables interface.
+  # This is NOT a scientific declaration that geom-mean diameter is the final
+  # winning pupil metric; candidate sidecars are validated separately first.
   primary: binocular_primary
   include:
     - name: binocular_primary
-      family: primary
+      family: primary_reference
       value_column: binocular_pupil
       valid_column: null
       source_mode_column: binocular_source_mode
@@ -56,6 +62,17 @@ tracks:
       value_column: right_strict_centered_pupil
       valid_column: right_pupil_valid_strict
       source_mode_column: null
+
+candidate_metrics:
+  source_stage: 10_analysis_ready_candidate_sidecar
+  final_endpoint_freeze: pending_real_data_scientific_review
+  outcome_pvalue_selection_allowed: false
+  compare_coverage: true
+  compare_within_between_structure: true
+  compare_redundancy: true
+  repeat_direction_requires_verified_visit_order: true
+  iris_fraction_candidate_allowed: false
+  pir_oar_allowed: false
 
 windows:
   trial:
@@ -124,6 +141,14 @@ windows:
 
 time_on_task:
   bin_sec: 1.0
+
+probe_contract:
+  strict_pre_event: true
+  require_trial_num_before_anchor: true
+  require_trial_onset_before_probe: true
+  anchoring_probe_trial_allowed: false
+  aggregate_actual_visual_exposure: true
+  future_visual_information_allowed: false
 
 analysis_policy:
   analysis_ready_is_only_nir_input: true
