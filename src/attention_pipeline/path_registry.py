@@ -11,6 +11,7 @@ from typing import Any
 import yaml
 
 _ENV_PATTERN = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*\}|\$[A-Za-z_][A-Za-z0-9_]*")
+SUPPORTED_PATH_REGISTRY_VERSIONS = frozenset({1, 2, 3})
 
 
 def _canonical_digest(data: dict[str, Any]) -> str:
@@ -65,12 +66,7 @@ class PathRegistry:
         return [_resolve_one(item, self.path.parent) for item in values]
 
     def resolve_spec(self, value: str | Path, *, base_dir: Path | None = None) -> Path:
-        """
-        Resolve a normal path or ``@path:key::relative/file`` reference.
-
-        This keeps per-session source manifests portable even when different
-        sessions live below different producer roots on each machine.
-        """
+        """Resolve a normal path or ``@path:key::relative/file`` reference."""
         text = str(value).strip()
         if text.startswith("@path:"):
             body = text[len("@path:"):]
@@ -86,12 +82,11 @@ class PathRegistry:
 
 
 def load_path_registry(path: str | Path | None = None) -> PathRegistry:
-    """
-    Load the machine-local path registry.
+    """Load the machine-local path registry.
 
-    If ``path`` is omitted, ``ATTENTION_ANALYSIS_PATHS_CONFIG`` is used. The
-    registry may contain absolute paths, paths relative to the registry file,
-    ``~``, and environment variables such as ``${FOCUSWAVE_FORMAL_RAW_ROOT}``.
+    Versions 1-3 share the same structural contract (a ``paths`` mapping); later
+    versions only added logical keys/documentation. Unknown future versions fail
+    closed so a genuinely incompatible schema cannot be consumed silently.
     """
     source = path or os.environ.get("ATTENTION_ANALYSIS_PATHS_CONFIG")
     if source is None:
@@ -105,8 +100,11 @@ def load_path_registry(path: str | Path | None = None) -> PathRegistry:
     if not isinstance(data, dict):
         raise ValueError("路径注册表根节点必须是字典")
     version = data.get("version")
-    if version != 1:
-        raise ValueError(f"不支持的路径注册表版本: {version!r}; 当前要求 version: 1")
+    if version not in SUPPORTED_PATH_REGISTRY_VERSIONS:
+        raise ValueError(
+            f"不支持的路径注册表版本: {version!r}; 当前支持 "
+            f"{sorted(SUPPORTED_PATH_REGISTRY_VERSIONS)}"
+        )
     if not isinstance(data.get("paths"), dict):
         raise ValueError("路径注册表必须包含 paths 字典")
     return PathRegistry(config_path, data, _canonical_digest(data))
