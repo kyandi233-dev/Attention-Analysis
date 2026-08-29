@@ -1,8 +1,9 @@
-"""Build formal NIR downstream analysis tables from 10_analysis_ready.
+"""Build formal pupil-only NIR downstream tables from 10_analysis_ready.
 
-This command never reads frozen production NIR directly. It consumes the
-analysis-ready frame tables plus formal FocusWave behavior files and writes
-analysis-specific derived tables under 11_analysis_tables.
+This command never reads production NIR directly. It consumes the authoritative
+pupil-only analysis-ready layer plus the already-produced formal Behavior tables
+and writes 11_analysis_tables. Long overlapping windows are preserved for
+multiscale description but receive an explicit dependence audit.
 """
 from __future__ import annotations
 
@@ -10,7 +11,7 @@ import argparse
 import json
 from pathlib import Path
 
-from attention_pipeline.nir_formal_analysis.tables import run_cohort
+from attention_pipeline.nir_formal_analysis.pupil_tables import run_cohort
 
 
 def parse_args() -> argparse.Namespace:
@@ -18,7 +19,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default="configs/nir_formal_analysis.yaml")
     parser.add_argument(
         "--subjects",
-        help="Optional comma-separated subject override, e.g. sub-031,sub-032",
+        help="Optional comma-separated session-key override.",
     )
     parser.add_argument(
         "--force",
@@ -30,16 +31,16 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    subjects = None
+    sessions = None
     if args.subjects:
-        subjects = [item.strip() for item in args.subjects.split(",") if item.strip()]
+        sessions = [item.strip() for item in args.subjects.split(",") if item.strip()]
     result = run_cohort(
         Path(args.config),
-        subjects=subjects,
+        subjects=sessions,
         force=bool(args.force),
     )
     print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
-    return 0 if int(result.get("n_subjects_failed", 0)) == 0 else 2
+    return 0 if int(result.get("n_sessions_failed", 0)) == 0 else 2
 
 
 if __name__ == "__main__":
