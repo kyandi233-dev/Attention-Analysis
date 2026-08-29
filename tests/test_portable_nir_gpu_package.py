@@ -34,7 +34,7 @@ def test_formal_runtime_config_is_current_amd_directml_baseline():
     assert config["tracking"]["method"] == "none"
     assert config["ritnet"]["batch_size"] == 16
     assert config["ritnet"]["precision"] == "fp32"
-    assert config["package"]["version"] == "0.1.1"
+    assert config["package"]["version"] == "0.2.0"
     assert config["batch"]["subjects"]["exclude"] == ["sub-9504"]
     assert "amd-directml" in config["output"]["root"]
     assert "amd-directml" in config["batch"]["output_root"]
