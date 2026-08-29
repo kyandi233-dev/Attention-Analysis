@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 
 from attention_pipeline.nir_pipeline_validation.scientific_completion import (
-    aggregate_probe_visual_exposure,
     decompose_pupil_within_between,
     dynamic_feature_admission_registry,
     fit_visual_adjustment_models,
@@ -27,50 +26,7 @@ def test_within_between_decomposition_separates_participant_mean_and_deviation()
     )
 
 
-def test_probe_visual_exposure_excludes_anchor_and_future_trials():
-    probe = pd.DataFrame(
-        {
-            "session_id": ["s1"],
-            "analysis_group_token": ["p1"],
-            "block_num": [1],
-            "probe_index_global": [1],
-            "probe_index_in_block": [1],
-            "probe_trial_num": [4],
-            "probe_onset_ms": [4000.0],
-            "window_name": ["pre_3s"],
-            "window_start_ms": [1000.0],
-            "window_end_ms": [4000.0],
-        }
-    )
-    trials = pd.DataFrame(
-        {
-            "session_id": ["s1"] * 5,
-            "analysis_group_token": ["p1"] * 5,
-            "block_num": [1] * 5,
-            "trial_num": [1, 2, 3, 4, 5],
-            "absolute_onset_time": [0.0, 1000.0, 2000.0, 3000.0, 4000.0],
-            "stimulus_name": ["a", "b", "c", "anchor", "future"],
-            "stimulus_size": [1] * 5,
-        }
-    )
-    visual = pd.DataFrame(
-        {
-            "stimulus_name": ["a", "b", "c", "anchor", "future"],
-            "stimulus_size": [1] * 5,
-            "brightness": [10.0, 20.0, 30.0, 999.0, 9999.0],
-            "contrast": [1.0, 2.0, 3.0, 99.0, 999.0],
-        }
-    )
-    out = aggregate_probe_visual_exposure(probe, trials, visual)
-    row = out.iloc[0]
-    # Only trials 2 and 3 are inside [1000, 4000) and before anchor trial 4.
-    assert row["visual_exposure_trial_n"] == 2
-    assert row["probe_exposure__brightness__mean"] == 25.0
-    assert bool(row["strict_pre_probe_verified"])
-    assert bool(row["anchoring_probe_trial_excluded"])
-
-
-def test_visual_adjustment_models_are_participant_clustered_and_keep_failures_separate():
+def test_visual_adjustment_models_are_participant_clustered_and_use_only_previous_visual():
     rng = np.random.default_rng(7)
     windows = []
     trials = []
@@ -87,7 +43,8 @@ def test_visual_adjustment_models_are_participant_clustered_and_keep_failures_se
                     "track": "binocular_primary",
                     "window_name": "pre_5s",
                     "pupil_median": 0.5 * visual + rng.normal(0, 0.2),
-                    "previous_visual__brightness__mean": visual,
+                    "previous_visual__central_rel_lum_mean__mean": visual,
+                    "current_visual__central_rel_lum_mean__mean": 9999.0,
                     "pupil_valid_fraction": 0.9,
                     "internal_coverage_fraction": 0.95,
                 }
@@ -109,6 +66,7 @@ def test_visual_adjustment_models_are_participant_clustered_and_keep_failures_se
     assert set(result["model_stage"]) == {"unadjusted", "visual_time_quality_adjusted"}
     assert set(result["participant_group_n"]) == {8}
     assert not result["current_trial_visual_used"].any()
+    assert not result["controls"].str.contains("current_visual", regex=False).any()
 
 
 def test_dynamic_registry_fails_closed_for_recovery_and_frequency():
