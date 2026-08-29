@@ -47,7 +47,8 @@ jobs:
             src/attention_pipeline/nir_pipeline_validation/pupil_figures.py \
             src/attention_pipeline/behavior_formal/science_v3.py \
             src/attention_pipeline/behavior_formal/science_v3_extensions.py \
-            src/attention_pipeline/behavior_formal/science_v3_figures.py
+            src/attention_pipeline/behavior_formal/science_v3_figures.py \
+            src/attention_pipeline/behavior_formal/reporting_contract.py
 
       - name: Run formal adapter and ledger contract tests
         run: |
@@ -56,6 +57,7 @@ jobs:
             tests/test_nir_adapter_blockers.py \
             tests/test_behavior_science_v3_contract.py \
             tests/test_behavior_science_v3_extensions.py \
+            tests/test_behavior_reporting_contract.py \
             tests/test_nir_pupil_validation_contract.py \
             tests/test_nir_formal_failure_gates.py \
             tests/test_nir_temporal_brightness_gate.py
