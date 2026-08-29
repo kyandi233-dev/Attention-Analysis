@@ -18,6 +18,7 @@ from attention_pipeline.nir_analysis_ready import (
     run_candidate_materialization,
     run_materialization,
 )
+from attention_pipeline.nir_formal_analysis.adjustment_audit import run_adjustment_audit
 from attention_pipeline.nir_formal_analysis.candidate_validation import run_candidate_validation
 from attention_pipeline.nir_formal_analysis.event_response import run_event_response_candidates
 from attention_pipeline.nir_formal_analysis.probe_contract import run_probe_contract_repair
@@ -133,6 +134,12 @@ def main() -> int:
         )
         result["reference_adjusted_models"] = reference_models
         if reference_models.get("status") == "blocked":
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 2
+
+        adjustment_audit = run_adjustment_audit(Path(args.tables_config))
+        result["adjustment_audit"] = adjustment_audit
+        if adjustment_audit.get("status") == "not_estimable":
             print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
             return 2
 
