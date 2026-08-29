@@ -1,6 +1,6 @@
 pipeline:
   name: focuswave-formal-multimodal-v2
-  version: 2.2.2
+  version: 2.2.3
   schema_version: 4
   focuswave_release_provenance: "v3.1.3-v3.1.4_science_equivalent"
   evidence_repo: "kyandi233-dev/FocusWave-Formal-Analysis"
@@ -56,6 +56,18 @@ identity:
   unresolved_participant_inference_status: not_estimable
   regenerate_identity_and_folds_after_cohort_append: true
   prediction_preprocessing_inside_training_fold: true
+  missing_modality_does_not_imply_identity_unresolved: true
+
+modality_availability:
+  cohort_defined_independently_of_modalities: true
+  missing_modality_does_not_drop_session_from_other_modalities: true
+  missing_modality_does_not_change_participant_identity: true
+  missing_values_must_not_be_zero_imputed: true
+  per_modality_denominator_report_required: true
+  missing_status_values: [not_recorded, source_missing, structurally_invalid, not_estimable]
+  future_fusion_join: left_on_governed_session_then_apply_modality_availability_mask
+  complete_case_multimodal_subset_only_for_explicit_paired_analysis: true
+  note: "A known participant/session may legitimately lack RGB, mmWave or another modality. Availability/QC is a modality property, never a new participant-identity state and never a reason to shrink Behavior or other single-modality cohorts."
 
 behavior:
   status: active_authoritative
@@ -106,6 +118,7 @@ nir:
   analysis_tables_output_path_key: nir_analysis_tables_root
   production_source_contract: fullclass-final
   canonical_adapter_contract: fullclass-final-pupil-only-v2
+  source_manifest_is_availability_index_not_cohort_definition: true
   stage_chain:
     - 10_analysis_ready
     - 11_analysis_tables
@@ -181,12 +194,15 @@ rgb:
   deferred_components: [perclos, action_units, emotion, rppg, complex_prediction, multimodal_fusion]
   blink_event_status: algorithm_defined_candidate_not_manually_validated_truth
   motion_pose_blink_combined_risk_score_allowed: false
+  missing_source_policy: keep_governed_session_and_record_not_estimable
+  missing_source_must_not_shrink_other_modalities: true
 
 mmwave:
   authority_repository: "greenboo26/focuswave-multimodal-attention-analysis"
   role: external_producer_then_future_formal_ingest
   do_not_duplicate_producer_engine_here: true
   structural_missing_policy: "explicit_missing_not_zero_not_success"
+  missing_session_must_not_shrink_behavior_rgb_or_nir: true
   no_external_ecg_rsp_validation_claim: true
   hrv_core_claim_allowed: false
 
