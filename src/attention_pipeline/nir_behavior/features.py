@@ -85,25 +85,69 @@ def successive_diff_mad(values: np.ndarray) -> float | None:
     return mad(np.diff(vals))
 
 
-def successive_diff_rate_mad_per_sec(
+def _successive_rates_per_sec(
     times_ms: np.ndarray, values: np.ndarray
-) -> float | None:
+) -> np.ndarray:
     times = np.asarray(times_ms, dtype=float)
     vals = np.asarray(values, dtype=float)
     valid = np.isfinite(times) & np.isfinite(vals)
     times = times[valid]
     vals = vals[valid]
     if vals.size < 2:
-        return None
+        return np.asarray([], dtype=float)
     order = np.argsort(times)
     times = times[order]
     vals = vals[order]
     dt = np.diff(times) / 1000.0
     dv = np.diff(vals)
-    valid_dt = np.isfinite(dt) & (dt > 0)
+    valid_dt = np.isfinite(dt) & np.isfinite(dv) & (dt > 0)
     if not valid_dt.any():
-        return None
-    return mad(dv[valid_dt] / dt[valid_dt])
+        return np.asarray([], dtype=float)
+    return dv[valid_dt] / dt[valid_dt]
+
+
+def successive_diff_rate_mad_per_sec(
+    times_ms: np.ndarray, values: np.ndarray
+) -> float | None:
+    rates = _successive_rates_per_sec(times_ms, values)
+    return mad(rates) if rates.size else None
+
+
+def directional_velocity_features(
+    times_ms: np.ndarray, values: np.ndarray
+) -> dict[str, Any]:
+    """Robust dilation/constriction candidates from observed successive rates.
+
+    Positive rates are dilation; negative rates are constriction and are
+    reported as positive magnitudes.  At least two valid successive-rate pairs
+    are required before this dynamic family is admitted.  A missing directional
+    median with an ``estimable`` status means no steps in that direction were
+    observed, not a model failure.
+    """
+    rates = _successive_rates_per_sec(times_ms, values)
+    if rates.size < 2:
+        return {
+            "dynamic_velocity_status": "not_estimable_low_valid_pairs",
+            "dynamic_velocity_pair_n": int(rates.size),
+            "dilation_step_n": 0,
+            "constriction_step_n": 0,
+            "dilation_velocity_median_per_sec": None,
+            "constriction_velocity_median_per_sec": None,
+        }
+    dilation = rates[rates > 0]
+    constriction = -rates[rates < 0]
+    return {
+        "dynamic_velocity_status": "estimable",
+        "dynamic_velocity_pair_n": int(rates.size),
+        "dilation_step_n": int(dilation.size),
+        "constriction_step_n": int(constriction.size),
+        "dilation_velocity_median_per_sec": (
+            float(np.median(dilation)) if dilation.size else None
+        ),
+        "constriction_velocity_median_per_sec": (
+            float(np.median(constriction)) if constriction.size else None
+        ),
+    }
 
 
 def summarize_signal(
@@ -127,13 +171,21 @@ def summarize_signal(
             "slope_per_sec",
             "diff_mad",
             "diff_rate_mad_per_sec",
+            "peak_to_trough",
+            "dilation_velocity_median_per_sec",
+            "constriction_velocity_median_per_sec",
         ):
             result[f"{prefix}_{suffix}"] = None
+        result[f"{prefix}_dynamic_velocity_status"] = "not_estimable_no_valid_samples"
+        result[f"{prefix}_dynamic_velocity_pair_n"] = 0
+        result[f"{prefix}_dilation_step_n"] = 0
+        result[f"{prefix}_constriction_step_n"] = 0
         return result
 
     order = np.argsort(times)
     times = times[order]
     vals = vals[order]
+    velocity = directional_velocity_features(times, vals)
     result.update(
         {
             f"{prefix}_median": float(np.median(vals)),
@@ -148,6 +200,19 @@ def summarize_signal(
             f"{prefix}_diff_rate_mad_per_sec": successive_diff_rate_mad_per_sec(
                 times, vals
             ),
+            f"{prefix}_peak_to_trough": (
+                float(np.max(vals) - np.min(vals)) if vals.size >= 2 else None
+            ),
+            f"{prefix}_dynamic_velocity_status": velocity["dynamic_velocity_status"],
+            f"{prefix}_dynamic_velocity_pair_n": velocity["dynamic_velocity_pair_n"],
+            f"{prefix}_dilation_step_n": velocity["dilation_step_n"],
+            f"{prefix}_constriction_step_n": velocity["constriction_step_n"],
+            f"{prefix}_dilation_velocity_median_per_sec": velocity[
+                "dilation_velocity_median_per_sec"
+            ],
+            f"{prefix}_constriction_velocity_median_per_sec": velocity[
+                "constriction_velocity_median_per_sec"
+            ],
         }
     )
     return result
