@@ -1,12 +1,13 @@
 pipeline:
   name: attention-analysis-rgb-formal-downstream
-  version: 1.0.0
-  schema_version: 1
+  version: 2.0.0
+  schema_version: 2
   producer_policy: consume_preserved_raw_only
   rerun_expensive_models: false
   rppg_in_scope: false
 
 paths:
+  # All machine-specific roots are resolved through configs/paths.local.yaml.
   raw_root: "@path:rgb_raw_output_root"
   analysis_ready_root: "@path:rgb_analysis_ready_root"
   output_root: "@path:rgb_analysis_tables_root"
@@ -16,6 +17,9 @@ identity:
   repeat_registry_path_key: repeat_registry
   questionnaire_path_key: questionnaire_derived_data
   participant_disjoint_prediction: true
+  cohort_defines_session_membership: true
+  questionnaire_must_not_define_cohort: true
+  participant_key_must_never_be_inferred_from_session_number: true
 
 inputs:
   face_suffix: "_face_raw.parquet"
@@ -25,6 +29,7 @@ inputs:
     - "_eye_features.parquet"
     - "eye_features.parquet"
   allow_missing_modality_file: true
+  missing_rgb_session_is_modality_missingness_not_cohort_exclusion: true
 
 ocular:
   ear_landmarks:
@@ -43,7 +48,7 @@ ocular:
     maximum_closed_duration_ms: 1000
   perclos_candidate:
     closure_threshold_fraction: 0.80
-    status: support_alertness_candidate_not_attention_ground_truth
+    status: supportive_alertness_candidate_not_attention_ground_truth
 
 windows:
   probe_pre_seconds: [10, 20, 30]
@@ -55,12 +60,29 @@ candidate_validation:
   redundancy_abs_spearman: 0.90
   final_endpoint_freeze: pending_real_data_scientific_review
   pvalue_feature_selection_allowed: false
+  require_within_between: true
+  require_verified_repeat_visit_sensitivity: true
+
+science:
+  participant_cluster_bootstrap_replicates: 1000
+  participant_cluster_bootstrap_seed: 20260830
+  prediction_folds: 5
+  minimum_time_bins_for_slope: 3
+  inference_models_before_endpoint_freeze_allowed: false
+  prediction_models_before_endpoint_freeze_allowed: false
+  prediction_preprocessing_train_fold_only: true
 
 figures:
   internal_title_allowed: false
   caption_is_external: true
   chinese_axes_legends_required: true
   metric_scale_coverage_audit_required: true
+  required_views:
+    - session_distribution
+    - block_b1_b2
+    - time_on_task
+    - probe_q1_nominal
+    - probe_q2_ordinal
 
 analysis_policy:
   qc_flag_first_filter_later: true
@@ -70,3 +92,5 @@ analysis_policy:
   participant_is_inference_cluster: true
   inference_and_prediction_separate: true
   model_failures_must_be_written: true
+  missing_modality_must_be_reported_not_silently_dropped: true
+  multimodal_fusion_status: deferred_not_release_ready
