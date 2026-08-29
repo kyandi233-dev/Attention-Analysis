@@ -1,7 +1,7 @@
 pipeline:
   name: attention-analysis-rgb-formal-downstream
-  version: 2.0.0
-  schema_version: 2
+  version: 2.1.0
+  schema_version: 3
   producer_policy: consume_preserved_raw_only
   rerun_expensive_models: false
   rppg_in_scope: false
@@ -16,7 +16,11 @@ identity:
   cohort_manifest_path_key: cohort_manifest
   repeat_registry_path_key: repeat_registry
   questionnaire_path_key: questionnaire_derived_data
-  participant_disjoint_prediction: true
+  formal_cluster_key: participant_group_id
+  identity_reconciliation_function: reconcile_cohort_identity
+  allow_validated_legacy_repeat_group: true
+  forbid_session_id_participant_fallback: true
+  unresolved_identity_blocks_group_inference_not_session_qc: true
   cohort_defines_session_membership: true
   questionnaire_must_not_define_cohort: true
   participant_key_must_never_be_inferred_from_session_number: true
@@ -25,11 +29,44 @@ inputs:
   face_suffix: "_face_raw.parquet"
   pose_suffix: "_pose_landmarks.parquet"
   motion_suffix: "_motion_raw.parquet"
-  derived_eye_suffix_candidates:
-    - "_eye_features.parquet"
-    - "eye_features.parquet"
   allow_missing_modality_file: true
   missing_rgb_session_is_modality_missingness_not_cohort_exclusion: true
+  face_parquet_column_projection_required: true
+
+execution:
+  default_mode: lightweight_motion_pose_blink_qc
+  motion_only_can_run_first: true
+  pose_confirmation_active: true
+  pose_confirmation_nonblocking: true
+  blink_candidates_active: true
+  blink_nonblocking: true
+  extended_candidate_validation_active: false
+  participant_bootstrap_active: false
+  prediction_cv_active: false
+  large_figure_suite_active: false
+  formal_multimodal_fusion_active: false
+
+motion_qc:
+  body_motion_measure: motion_energy
+  exposure_control_measure: gray_mean_delta
+  keep_tracks_separate: true
+  combined_rgb_risk_score_allowed: false
+  threshold_may_use_mmwave_error: false
+  threshold_may_use_behavior_significance: false
+  threshold_may_use_model_performance: false
+
+pose_confirmation:
+  minimum_visibility: 0.5
+  minimum_presence: 0.5
+  gap_reset_ms: 300
+  signed_lateral_direction: true
+  signed_vertical_direction: true
+  radial_candidate_components:
+    - world_z
+    - shoulder_width
+    - pose_bbox_area
+  radial_candidate_is_physical_displacement: false
+  role: auxiliary_mmwave_motion_qc_candidate
 
 ocular:
   ear_landmarks:
@@ -42,20 +79,34 @@ ocular:
     fallback: all_valid_top30_percent_median
     fallback_is_scientific_baseline: false
   blink_candidate:
-    # Candidate only. Final threshold must be frozen after representative visual/distribution QC.
+    event_type: algorithm_defined_blink_candidate
     relative_openness_threshold: 0.20
     minimum_closed_duration_ms: 50
     maximum_closed_duration_ms: 1000
+    gap_reset_ms: 250
+    maximum_bilateral_relative_difference: 0.35
+    require_left_eye_qc: true
+    require_right_eye_qc: true
+    bridge_timestamp_gap: false
+    bridge_multiface_ambiguity: false
+    bridge_primary_track_reset: false
+    manual_visual_validation_performed: false
   perclos_candidate:
-    closure_threshold_fraction: 0.80
-    status: supportive_alertness_candidate_not_attention_ground_truth
+    active: false
+    status: disabled_deferred
+    reason: no validated closure-event contract
+    historical_closure_threshold_fraction: 0.80
 
+# Historical/deferred analysis settings are retained for provenance. They are not executed by
+# the default lightweight runner and require an explicit future contract before reactivation.
 windows:
   probe_pre_seconds: [10, 20, 30]
   primary_probe_pre_seconds: 30
   time_on_task_bin_seconds: 10
 
 candidate_validation:
+  active: false
+  status: disabled_deferred
   minimum_coverage: 0.80
   redundancy_abs_spearman: 0.90
   final_endpoint_freeze: pending_real_data_scientific_review
@@ -64,6 +115,8 @@ candidate_validation:
   require_verified_repeat_visit_sensitivity: true
 
 science:
+  active_by_default: false
+  status: disabled_deferred
   participant_cluster_bootstrap_replicates: 1000
   participant_cluster_bootstrap_seed: 20260830
   prediction_folds: 5
@@ -73,6 +126,8 @@ science:
   prediction_preprocessing_train_fold_only: true
 
 figures:
+  active_by_default: false
+  status: disabled_deferred
   internal_title_allowed: false
   caption_is_external: true
   chinese_axes_legends_required: true
@@ -84,12 +139,37 @@ figures:
     - probe_q1_nominal
     - probe_q2_ordinal
 
+automated_qc:
+  manual_video_or_image_review_required: false
+  required_audits:
+    - coverage
+    - timestamp_continuity
+    - multiple_faces
+    - primary_face_track_reset
+    - left_eye_observability
+    - right_eye_observability
+    - bilateral_eye_consistency
+    - abnormal_distribution
+
+mmwave_interface:
+  create_rgb_mmwave_truth_table: false
+  overwrite_original_mmwave_results: false
+  blink_may_join_motion_pose_risk_score: false
+  future_required_tracks:
+    - original_mmwave_result
+    - rgb_strict_motion_exclusion_sensitivity
+    - rgb_continuous_motion_adjustment
+  formal_join_keys:
+    probe_window: [session_id, block_id, probe_id, window_name]
+    pure_time_window: [session_id, mmwave_window_id, window_start_unix_ms, window_end_unix_ms]
+
 analysis_policy:
   qc_flag_first_filter_later: true
   strict_pre_probe_no_anchor_trial: true
   future_information_allowed: false
   session_is_acquisition_unit: true
   participant_is_inference_cluster: true
+  inference_cluster_key: participant_group_id
   inference_and_prediction_separate: true
   model_failures_must_be_written: true
   missing_modality_must_be_reported_not_silently_dropped: true

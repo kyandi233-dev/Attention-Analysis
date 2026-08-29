@@ -1,9 +1,10 @@
-"""Authoritative formal RGB downstream orchestrator.
+"""Authoritative lightweight formal RGB downstream orchestrator.
 
-Consumes preserved RGB producer outputs only. The governed cohort defines session
-membership; RGB availability is a modality-coverage property and never redefines
-the cohort. Questionnaire/registry identity is overlaid through the shared formal
-identity contract. No expensive face/pose model is invoked here.
+Authority: ``scripts/rgb_formal_downstream.py -> run_rgb_formal_v2``.
+This downstream runner consumes preserved Parquet outputs only; it never reruns Face/Pose
+models and never writes to the mmWave result namespace. The active default contract is
+Motion Energy + exposure control, Pose confirmation/direction, and independent algorithm-
+defined Blink candidate events.
 """
 from __future__ import annotations
 
@@ -13,7 +14,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-import numpy as np
 import pandas as pd
 
 from attention_pipeline.config import load_config
@@ -25,33 +25,15 @@ from attention_pipeline.formal_analysis.identity_questionnaire import (
     reconcile_cohort_identity,
     validate_questionnaire_registry_consistency,
 )
-from .figures import generate_rgb_figure_pack
-from .pipeline import (
-    _find_subject_file,
-    _load_optional,
-    _subject_dir,
-    attach_behavior_context,
-    build_multiscale,
-    candidate_validation,
-    derive_face_features,
-    derive_motion_features,
-    derive_pose_features,
-)
-from .science import (
-    RGBScienceConfig,
-    build_repeat_visit_sensitivity,
-    build_time_on_task,
-    build_within_between,
-    model_contract_tables,
-    participant_cluster_bootstrap,
-    participant_exclusive_folds,
-)
+from .blink_candidates import derive_blink_candidates, read_face_projection
+from .motion_qc import derive_motion_qc
+from .pose_direction import derive_pose_direction
 
-RGB_FORMAL_RUNNER_VERSION = "rgb-formal-downstream-v2"
+RGB_FORMAL_RUNNER_VERSION = "rgb-formal-downstream-v2.1-lightweight"
 
 
 def _mkdirs(root: Path) -> dict[str, Path]:
-    result = {name: root / name for name in ("tables", "validation", "qc", "statistics", "prediction", "figures", "provenance")}
+    result = {name: root / name for name in ("tables", "qc", "provenance")}
     for path in result.values():
         path.mkdir(parents=True, exist_ok=True)
     return result
@@ -72,7 +54,42 @@ def _sha256_if_file(path: Path | None) -> str | None:
     return h.hexdigest()
 
 
+def _subject_dir(raw_root: Path, session_id: str) -> Path:
+    exact = raw_root / session_id
+    if exact.is_dir():
+        return exact
+    matches = [
+        path for path in raw_root.iterdir()
+        if path.is_dir() and canonical_session_id(path.name) == session_id
+    ] if raw_root.is_dir() else []
+    if len(matches) != 1:
+        raise FileNotFoundError(f"RGB subject directory unresolved for {session_id}: {matches}")
+    return matches[0]
+
+
+def _find_subject_file(subject_dir: Path, session_id: str, suffix: str) -> Path | None:
+    exact = subject_dir / f"{session_id}{suffix}"
+    if exact.is_file():
+        return exact
+    matches = sorted(subject_dir.glob(f"*{suffix}"))
+    return matches[0] if len(matches) == 1 else None
+
+
+def _session_source_dir(raw_root: Path, session: str) -> Path | None:
+    try:
+        return _subject_dir(raw_root, session)
+    except FileNotFoundError:
+        return None
+
+
 def _governed_identity(config) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Return reconciled identity without inventing session-level participants.
+
+    ``reconcile_cohort_identity`` is authoritative: participant_group_id may come from a
+    current participant_key or a validated, non-conflicting legacy repeat-participant group.
+    Unresolved identity is retained as unresolved and only blocks participant-level inference;
+    it does not delete the session from lightweight modality QC.
+    """
     identity_cfg = config.section("identity")
     cohort = load_cohort_manifest(
         config,
@@ -89,10 +106,25 @@ def _governed_identity(config) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame
     )
     consistency = validate_questionnaire_registry_consistency(questionnaire, registry)
     identity = reconcile_cohort_identity(included, registry)
-    if identity["participant_group_id"].isna().any():
-        missing = identity.loc[identity["participant_group_id"].isna(), "session_id"].tolist()
-        raise ValueError("RGB formal participant grouping unresolved: " + ", ".join(missing))
     return included, identity, questionnaire, consistency
+
+
+def participant_inference_gate(identity: pd.DataFrame) -> dict[str, Any]:
+    """Describe whether participant-cluster inference could be estimated later.
+
+    This runner does not perform bootstrap/CV/models. The gate is persisted so a later
+    explicitly enabled science stage cannot silently replace unresolved identity with session_id.
+    """
+    if identity.empty or "participant_group_id" not in identity.columns:
+        return {"status": "not_estimable", "reason": "participant_group_id_missing", "unresolved_session_n": int(len(identity))}
+    unresolved = identity["participant_group_id"].isna()
+    if unresolved.any():
+        return {
+            "status": "not_estimable",
+            "reason": "participant_identity_unresolved_no_session_id_fallback",
+            "unresolved_session_n": int(unresolved.sum()),
+        }
+    return {"status": "available_if_explicitly_enabled", "reason": "", "unresolved_session_n": 0}
 
 
 def _select_sessions(included: pd.DataFrame, subjects: Iterable[str] | None) -> list[str]:
@@ -126,25 +158,42 @@ def _attach_identity(frame: pd.DataFrame, row: pd.Series, session: str) -> pd.Da
     return out
 
 
-def _session_source_dir(raw_root: Path, session: str) -> Path | None:
-    if not raw_root.is_dir():
-        return None
-    try:
-        return _subject_dir(raw_root, session)
-    except FileNotFoundError:
-        return None
+def _component_row(session: str, component: str, status: dict[str, Any], idrow: pd.Series) -> dict[str, Any]:
+    return {
+        "session_id": session,
+        "participant_group_id": idrow.get("participant_group_id", pd.NA),
+        "participant_identity_source": idrow.get("participant_identity_source", pd.NA),
+        "component": component,
+        "status": status.get("status") or status.get("blink_status") or "not_estimable",
+        "reason": status.get("reason") or status.get("blink_reason") or "",
+        **{f"detail__{key}": value for key, value in status.items() if key not in {"status", "reason", "blink_status", "blink_reason"}},
+    }
 
 
-def _science_config(config) -> RGBScienceConfig:
-    windows = config.section("windows")
-    science = config.data.get("science", {}) if isinstance(config.data.get("science", {}), dict) else {}
-    return RGBScienceConfig(
-        time_bin_seconds=float(windows.get("time_on_task_bin_seconds", 10)),
-        bootstrap_replicates=int(science.get("participant_cluster_bootstrap_replicates", 1000)),
-        bootstrap_seed=int(science.get("participant_cluster_bootstrap_seed", 20260830)),
-        prediction_folds=int(science.get("prediction_folds", 5)),
-        minimum_time_bins_for_slope=int(science.get("minimum_time_bins_for_slope", 3)),
-    )
+def _disabled_contract_rows() -> list[dict[str, Any]]:
+    return [
+        {"component": "perclos", "active": False, "status": "disabled_deferred", "reason": "no validated closure-event contract"},
+        {"component": "au", "active": False, "status": "disabled_deferred", "reason": "outside lightweight RGB QC contract"},
+        {"component": "emotion", "active": False, "status": "disabled_deferred", "reason": "outside lightweight RGB QC contract"},
+        {"component": "rppg", "active": False, "status": "disabled_deferred", "reason": "outside lightweight RGB QC contract"},
+        {"component": "full_head_pose", "active": False, "status": "disabled_deferred", "reason": "pose confirmation uses body direction candidates only"},
+        {"component": "rgb_prediction", "active": False, "status": "disabled_deferred", "reason": "endpoint freeze and multimodal fusion deferred"},
+        {"component": "multimodal_fusion", "active": False, "status": "disabled_deferred", "reason": "single-modality quality gates first"},
+    ]
+
+
+def mmwave_protection_contract() -> dict[str, Any]:
+    return {
+        "status": "enforced_by_interface",
+        "rgb_writes_mmwave_results": False,
+        "rgb_creates_mmwave_truth_table": False,
+        "blink_combined_with_motion_pose_risk_score": False,
+        "required_future_mmwave_tracks": [
+            "original_mmwave_result",
+            "rgb_strict_motion_exclusion_sensitivity",
+            "rgb_continuous_motion_adjustment",
+        ],
+    }
 
 
 def run_rgb_formal_v2(
@@ -162,182 +211,197 @@ def run_rgb_formal_v2(
 
     included, identity, questionnaire, consistency = _governed_identity(config)
     sessions = _select_sessions(included, subjects)
-    scfg = _science_config(config)
     inp = config.section("inputs")
+    execution = config.section("execution")
+    pose_cfg = config.section("pose_confirmation")
+    ocular = config.section("ocular")
+    blink_cfg = ocular.get("blink_candidate", {})
+    ref_cfg = ocular.get("open_reference", {})
 
-    native_parts: list[pd.DataFrame] = []
-    probe_parts: list[pd.DataFrame] = []
-    qc_rows: list[dict[str, Any]] = []
-    failures: list[dict[str, Any]] = []
-    source_manifest_rows: list[dict[str, Any]] = []
+    component_rows: list[dict[str, Any]] = []
+    session_qc_rows: list[dict[str, Any]] = []
+    failure_rows: list[dict[str, Any]] = []
+    source_rows: list[dict[str, Any]] = []
+    blink_event_parts: list[pd.DataFrame] = []
+    questionnaire_sessions = set(questionnaire["session_id"].astype(str)) if "session_id" in questionnaire.columns else set()
 
     for session in sessions:
         idrow = _identity_row(identity, session)
         subject_dir = _session_source_dir(raw_root, session)
+        identity_resolved = pd.notna(idrow.get("participant_group_id", pd.NA))
         if subject_dir is None:
-            qc_rows.append({
-                "session_id": session, "participant_group_id": idrow["participant_group_id"],
-                "rgb_source_present": 0, "face_present": 0, "pose_present": 0, "motion_present": 0,
-                "status": "modality_missing_rgb_source_directory",
+            for component in ("motion", "pose_confirmation", "blink_candidates"):
+                component_rows.append(_component_row(session, component, {"status": "not_estimable", "reason": "rgb_source_directory_missing"}, idrow))
+            session_qc_rows.append({
+                "session_id": session,
+                "participant_group_id": idrow.get("participant_group_id", pd.NA),
+                "participant_identity_source": idrow.get("participant_identity_source", pd.NA),
+                "participant_identity_resolved": bool(identity_resolved),
+                "questionnaire_present": int(session in questionnaire_sessions),
+                "rgb_source_present": 0,
+                "motion_status": "not_estimable",
+                "pose_status": "not_estimable",
+                "blink_status": "not_estimable",
             })
-            source_manifest_rows.append({"session_id": session, "status": "rgb_source_absent"})
+            source_rows.append({"session_id": session, "status": "rgb_source_absent"})
             continue
-        try:
-            face_path = _find_subject_file(subject_dir, session, str(inp["face_suffix"]))
-            pose_path = _find_subject_file(subject_dir, session, str(inp["pose_suffix"]))
-            motion_path = _find_subject_file(subject_dir, session, str(inp["motion_suffix"]))
-            face_raw = _load_optional(face_path)
-            pose_raw = _load_optional(pose_path)
-            motion = derive_motion_features(_load_optional(motion_path))
-            face, blink_events, face_status = derive_face_features(face_raw, config)
-            pose = derive_pose_features(pose_raw)
-            face = attach_behavior_context(face, motion)
-            pose = attach_behavior_context(pose, motion)
 
-            current_native: list[pd.DataFrame] = []
-            for modality, frame in (("face", face), ("pose", pose), ("motion", motion)):
-                if frame.empty:
-                    continue
-                current = _attach_identity(frame, idrow, session)
-                current["modality"] = modality
-                current_native.append(current)
-                native_parts.append(current)
+        face_path = _find_subject_file(subject_dir, session, str(inp["face_suffix"]))
+        pose_path = _find_subject_file(subject_dir, session, str(inp["pose_suffix"]))
+        motion_path = _find_subject_file(subject_dir, session, str(inp["motion_suffix"]))
+        source_rows.append({
+            "session_id": session,
+            "status": "source_directory_present",
+            "face_file": str(face_path) if face_path else None,
+            "face_sha256": _sha256_if_file(face_path),
+            "pose_file": str(pose_path) if pose_path else None,
+            "pose_sha256": _sha256_if_file(pose_path),
+            "motion_file": str(motion_path) if motion_path else None,
+            "motion_sha256": _sha256_if_file(motion_path),
+        })
+
+        try:
+            if motion_path is None:
+                motion = pd.DataFrame()
+                motion_status = {"status": "not_estimable", "reason": "motion_source_missing"}
+            else:
+                motion, motion_status = derive_motion_qc(pd.read_parquet(motion_path))
+                if not motion.empty:
+                    target = ready_root / session
+                    target.mkdir(parents=True, exist_ok=True)
+                    _attach_identity(motion, idrow, session).to_parquet(target / f"{session}_motion_qc.parquet", index=False)
+        except Exception as exc:
+            motion = pd.DataFrame()
+            motion_status = {"status": "not_estimable", "reason": f"motion_exception:{type(exc).__name__}:{exc}"}
+            failure_rows.append({"session_id": session, "component": "motion", "error_type": type(exc).__name__, "error": str(exc)})
+        component_rows.append(_component_row(session, "motion", motion_status, idrow))
+
+        pose_active = bool(execution.get("pose_confirmation_active", True))
+        try:
+            if not pose_active:
+                pose = pd.DataFrame()
+                pose_status = {"status": "disabled_deferred", "reason": "pose_confirmation_disabled_by_config"}
+            elif pose_path is None:
+                pose = pd.DataFrame()
+                pose_status = {"status": "not_estimable", "reason": "pose_source_missing"}
+            else:
+                raw_pose = pd.read_parquet(pose_path)
+                pose, pose_status = derive_pose_direction(
+                    raw_pose,
+                    min_visibility=float(pose_cfg.get("minimum_visibility", 0.5)),
+                    min_presence=float(pose_cfg.get("minimum_presence", 0.5)),
+                    gap_reset_ms=float(pose_cfg.get("gap_reset_ms", 300.0)),
+                )
+                if not pose.empty:
+                    target = ready_root / session
+                    target.mkdir(parents=True, exist_ok=True)
+                    _attach_identity(pose, idrow, session).to_parquet(target / f"{session}_pose_confirmation.parquet", index=False)
+        except Exception as exc:
+            pose = pd.DataFrame()
+            pose_status = {"status": "not_estimable", "reason": f"pose_exception:{type(exc).__name__}:{exc}"}
+            failure_rows.append({"session_id": session, "component": "pose_confirmation", "error_type": type(exc).__name__, "error": str(exc)})
+        component_rows.append(_component_row(session, "pose_confirmation", pose_status, idrow))
+
+        blink_active = bool(execution.get("blink_candidates_active", True))
+        try:
+            if not blink_active:
+                blink_frames = pd.DataFrame(); blink_events = pd.DataFrame()
+                blink_status = {"status": "disabled_deferred", "reason": "blink_candidates_disabled_by_config"}
+            elif face_path is None:
+                blink_frames = pd.DataFrame(); blink_events = pd.DataFrame()
+                blink_status = {"blink_status": "not_estimable", "blink_reason": "face_source_missing"}
+            else:
+                face = read_face_projection(face_path)
+                blink_frames, blink_events, blink_status = derive_blink_candidates(
+                    face,
+                    preferred_phase=str(ref_cfg.get("preferred_phase", "baseline")),
+                    minimum_valid_frames=int(ref_cfg.get("minimum_valid_frames", 30)),
+                    relative_openness_threshold=float(blink_cfg.get("relative_openness_threshold", 0.20)),
+                    minimum_closed_duration_ms=float(blink_cfg.get("minimum_closed_duration_ms", 50)),
+                    maximum_closed_duration_ms=float(blink_cfg.get("maximum_closed_duration_ms", 1000)),
+                    gap_reset_ms=float(blink_cfg.get("gap_reset_ms", 250)),
+                    maximum_bilateral_relative_difference=float(blink_cfg.get("maximum_bilateral_relative_difference", 0.35)),
+                )
                 target = ready_root / session
                 target.mkdir(parents=True, exist_ok=True)
-                current.to_parquet(target / f"{session}_{modality}_derived.parquet", index=False)
-
-            if not motion.empty and {"block", "trial_num", "probe_onset_time"}.issubset(motion.columns):
-                probe_mask = pd.to_numeric(motion.get("is_probe"), errors="coerce").eq(1) & pd.to_numeric(
-                    motion["probe_onset_time"], errors="coerce"
-                ).notna()
-                probes = motion.loc[probe_mask].drop_duplicates(["block", "trial_num", "probe_onset_time"]).copy()
-                if not probes.empty:
-                    probe_parts.append(_attach_identity(probes, idrow, session))
-
-            qc_rows.append({
-                "session_id": session,
-                "participant_group_id": idrow["participant_group_id"],
-                "participant_identity_source": idrow.get("participant_identity_source", pd.NA),
-                "questionnaire_present": int(session in set(questionnaire["session_id"].astype(str))),
-                "rgb_source_present": 1,
-                "face_present": int(face_path is not None), "pose_present": int(pose_path is not None),
-                "motion_present": int(motion_path is not None),
-                "face_rows": int(len(face)), "pose_rows": int(len(pose)), "motion_rows": int(len(motion)),
-                "blink_event_candidate_n": int(len(blink_events)),
-                "face_primary_status": face_status.get("primary_face_status"),
-                "blink_threshold_status": face_status.get("blink_threshold_status"),
-                "status": "available_with_explicit_component_coverage",
-            })
-            source_manifest_rows.append({
-                "session_id": session, "status": "available",
-                "face_file": str(face_path) if face_path else None,
-                "face_sha256": _sha256_if_file(face_path),
-                "pose_file": str(pose_path) if pose_path else None,
-                "pose_sha256": _sha256_if_file(pose_path),
-                "motion_file": str(motion_path) if motion_path else None,
-                "motion_sha256": _sha256_if_file(motion_path),
-            })
+                if not blink_frames.empty:
+                    _attach_identity(blink_frames, idrow, session).to_parquet(target / f"{session}_blink_candidate_frames.parquet", index=False)
+                if not blink_events.empty:
+                    current_events = _attach_identity(blink_events, idrow, session)
+                    current_events.to_parquet(target / f"{session}_blink_candidate_events.parquet", index=False)
+                    blink_event_parts.append(current_events)
         except Exception as exc:
-            failures.append({
-                "session_id": session, "stage": "rgb_analysis_ready", "error_type": type(exc).__name__,
-                "error": str(exc), "scientific_interpretation": "structural_failure_not_no_effect",
-            })
+            blink_frames = pd.DataFrame(); blink_events = pd.DataFrame()
+            blink_status = {"blink_status": "not_estimable", "blink_reason": f"blink_exception:{type(exc).__name__}:{exc}"}
+            failure_rows.append({"session_id": session, "component": "blink_candidates", "error_type": type(exc).__name__, "error": str(exc)})
+        component_rows.append(_component_row(session, "blink_candidates", blink_status, idrow))
+
+        session_qc_rows.append({
+            "session_id": session,
+            "participant_group_id": idrow.get("participant_group_id", pd.NA),
+            "participant_identity_source": idrow.get("participant_identity_source", pd.NA),
+            "participant_identity_resolved": bool(identity_resolved),
+            "questionnaire_present": int(session in questionnaire_sessions),
+            "rgb_source_present": 1,
+            "motion_status": motion_status.get("status", "not_estimable"),
+            "pose_status": pose_status.get("status", "not_estimable"),
+            "blink_status": blink_status.get("blink_status", blink_status.get("status", "not_estimable")),
+            "blink_event_candidate_n": int(len(blink_events)),
+            "motion_pose_blink_combined_risk_score": False,
+        })
 
     identity_audit = build_identity_audit(identity, questionnaire)
+    inference_gate = participant_inference_gate(identity[identity["session_id"].isin(sessions)].copy())
     _write_csv(identity_audit, dirs["qc"] / "rgb_identity_audit.csv")
     _write_csv(consistency, dirs["qc"] / "questionnaire_registry_consistency.csv")
-    _write_csv(pd.DataFrame(qc_rows), dirs["qc"] / "session_qc.csv")
-    _write_csv(pd.DataFrame(failures), dirs["qc"] / "rgb_failures.csv")
-    _write_csv(pd.DataFrame(source_manifest_rows), dirs["provenance"] / "rgb_source_manifest.csv")
+    _write_csv(pd.DataFrame(session_qc_rows), dirs["qc"] / "session_qc.csv")
+    _write_csv(pd.DataFrame(component_rows), dirs["qc"] / "rgb_component_status.csv")
+    _write_csv(pd.DataFrame(failure_rows), dirs["qc"] / "rgb_component_failures.csv")
+    _write_csv(pd.DataFrame(source_rows), dirs["provenance"] / "rgb_source_manifest.csv")
+    _write_csv(pd.DataFrame(_disabled_contract_rows()), dirs["provenance"] / "rgb_deferred_contracts.csv")
 
-    if failures:
-        blocked = {
-            "created_at_utc": datetime.now(timezone.utc).isoformat(), "status": "blocked_structural_failures",
-            "pipeline_version": RGB_FORMAL_RUNNER_VERSION, "governed_session_n": int(len(sessions)),
-            "structural_failure_n": int(len(failures)), "expensive_models_rerun": False,
-            "scientific_inference_authorized": False,
-        }
-        (dirs["provenance"] / "rgb_formal_manifest.json").write_text(json.dumps(blocked, ensure_ascii=False, indent=2), encoding="utf-8")
-        return blocked
+    all_blinks = pd.concat(blink_event_parts, ignore_index=True, sort=False) if blink_event_parts else pd.DataFrame()
+    _write_csv(all_blinks, dirs["tables"] / "rgb_blink_candidate_events.csv")
 
-    features = pd.concat(native_parts, ignore_index=True, sort=False) if native_parts else pd.DataFrame()
-    probes = pd.concat(probe_parts, ignore_index=True, sort=False) if probe_parts else pd.DataFrame()
-    features.to_parquet(ready_root / "rgb_feature_native_long.parquet", index=False)
-
-    if features.empty:
-        summary = pd.DataFrame(); probe_summary = pd.DataFrame()
-    else:
-        summary, probe_summary = build_multiscale(features, probes, config.section("windows")["probe_pre_seconds"])
-    # Add visit metadata to summary without changing metric values.
-    visit_meta = identity[[c for c in ("session_id", "participant_group_id", "participant_key", "visit_order", "prior_visit_count") if c in identity]].drop_duplicates("session_id")
-    if not summary.empty:
-        summary = summary.merge(visit_meta, on=[c for c in ("session_id", "participant_group_id") if c in visit_meta], how="left", validate="many_to_one")
-    if not probe_summary.empty:
-        probe_summary = probe_summary.merge(visit_meta, on=[c for c in ("session_id", "participant_group_id") if c in visit_meta], how="left", validate="many_to_one")
-
-    validation, redundancy, decisions = candidate_validation(summary)
-    within_between = build_within_between(summary)
-    visit_sensitivity = build_repeat_visit_sensitivity(summary, identity)
-    time_bins, time_slopes = build_time_on_task(
-        features, bin_seconds=scfg.time_bin_seconds, minimum_bins=scfg.minimum_time_bins_for_slope
-    ) if not features.empty else (pd.DataFrame(), pd.DataFrame())
-    cluster_ci = participant_cluster_bootstrap(
-        summary, replicates=scfg.bootstrap_replicates, seed=scfg.bootstrap_seed
-    ) if not summary.empty else pd.DataFrame()
-    fold_table, prediction_audit = participant_exclusive_folds(identity, n_folds=scfg.prediction_folds)
-    model_failures, deferred_models = model_contract_tables()
-
-    _write_csv(summary, dirs["tables"] / "rgb_multiscale_metrics.csv")
-    _write_csv(probe_summary, dirs["tables"] / "rgb_probe_metrics.csv")
-    _write_csv(time_bins, dirs["tables"] / "rgb_time_on_task_bins.csv")
-    _write_csv(time_slopes, dirs["tables"] / "rgb_time_on_task_slopes.csv")
-    _write_csv(validation, dirs["validation"] / "rgb_candidate_metric_validation.csv")
-    _write_csv(redundancy, dirs["validation"] / "rgb_metric_redundancy.csv")
-    _write_csv(decisions, dirs["validation"] / "rgb_endpoint_decisions.csv")
-    _write_csv(within_between, dirs["validation"] / "rgb_candidate_within_between.csv")
-    _write_csv(visit_sensitivity, dirs["validation"] / "rgb_repeat_visit_sensitivity.csv")
-    _write_csv(cluster_ci, dirs["statistics"] / "rgb_participant_cluster_uncertainty.csv")
-    _write_csv(model_failures, dirs["statistics"] / "model_failures.csv")
-    _write_csv(deferred_models, dirs["statistics"] / "deferred_models.csv")
-    _write_csv(fold_table, dirs["prediction"] / "rgb_participant_folds.csv")
-    _write_csv(prediction_audit, dirs["prediction"] / "rgb_prediction_audit.csv")
-
-    figure_manifest, figure_audit = generate_rgb_figure_pack(
-        summary, probe_summary, time_bins, validation, output_root
-    )
-    _write_csv(figure_manifest, dirs["figures"] / "figure_manifest.csv")
-    _write_csv(figure_audit, dirs["figures"] / "figure_coverage_audit.csv")
-
-    cohort_missing_rgb_n = int(sum(1 for row in qc_rows if int(row.get("rgb_source_present", 0)) == 0))
+    mmwave_contract = mmwave_protection_contract()
+    perclos = {"active": False, "status": "disabled_deferred", "reason": "no validated closure-event contract"}
+    component_table = pd.DataFrame(component_rows)
+    generated_n = int(component_table["status"].eq("generated").sum()) if not component_table.empty else 0
+    not_estimable_n = int(component_table["status"].eq("not_estimable").sum()) if not component_table.empty else 0
     manifest = {
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
-        "status": "complete_code_contract_real_data_freeze_pending",
+        "status": "lightweight_rgb_qc_complete_with_explicit_component_status",
         "pipeline_version": RGB_FORMAL_RUNNER_VERSION,
         "config_digest": config.digest,
         "governed_session_n": int(len(sessions)),
-        "participant_group_n": int(identity[identity["session_id"].isin(sessions)]["participant_group_id"].nunique()),
-        "rgb_source_missing_session_n": cohort_missing_rgb_n,
-        "sessions_with_rgb_features_n": int(features["session_id"].nunique()) if not features.empty else 0,
-        "expensive_models_rerun": False,
-        "native_rates_preserved": True,
-        "common_frame_rate_forced": False,
-        "strict_preprobe_anchor_exclusion": True,
-        "endpoint_freeze": "pending_real_data_scientific_review",
-        "blink_threshold_freeze": "pending_representative_visual_distribution_qc",
-        "perclos_role": "supportive_alertness_candidate_only",
-        "rppg_in_scope": False,
-        "inference_prediction_separated": True,
-        "prediction_model_status": "deferred_pending_endpoint_freeze",
+        "participant_group_n_resolved": int(identity.loc[identity["session_id"].isin(sessions), "participant_group_id"].nunique(dropna=True)),
+        "participant_identity_unresolved_session_n": int(identity.loc[identity["session_id"].isin(sessions), "participant_group_id"].isna().sum()),
+        "participant_inference_gate": inference_gate,
+        "active_default_route": ["motion_energy_with_exposure_control", "pose_confirmation_and_direction", "algorithm_defined_blink_candidates"],
+        "motion_only_can_complete_first": True,
+        "pose_confirmation_nonblocking": True,
+        "blink_nonblocking": True,
+        "extended_science_default": False,
+        "bootstrap_run": False,
+        "prediction_cv_run": False,
+        "formal_multimodal_fusion_run": False,
+        "large_figure_suite_run": False,
+        "manual_video_or_image_review_run": False,
+        "perclos": perclos,
+        "mmwave_protection_contract": mmwave_contract,
+        "component_generated_rows": generated_n,
+        "component_not_estimable_rows": not_estimable_n,
+        "component_exception_rows": int(len(failure_rows)),
         "scientific_inference_authorized_by_code_alone": False,
-        "multimodal_fusion_status": "deferred_not_release_ready",
-        "figure_internal_titles_allowed": False,
-        "figure_coverage_rows": int(len(figure_audit)),
-        "model_attempt_failure_rows": int(len(model_failures)),
+        "real_data_smoke_status": "not_run_by_web_task",
+        "full_44_session_status": "not_run_by_web_task",
         "notes": [
-            "Governed cohort defines sessions; questionnaire and RGB availability never redefine cohort membership.",
-            "Missing RGB source is recorded as modality missingness, not silently excluded from the cohort.",
-            "All participant uncertainty/folds use participant_group_id, with verified participant_key where available.",
-            "No predictor-by-outcome Cartesian inference/prediction models run before real-data endpoint freeze.",
+            "Governed cohort defines session membership; questionnaire presence never defines the cohort.",
+            "participant_group_id comes from reconciled current or validated legacy identity; session_id is never used as a participant fallback.",
+            "Motion Energy and exposure/gray-level change remain separate tracks.",
+            "Pose direction is an auxiliary QC candidate and not physical displacement truth.",
+            "Blink outputs are algorithm-defined candidate events without manual visual validation.",
+            "PERCLOS is retained historically but disabled/deferred until a validated closure-event contract exists.",
         ],
     }
     (dirs["provenance"] / "rgb_formal_manifest.json").write_text(

@@ -36,6 +36,7 @@ jobs:
             scripts/nir_formal_pipeline.py \
             scripts/nir_build_analysis_tables.py \
             scripts/nir_validate_pupil_formal.py \
+            scripts/rgb_formal_downstream.py \
             src/attention_pipeline/formal_analysis/execution_control.py \
             src/attention_pipeline/formal_analysis/join_keys.py \
             src/attention_pipeline/formal_analysis/provenance.py \
@@ -65,6 +66,9 @@ jobs:
             src/attention_pipeline/nir_pipeline_validation/pupil_figures.py \
             src/attention_pipeline/rgb_formal/pipeline.py \
             src/attention_pipeline/rgb_formal/runner.py \
+            src/attention_pipeline/rgb_formal/motion_qc.py \
+            src/attention_pipeline/rgb_formal/pose_direction.py \
+            src/attention_pipeline/rgb_formal/blink_candidates.py \
             src/attention_pipeline/rgb_formal/science.py \
             src/attention_pipeline/rgb_formal/figures.py
 
@@ -102,6 +106,9 @@ jobs:
             tests/test_nir_adjustment_audit.py \
             tests/test_nir_baseline_contract.py \
             tests/test_nir_resting_observability.py
+
+      - name: Run formal RGB lightweight contracts
+        run: python -m pytest -q tests/test_rgb_formal_lightweight.py
 
       - name: Run staged NIR regression tests
         run: |
