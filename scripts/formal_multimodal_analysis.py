@@ -16,8 +16,8 @@ from attention_pipeline.formal_analysis.nir_adapter import adapt_nir_csv
 
 
 def _resolve_external(config: Config, value: str) -> Path:
-    if value.startswith("@path:"):
-        return config.registry_path(value.split(":", 1)[1])
+    if config.path_registry is not None:
+        return config.path_registry.resolve_spec(value, base_dir=Path.cwd())
     return Path(value).resolve()
 
 
@@ -57,8 +57,11 @@ def command_preflight(config: Config) -> dict[str, object]:
     }
 
 
-def _resolve_manifest_path(manifest_path: Path, value: object) -> Path:
-    path = Path(str(value).strip())
+def _resolve_manifest_path(config: Config, manifest_path: Path, value: object) -> Path:
+    raw = str(value).strip()
+    if config.path_registry is not None:
+        return config.path_registry.resolve_spec(raw, base_dir=manifest_path.parent)
+    path = Path(raw)
     return path if path.is_absolute() else (manifest_path.parent / path).resolve()
 
 
@@ -103,7 +106,7 @@ def command_nir_adapt(config: Config, *, sessions: list[str] | None, run_id: str
     rows = []
     for record in manifest.sort_values("session_id").to_dict("records"):
         session = str(record["session_id"])
-        source_csv = _resolve_manifest_path(source_manifest, record["eye_metrics_csv"])
+        source_csv = _resolve_manifest_path(config, source_manifest, record["eye_metrics_csv"])
         rows.append(adapt_nir_csv(
             source_csv,
             frame_root / f"{session}.csv",
