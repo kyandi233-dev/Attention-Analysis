@@ -18,6 +18,7 @@ from attention_pipeline.nir_analysis_ready import (
     run_candidate_materialization,
     run_materialization,
 )
+from attention_pipeline.nir_formal_analysis.candidate_validation import run_candidate_validation
 from attention_pipeline.nir_formal_analysis.pupil_tables import run_cohort
 
 
@@ -27,7 +28,7 @@ def parse_args() -> argparse.Namespace:
         "--stage",
         choices=("materialize", "tables", "all"),
         default="tables",
-        help="Default is tables because 10_analysis_ready may already be frozen.",
+        help="Default is tables; candidate validation requires matching candidate sidecars in 10_analysis_ready.",
     )
     parser.add_argument(
         "--subjects",
@@ -93,6 +94,14 @@ def main() -> int:
         )
         result["tables"] = table_result
         if int(table_result.get("n_sessions_failed", 0)) > 0:
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 2
+        candidate_validation = run_candidate_validation(
+            Path(args.tables_config),
+            subjects=sessions,
+        )
+        result["candidate_validation"] = candidate_validation
+        if int(candidate_validation.get("n_sessions_failed", 0)) > 0 or candidate_validation.get("status") != "complete":
             print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
             return 2
 
