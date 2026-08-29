@@ -5,9 +5,7 @@ import sys
 from pathlib import Path
 
 
-EXPECTED_PYTHON = Path(
-    r"D:\Project\厚粲杯\08_算法\.venv_nir_gpu\Scripts\python.exe"
-)
+EXPECTED_PYTHON = Path(r"D:\CondaEnvs\nir-nvidia\python.exe")
 
 
 def require_nir_gpu_python() -> None:
@@ -16,7 +14,6 @@ def require_nir_gpu_python() -> None:
     expected = EXPECTED_PYTHON.resolve()
     if actual != expected:
         raise SystemExit(
-            "Formal NVIDIA NIR requires .venv_nir_gpu Python; "
+            "Formal NVIDIA NIR requires D:\\CondaEnvs\\nir-nvidia Python; "
             f"expected={expected}; actual={actual}"
         )
-
