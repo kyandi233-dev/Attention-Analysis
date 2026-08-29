@@ -64,6 +64,23 @@ class PathRegistry:
             raise ValueError(f"paths.{name} 不能为空列表")
         return [_resolve_one(item, self.path.parent) for item in values]
 
+    def resolve_spec(self, value: str | Path, *, base_dir: Path | None = None) -> Path:
+        """
+        Resolve a normal path or ``@path:key::relative/file`` reference.
+
+        This keeps per-session source manifests portable even when different
+        sessions live below different producer roots on each machine.
+        """
+        text = str(value).strip()
+        if text.startswith("@path:"):
+            body = text[len("@path:"):]
+            key, separator, relative = body.partition("::")
+            if not key:
+                raise ValueError(f"非法逻辑路径引用: {value!r}")
+            root = self.path_value(key)
+            return root if not separator else (root / relative).resolve()
+        return _resolve_one(text, base_dir or self.path.parent)
+
     def has(self, name: str) -> bool:
         return name in self._paths_section()
 
