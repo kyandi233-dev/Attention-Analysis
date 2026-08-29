@@ -16,8 +16,11 @@ from .behavior_error_taxonomy import FORMAL_OMISSION_ENDPOINT_METRICS
 from .science_v3 import CANONICAL_METRICS
 
 
+# ``omission_rate`` is retained in legacy tables only as a compatibility alias
+# of ``raw_go_omission_rate``. Do not admit it as a second endpoint.
+_BASE_FORMAL_METRICS = tuple(m for m in CANONICAL_METRICS if m != "omission_rate")
 FORMAL_BEHAVIOR_ENDPOINT_METRICS = tuple(dict.fromkeys(
-    (*CANONICAL_METRICS, *FORMAL_OMISSION_ENDPOINT_METRICS)
+    (*_BASE_FORMAL_METRICS, *FORMAL_OMISSION_ENDPOINT_METRICS)
 ))
 
 
@@ -36,7 +39,6 @@ _PRIORITY = (
     "raw_go_omission_rate",
     "clean_go_omission_rate",
     "timing_ambiguous_go_omission_rate",
-    "omission_rate",
     "commission_rate",
     "dprime_loglinear",
     "criterion_c",
