@@ -1,7 +1,7 @@
 pipeline:
   name: attention-analysis-nir-formal-analysis-tables-pupil-only
-  version: 2.3.0
-  schema_version: 5
+  version: 2.4.0
+  schema_version: 6
   signal_semantics: pupil_geometry_only
   timezone: Asia/Shanghai
 
@@ -35,7 +35,26 @@ baseline_semantics:
   event_local_baseline_name: pre_event_local_baseline
   event_local_baseline_start_ms: -200
   event_local_baseline_end_ms: 0
-  resting_task_start_baseline_status: not_defined_without_protocol_evidence
+  resting_task_start_interval_source: master_timeline_baseline_start_to_baseline_stop
+  resting_task_start_interval_protocol_confirmed: true
+  resting_task_start_reference_status: audit_only_pending_observability_threshold_freeze
+  video_head_fixed_180s_may_substitute_for_timeline: false
+
+resting_observability:
+  # The final FocusWave program writes these Unix-ms events to each
+  # <session>/beh/master_timeline.csv around show_resting_baseline().
+  start_event: baseline_start
+  stop_event: baseline_stop
+  expected_duration_sec: 180
+  duration_tolerance_sec: 30
+  max_contiguous_gap_sec: 0.25
+  # Intentionally NOT frozen yet. The audit may be run to inspect measurement
+  # coverage, but an exploratory resting pupil reference is not authorized until
+  # these gates are predeclared without consulting downstream Behavior outcomes.
+  min_primary_valid_fraction: null
+  min_longest_primary_valid_sec: null
+  not_observed_may_be_called_eyes_closed: false
+  role: exploratory_only_not_forced_into_main_models
 
 figures:
   internal_title_allowed: false
@@ -188,5 +207,8 @@ analysis_policy:
   auto_exclude_eyes: false
   run_formal_statistics: false
   session_centering_reference_must_not_be_reported_as_resting_baseline: true
+  resting_reference_requires_timeline_events: true
+  resting_reference_requires_prefrozen_observability_thresholds: true
+  resting_not_observed_must_not_be_called_eyes_closed: true
   inference_and_prediction_must_remain_separate: true
   machine_absolute_paths_allowed_in_science_config: false
