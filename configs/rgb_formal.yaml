@@ -1,0 +1,72 @@
+pipeline:
+  name: attention-analysis-rgb-formal-downstream
+  version: 1.0.0
+  schema_version: 1
+  producer_policy: consume_preserved_raw_only
+  rerun_expensive_models: false
+  rppg_in_scope: false
+
+paths:
+  raw_root: "@path:rgb_raw_output_root"
+  analysis_ready_root: "@path:rgb_analysis_ready_root"
+  output_root: "@path:rgb_analysis_tables_root"
+
+identity:
+  cohort_manifest_path_key: cohort_manifest
+  repeat_registry_path_key: repeat_registry
+  questionnaire_path_key: questionnaire_derived_data
+  participant_disjoint_prediction: true
+
+inputs:
+  face_suffix: "_face_raw.parquet"
+  pose_suffix: "_pose_landmarks.parquet"
+  motion_suffix: "_motion_raw.parquet"
+  derived_eye_suffix_candidates:
+    - "_eye_features.parquet"
+    - "eye_features.parquet"
+  allow_missing_modality_file: true
+
+ocular:
+  ear_landmarks:
+    right: [33, 160, 158, 133, 153, 144]
+    left: [362, 385, 387, 263, 373, 380]
+  open_reference:
+    preferred_phase: baseline
+    minimum_valid_frames: 30
+    method: top30_percent_median
+    fallback: all_valid_top30_percent_median
+    fallback_is_scientific_baseline: false
+  blink_candidate:
+    # Candidate only. Final threshold must be frozen after representative visual/distribution QC.
+    relative_openness_threshold: 0.20
+    minimum_closed_duration_ms: 50
+    maximum_closed_duration_ms: 1000
+  perclos_candidate:
+    closure_threshold_fraction: 0.80
+    status: support_alertness_candidate_not_attention_ground_truth
+
+windows:
+  probe_pre_seconds: [10, 20, 30]
+  primary_probe_pre_seconds: 30
+  time_on_task_bin_seconds: 10
+
+candidate_validation:
+  minimum_coverage: 0.80
+  redundancy_abs_spearman: 0.90
+  final_endpoint_freeze: pending_real_data_scientific_review
+  pvalue_feature_selection_allowed: false
+
+figures:
+  internal_title_allowed: false
+  caption_is_external: true
+  chinese_axes_legends_required: true
+  metric_scale_coverage_audit_required: true
+
+analysis_policy:
+  qc_flag_first_filter_later: true
+  strict_pre_probe_no_anchor_trial: true
+  future_information_allowed: false
+  session_is_acquisition_unit: true
+  participant_is_inference_cluster: true
+  inference_and_prediction_separate: true
+  model_failures_must_be_written: true
