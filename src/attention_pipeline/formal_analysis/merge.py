@@ -9,8 +9,10 @@ from .join_keys import normalize_known_join_dtypes
 UNIT_KEYS: dict[str, list[str]] = {
     "trial": ["repeat_participant_id", "session_id", "block_id", "trial_id"],
     "probe": ["repeat_participant_id", "session_id", "block_id", "probe_id", "window_name"],
+    "cycle": ["repeat_participant_id", "session_id", "block_id", "cycle_bin"],
     "block": ["repeat_participant_id", "session_id", "block_id"],
     "session": ["repeat_participant_id", "session_id"],
+    "participant_group": ["repeat_participant_id"],
 }
 
 
