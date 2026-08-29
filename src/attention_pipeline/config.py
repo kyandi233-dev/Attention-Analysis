@@ -23,6 +23,18 @@ class Config:
         value = self.data.get(name)
         if not isinstance(value, dict):
             raise KeyError(f"配置缺少字典节: {name}")
+        # Path-registry references are resolved here as well as in path_value().
+        # Several established analysis modules historically read section('paths')
+        # directly; resolving centrally keeps them portable without duplicating
+        # machine-path logic in every module. A missing registry fails closed.
+        if name == "paths":
+            resolved = dict(value)
+            for key, raw in value.items():
+                if isinstance(raw, str) and raw.startswith("@path:"):
+                    resolved[key] = str(self.registry_path(raw.split(":", 1)[1]))
+                elif isinstance(raw, dict) and raw.get("path_key") is not None:
+                    resolved[key] = str(self.registry_path(str(raw["path_key"])))
+            return resolved
         return value
 
     def _require_registry(self) -> PathRegistry:
@@ -44,6 +56,8 @@ class Config:
         if raw is None:
             raise KeyError(f"配置缺少路径: paths.{name}")
 
+        # section('paths') normally resolves these already. Retain the branches
+        # below for Config instances created by older callers/tests.
         if isinstance(raw, dict):
             path_key = raw.get("path_key")
             if path_key is None:
