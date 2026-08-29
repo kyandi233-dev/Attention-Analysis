@@ -9,7 +9,7 @@ description = "Auditable NIR and behavioral attention-analysis pipeline for the 
 requires-python = ">=3.10"
 dependencies = [
   "numpy>=1.24",
-  "pandas>=2.0",
+  "pandas>=2.0,<3.0",
   "PyYAML>=6.0",
   "opencv-python>=4.8",
   "scipy>=1.10",
