@@ -1,0 +1,13 @@
+{
+  "manifest_schema_version": 1,
+  "subject": "sub-XXX",
+  "source_schema_version": 6,
+  "source_path": "D:/_AttentionData/Beijing-NIR/amd-directml/<reviewed-source>/sub-XXX/data/eye_metrics.csv",
+  "source_kind": "historical_yolo_b8_ritnet_b16",
+  "source_branch": "amd-DirectML",
+  "source_commit": "REPLACE_WITH_FULL_COMMIT_SHA",
+  "source_selection_reason": "REPLACE_WITH_REVIEWED_REASON",
+  "junction_resolved_path": "REPLACE_WITH_RESOLVED_REAL_PATH",
+  "completion_path": "REPLACE_WITH_COMPLETION_JSON_PATH",
+  "notes": "One reviewed session source only; do not use a directory alias as an independent source."
+}

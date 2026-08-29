@@ -1,0 +1,8 @@
+{
+  "subject": "sub-035",
+  "source_schema_version": 6,
+  "source_path": "historical-yolo/ritnet-fullclass-final/sub-035/data/eye_metrics.csv",
+  "source_kind": "historical_yolo_b8_ritnet_b16",
+  "source_branch": "amd-DirectML",
+  "source_commit": "dd56f7fc9faccee4d06bb356e9d2df91088f38d3"
+}

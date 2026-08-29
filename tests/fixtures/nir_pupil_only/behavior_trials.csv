@@ -1,0 +1,9 @@
+subject,phase,phase_segment,block_num,trial_num,global_trial_index,absolute_onset_time,next_trial_onset_time,stimulus_name,stimulus_size,is_no_go,prev_stimulus_name,prev_stimulus_size,prev_is_no_go,time_in_block_sec
+sub-031,block1,block1,1,1,1,900,1500,apple.png,100,0,,,,0.0
+sub-031,block1,block1,1,2,2,1500,2100,banana.png,80,1,apple.png,100,0,0.6
+sub-032,block1,block1,1,1,1,900,1500,apple.png,100,0,,,,0.0
+sub-032,block1,block1,1,2,2,1500,2100,banana.png,80,1,apple.png,100,0,0.6
+sub-033,block1,block1,1,1,1,900,1500,apple.png,100,0,,,,0.0
+sub-033,block1,block1,1,2,2,1500,2100,missing.png,80,1,apple.png,100,0,0.6
+sub-035,block1,block1,1,1,1,900,1500,apple.png,100,0,,,,0.0
+sub-035,block1,block1,1,2,2,1500,2100,banana.png,80,1,apple.png,100,0,0.6

@@ -1,0 +1,3 @@
+stimulus_name,stimulus_code,stimulus_size_pct,base_size_px,rendered_size_px,screen_rel_lum_mean,screen_rms_contrast,central_rel_lum_mean,central_rms_contrast,fruit_support_rel_lum_mean,fruit_support_rms_contrast
+apple.png,apple,100,412,412,0.42,0.12,0.45,0.21,0.51,0.31
+banana.png,banana,80,412,330,0.38,0.10,0.40,0.18,0.48,0.27

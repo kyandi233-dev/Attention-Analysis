@@ -1,0 +1,29 @@
+adapter:
+  version: nir-pupil-only-adapter-v1.0.0
+  output_schema_version: 1
+  formal_evidence_commit: 171b081f3a3f9d06496c7b8d36915eebd4e2a3bb
+
+# Portable paths: set ATTENTION_NIR_ROOT and ATTENTION_BEHAVIOR_ROOT, or replace
+# these entries in a local copy.  The committed template never points at 44-field
+# execution by default.
+inputs:
+  behavior_trials_csv: "${ATTENTION_BEHAVIOR_ROOT}/formal-v1/trial_level.csv"
+  visual_properties_csv: "${ATTENTION_NIR_ROOT}/analysis/nir-behavior-v1/stimulus_visual_properties.csv"
+  sources:
+    # Add one explicitly reviewed source manifest at a time.
+    # - manifest: "${ATTENTION_NIR_ROOT}/adapter-inputs/sub-031.source.json"
+    []
+
+output:
+  root: "${ATTENTION_NIR_ROOT}/validation/pupil-only-adapter-v1"
+  rows_csv: pupil_only_rows.csv
+  manifest_json: manifest.json
+
+policy:
+  modify_source_csv: false
+  derive_pir_or_oar: false
+  iris_fraction_is_geometry: false
+  join_clock: unix_ms
+  normalize_eye_only_in_adapter: true
+  preserve_eye_raw: true
+  interpolation_is_separate_track: true

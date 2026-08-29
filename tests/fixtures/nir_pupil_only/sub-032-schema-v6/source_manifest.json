@@ -1,0 +1,8 @@
+{
+  "subject": "sub-032",
+  "source_schema_version": 6,
+  "source_path": "ritnet-fullclass-final/sub-032/data/eye_metrics.csv",
+  "source_kind": "special_current_source",
+  "source_branch": "amd-DirectML",
+  "source_commit": "6045a3f"
+}
