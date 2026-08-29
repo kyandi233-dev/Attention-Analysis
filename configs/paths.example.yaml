@@ -8,8 +8,13 @@ version: 1
 paths:
   formal_raw_roots:
     - "${FOCUSWAVE_FORMAL_RAW_ROOT}"
+  # Governed formal-session membership. This remains the source of which sessions
+  # are in the current queue; questionnaire rows never define the cohort.
   cohort_manifest: "${FOCUSWAVE_COHORT_MANIFEST}"
+  # Questionnaire-derived anonymous identity/visit-order registry.
   repeat_registry: "${FOCUSWAVE_REPEAT_REGISTRY}"
+  # Derived questionnaire analysis table (one row per questionnaire/session).
+  questionnaire_derived_data: "${FOCUSWAVE_QUESTIONNAIRE_DERIVED_DATA}"
   nir_source_manifest: "${FOCUSWAVE_NIR_SOURCE_MANIFEST}"
   nir_standardized_root: "${FOCUSWAVE_NIR_STANDARDIZED_ROOT}"
   stimulus_visual_properties: "${FOCUSWAVE_STIMULUS_VISUAL_PROPERTIES}"
