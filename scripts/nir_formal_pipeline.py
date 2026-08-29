@@ -19,6 +19,7 @@ from attention_pipeline.nir_analysis_ready import (
     run_materialization,
 )
 from attention_pipeline.nir_formal_analysis.candidate_validation import run_candidate_validation
+from attention_pipeline.nir_formal_analysis.event_response import run_event_response_candidates
 from attention_pipeline.nir_formal_analysis.probe_contract import run_probe_contract_repair
 from attention_pipeline.nir_formal_analysis.pupil_tables import run_cohort
 from attention_pipeline.nir_formal_analysis.scientific_models import run_reference_adjusted_models
@@ -114,6 +115,15 @@ def main() -> int:
         )
         result["candidate_validation"] = candidate_validation
         if int(candidate_validation.get("n_sessions_failed", 0)) > 0 or candidate_validation.get("status") != "complete":
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+            return 2
+
+        event_response = run_event_response_candidates(
+            Path(args.tables_config),
+            subjects=sessions,
+        )
+        result["event_response_candidates"] = event_response
+        if int(event_response.get("n_sessions_failed", 0)) > 0:
             print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
             return 2
 
