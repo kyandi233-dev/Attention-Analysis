@@ -7,6 +7,7 @@ from pathlib import Path
 import pandas as pd
 from matplotlib.axes import Axes
 
+from .omission_candidate_validation import validate_omission_candidates
 from .science_v3_figures_formal import (
     BEHAVIOR_FIGURE_CONTRACT,
     formal_figure_contract_is_chinese,
@@ -58,12 +59,29 @@ def generate_behavior_figures(
     The historical overview pack is retained for continuity, but its internal
     titles are forcibly suppressed. A second systematic pack enumerates every
     canonical and omission-taxonomy metric across each scientifically relevant
-    scale and writes an explicit generated/not-estimable coverage audit.
+    scale and writes an explicit generated/not-estimable coverage audit. The
+    omission taxonomy also receives a non-p-value candidate science audit for
+    coverage, floor/ceiling, within/between structure and redundancy.
     """
     output_dir = Path(output_dir)
     root = output_dir.parent
     session = _read_optional(root, "session_metrics.csv")
     cycle = _read_optional(root, "cycle_metrics.csv")
+
+    omission_validation, omission_redundancy = validate_omission_candidates(
+        {
+            "session": session if session is not None else pd.DataFrame(),
+            "block": block,
+            "cycle": cycle if cycle is not None else pd.DataFrame(),
+        },
+        primary_probe,
+    )
+    omission_validation.to_csv(
+        root / "behavior_omission_candidate_validation.csv", index=False, encoding="utf-8-sig"
+    )
+    omission_redundancy.to_csv(
+        root / "behavior_omission_candidate_redundancy.csv", index=False, encoding="utf-8-sig"
+    )
 
     with _suppress_internal_titles():
         overview = _generate_behavior_figures(
