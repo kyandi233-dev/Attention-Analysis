@@ -1,21 +1,21 @@
 pipeline:
-  name: attention-analysis-nir-formal-analysis-tables
-  version: 1.0.0
-  schema_version: 1
-  cohort_label: cohort-44-exploratory
+  name: attention-analysis-nir-formal-analysis-tables-pupil-only
+  version: 2.0.0
+  schema_version: 2
+  signal_semantics: pupil_geometry_only
   timezone: Asia/Shanghai
 
 paths:
   behavior_config: "configs/behavior_formal.yaml"
-  analysis_ready_root: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v2/cohort-44-exploratory/10_analysis_ready"
-  output_root: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v2/cohort-44-exploratory/11_analysis_tables"
+  analysis_ready_root: "../Attention-Analysis-local/nir-behavior-v2/10_analysis_ready"
+  output_root: "../Attention-Analysis-local/nir-behavior-v2/11_analysis_tables"
 
-subjects:
-  # Empty = discover every completed subject in 10_analysis_ready/frame_level.
+sessions:
+  # Empty = discover completed pupil-only session folders in 10_analysis_ready.
   include: []
 
 behavior_qc:
-  # Candidate flag only; does not become a final exclusion threshold here.
+  # Candidate flag only; does not become a final outcome-tuned exclusion threshold.
   carryover_candidate_ms: 200
 
 tracks:
@@ -23,54 +23,58 @@ tracks:
   include:
     - name: binocular_primary
       family: primary
-      value_column: binocular_PIR
+      value_column: binocular_pupil
       valid_column: null
       source_mode_column: binocular_source_mode
 
     - name: left_primary
       family: eye_preserved
-      value_column: left_centered_PIR
-      valid_column: left_valid_primary
+      value_column: left_centered_pupil
+      valid_column: left_pupil_valid_primary
       source_mode_column: null
 
     - name: right_primary
       family: eye_preserved
-      value_column: right_centered_PIR
-      valid_column: right_valid_primary
+      value_column: right_centered_pupil
+      valid_column: right_pupil_valid_primary
       source_mode_column: null
 
     - name: binocular_strict
       family: strict_sensitivity
-      value_column: binocular_strict_PIR
+      value_column: binocular_strict_pupil
       valid_column: null
       source_mode_column: binocular_strict_source_mode
 
     - name: left_strict
       family: strict_sensitivity
-      value_column: left_strict_centered_PIR
-      valid_column: left_valid_strict
+      value_column: left_strict_centered_pupil
+      valid_column: left_pupil_valid_strict
       source_mode_column: null
 
     - name: right_strict
       family: strict_sensitivity
-      value_column: right_strict_centered_PIR
-      valid_column: right_valid_strict
+      value_column: right_strict_centered_pupil
+      valid_column: right_pupil_valid_strict
       source_mode_column: null
 
 windows:
   trial:
+    # Event windows are retained so phasic pupil change can be defined against an
+    # explicit pre-event baseline rather than mixing state and response semantics.
     - name: pre_200ms
-      family: event
+      family: event_baseline
       start_offset_ms: -200
       end_offset_ms: 0
     - name: post_200ms
-      family: event
+      family: event_response
       start_offset_ms: 0
       end_offset_ms: 200
     - name: post_200_1150ms
-      family: event
+      family: event_response
       start_offset_ms: 200
       end_offset_ms: 1150
+    # Long windows are state/tonic descriptors. They are intentionally preserved
+    # but their overlap is audited and they are not IID trial-level inferential units.
     - name: pre_1s
       family: state
       start_offset_ms: -1000
@@ -119,14 +123,16 @@ windows:
       end_offset_ms: 0
 
 time_on_task:
-  # Descriptive continuous base. This is not a hard cleaning unit.
   bin_sec: 1.0
 
 analysis_policy:
   analysis_ready_is_only_nir_input: true
   production_nir_read_directly: false
-  coverage_thresholds_applied: false
+  preserve_left_right_eyes: true
+  preserve_repeat_group_token: true
+  overlap_audit_required: true
+  session_autocorrelation_control_required: true
   choose_window_from_outcome: false
-  auto_exclude_subjects: false
+  auto_exclude_sessions: false
   auto_exclude_eyes: false
-  exploratory_cohort_only: true
+  run_formal_statistics: false
