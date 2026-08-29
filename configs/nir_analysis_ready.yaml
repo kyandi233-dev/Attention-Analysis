@@ -1,8 +1,8 @@
 pipeline:
   name: attention-analysis-nir-analysis-ready-pupil-only
-  version: 2.2.0
+  version: 2.3.0
   schema_version: 4
-  signal_semantics: pupil_geometry_only
+  signal_semantics: pupil_geometry_plus_ocular_aperture_qc
   timezone: Asia/Shanghai
 
 cohort_topology:
@@ -32,13 +32,23 @@ source_contract:
     - soft_pupil_fraction
     - hard_iris_fraction
     - soft_iris_fraction
+  retained_ocular_aperture_qc:
+    fields:
+      - fullclass_ocular_aperture_ratio_median
+      - fullclass_ocular_aperture_ratio_p90
+    preferred_summary: fullclass_ocular_aperture_ratio_median
+    role: nir_eye_opening_candidate_qc
+    derivation: visible_ocular_mask_height_over_width
+    producer_derived_only: true
+    do_not_reconstruct_from_iris_fraction: true
+    not_ear: true
+    not_blink_event: true
+    not_perclos: true
   forbidden_derived_metrics:
     - PIR
     - OAR
     - pupil_to_iris_ratio
     - fullclass_pupil_to_iris_diameter_ratio
-    - fullclass_ocular_aperture_ratio_median
-    - fullclass_ocular_aperture_ratio_p90
 
 quality_tracks:
   primary: "observed + RITnet success + positive finite fitted pupil geometry; interpolation-only excluded"
@@ -74,6 +84,8 @@ analysis_policy:
   production_nir_read_directly: false
   rerun_yolo_allowed: false
   rerun_ritnet_allowed: false
-  pir_oar_reconstruction_allowed: false
+  pir_or_iris_geometry_reconstruction_allowed: false
+  ocular_aperture_qc_preserved_from_producer: true
+  ocular_aperture_is_formal_blink_or_perclos: false
   endpoint_freeze: pending_real_data_scientific_review
   machine_absolute_paths_allowed_in_science_config: false
