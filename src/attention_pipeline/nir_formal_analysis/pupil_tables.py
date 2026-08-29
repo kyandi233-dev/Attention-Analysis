@@ -657,7 +657,10 @@ def run_session(config: Config, session_id: str, *, force: bool = False) -> dict
             existing = json.loads(paths["completion"].read_text(encoding="utf-8"))
             if existing.get("status") == "complete" and existing.get("analysis_ready_sha256") == _digest_file(_session_frame_path(config, session_id)):
                 return {"session_id": session_id, "status": "skipped", "reason": "validated_completion"}
-        except Exception:
+        except (json.JSONDecodeError, UnicodeDecodeError, TypeError, ValueError, AttributeError):
+            # A stale/malformed compatibility marker is safe to ignore and regenerate.
+            # Filesystem/permission errors deliberately propagate instead of becoming
+            # a silent cache miss.
             pass
     paths["root"].mkdir(parents=True, exist_ok=True)
     frames = {
