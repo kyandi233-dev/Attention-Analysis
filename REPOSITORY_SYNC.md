@@ -2,7 +2,8 @@
 
 ## Canonical identity
 
-- Remote: `https://github.com/kyandi233-dev/attention-pipeline-v2.git`
+- Remote: `https://github.com/kyandi233-dev/Attention-Analysis.git`
+- Legacy remote alias: `https://github.com/kyandi233-dev/attention-pipeline-v2.git` (redirects to the canonical repository)
 - Controlled branch: `codex/v2-YOLO+Tracking+RInet`
 - Workspace registry: `D:\Project\PROJECT_INDEX.md`
 - Central integration truth: `greenboo26/focuswave-multimodal-attention-analysis`

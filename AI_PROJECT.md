@@ -3,7 +3,8 @@
 ## Identity
 
 - project system: FocusWave / 厚粲杯 multimodal attention
-- canonical repository: `kyandi233-dev/attention-pipeline-v2`
+- canonical repository: `kyandi233-dev/Attention-Analysis`
+- legacy local path: `D:\Project\厚粲杯\08_算法\external\attention-pipeline-v2`
 - controlled working branch: `codex/v2-YOLO+Tracking+RInet`
 - repository role: upstream/experimental vision and NIR pipeline producer
 
