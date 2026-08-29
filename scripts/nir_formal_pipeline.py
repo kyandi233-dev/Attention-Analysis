@@ -12,6 +12,12 @@ Structural gates always run for the requested stage. Optional scientific layers
 can be selected with ``--only-steps`` or omitted with ``--skip-steps``. Every
 step is timed and written to ``execution_steps.csv`` / ``execution_manifest.json``.
 A run with deliberately skipped optional analyses is explicitly ``partial_run``.
+
+The resting-period layer is an observability audit, not a mandatory baseline.
+It uses ``baseline_start``/``baseline_stop`` from each formal
+``beh/master_timeline.csv``. Until observability thresholds are pre-frozen, the
+step reports ``audit_only_thresholds_not_frozen`` and never authorizes a resting
+pupil reference merely because pupil samples are present.
 """
 from __future__ import annotations
 
@@ -40,10 +46,12 @@ from attention_pipeline.nir_formal_analysis.identity_audit import run_nir_identi
 from attention_pipeline.nir_formal_analysis.probe_contract import run_probe_contract_repair
 from attention_pipeline.nir_formal_analysis.pupil_tables import run_cohort
 from attention_pipeline.nir_formal_analysis.repeat_visit_sensitivity import run_candidate_visit_sensitivity
+from attention_pipeline.nir_formal_analysis.resting_observability import run_resting_observability
 from attention_pipeline.nir_formal_analysis.scientific_models import run_reference_adjusted_models
 
 
 OPTIONAL_TABLE_STEPS = (
+    "resting_observability",
     "candidate_validation",
     "visit_sensitivity",
     "event_response",
@@ -134,7 +142,11 @@ def main() -> int:
         print(json.dumps({
             "structural_steps": STRUCTURAL_STEPS,
             "optional_table_steps": OPTIONAL_TABLE_STEPS,
-            "contract": "structural steps cannot be skipped; omitted optional steps make run_status=partial_run",
+            "contract": (
+                "structural steps cannot be skipped; omitted optional steps make "
+                "run_status=partial_run; resting_observability is audit-only until "
+                "its thresholds are pre-frozen"
+            ),
         }, ensure_ascii=False, indent=2))
         return 0
 
@@ -230,6 +242,25 @@ def main() -> int:
                 required=True,
             )
             result["baseline_contract"] = baseline_contract
+
+            # Resting-period observability is deliberately optional.  Audit-only
+            # status is not a release failure: it means the timeline/source facts
+            # were summarized but observability thresholds have not yet been
+            # authorized.  Session-specific problems are preserved in its failure
+            # table rather than being reinterpreted as closed eyes.
+            resting_observability = ledger.run(
+                "resting_observability",
+                lambda: run_resting_observability(
+                    Path(args.materialize_config),
+                    Path(args.tables_config),
+                    subjects=sessions,
+                    paths_config=args.paths_config,
+                ),
+                required=False,
+                requested="resting_observability" in selected_optional,
+                skip_reason="user omitted resting_observability",
+            )
+            result["resting_observability"] = resting_observability
 
             probe_contract = ledger.run(
                 "probe_contract",
