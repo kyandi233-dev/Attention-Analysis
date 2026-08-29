@@ -6,9 +6,9 @@
 |---|---|---|
 | `behavior_formal_v2.yaml` | FocusWave v3.1.3/v3.1.4 science-equivalent Behavior science-v3 下游 | **当前正式 Behavior 配置**；`scripts/sart_formal_analysis.py` 默认入口 |
 | `behavior_formal.yaml` | 早期 BB/formal-v1 行为配置，含历史机器路径 | **历史/兼容配置**；当前正式 Behavior/NIR 不再依赖它 |
-| `formal_multimodal_v2.yaml` | 当前单模态公共合同 + 历史 adapter/deferred fusion 边界 | **公共治理合同，不是一个全模态生产 runner**；其中 legacy `nir-adapt` 与 `merge-audit` 明确不能授权正式统计/融合 |
+| `formal_multimodal_v2.yaml` | 当前单模态公共合同 + 模态可用性规则 + 历史 adapter/deferred fusion 边界 | **公共治理合同，不是一个全模态生产 runner**；其中 legacy `nir-adapt` 与 `merge-audit` 明确不能授权正式统计/融合 |
 | `nir_analysis_ready.yaml` | staged NIR pupil-only materialization + producer OAR QC 保留 | **当前 NIR staged 配置**；JSON source manifest 使用 `nir_analysis_ready_source_manifest_json` |
-| `nir_formal_analysis.yaml` | NIR trial/probe/time-on-task 等分析表 | **当前 NIR staged 配置**；Behavior trial 复用 `behavior_formal_v2.yaml` runtime/path registry |
+| `nir_formal_analysis.yaml` | NIR trial/probe/time-on-task 等分析表 | **当前 NIR staged 配置**；Behavior trial 复用 `behavior_formal_v2.yaml` runtime/path registry；PIR/iris geometry 与 ocular-aperture QC 已分开声明 |
 | `rgb_formal.yaml` | preserved RGB 输出的轻量 Motion/Pose/Blink downstream | **当前正式 RGB 轻量配置**；PERCLOS/AU/emotion/rPPG/复杂预测/fusion 默认 deferred |
 | `sart_bbb_v3_0.yaml` | 2026-08-16、sub-011~030、BBB SART 分析 | 历史可执行配置，不是当前口径 |
 | `preexperiment.yaml` | 预实验 v2 路径、窗口、审批门等 | 历史兼容配置；保留原机器路径用于 provenance，不作为 current CLI 默认入口 |
@@ -37,23 +37,39 @@ scripts/rgb_formal_downstream.py
 
 ## 本机路径规则
 
-正式下游统一通过 `configs/paths.local.yaml` 或环境变量 `ATTENTION_ANALYSIS_PATHS_CONFIG` 解析本机路径。仓库只提交 `configs/paths.example.yaml` 作为字段模板；`paths.local.yaml` 必须 gitignored。当前 path-registry loader 支持版本 1/2/3；未知未来版本 fail closed。
+正式下游统一通过 `configs/paths.local.yaml` 或环境变量 `ATTENTION_ANALYSIS_PATHS_CONFIG` 解析本机路径。仓库只提交 `configs/paths.example.yaml` 作为字段模板；`paths.local.yaml` 必须 gitignored。当前 path-registry loader 支持版本 1/2/3；未知未来版本 fail closed。**新电脑优先复制 version 3 模板，不要沿用旧版缺键文件。**
+
+当前 staged NIR 特别有两个容易串线的 manifest：
+
+- `nir_analysis_ready_source_manifest_json`：当前权威 staged pupil-only materializer，JSON object + `sessions[]`；
+- `nir_source_manifest`：历史 CSV adapter 专用。
+
+两者格式和用途不同，不能指向同一个文件。
 
 历史配置中仍存在的 D:/E:/F: 等绝对路径只代表历史运行环境，不得复制到新的正式配置。历史测试需要这些路径/旧原始数据时必须显式标记/skip，不能让干净环境的全量 pytest 产生无法解释的假红。
 
-## 身份和 cohort 配置边界
+## cohort、身份与模态可用性边界
 
 - `session_id`/`subid` 是一次实验/采集场次，不是 participant。
 - `participant_key` 是问卷/重复登记中的已核验匿名参与者来源字段。
-- `participant_group_id` 是 Behavior、NIR、RGB、正式推断、聚类重抽样和 participant-disjoint prediction 的唯一 canonical 内部统计键。
-- 旧 `repeat_participant_id` 仅作为 cohort manifest 的 legacy input/provenance 和旧 Behavior 函数边界的兼容别名；进入正式推断前必须验证与 `participant_group_id` 一致。
-- staged NIR 的 `analysis_group_token` 只允许作为存储兼容别名；必须通过一一 partition parity 审计证明与 `participant_group_id` 等价。
-- 仅靠 legacy repeat group、没有问卷 participant_key/crosswalk 的身份，必须通过 allow-listed `identity_status` 治理状态；否则 session 保留，但参与者级推断为 `not_estimable`。
-- 身份无法解析时绝不能用 `session_id` 回退成 participant。
+- `participant_group_id` 是 Behavior、NIR、RGB、正式推断、聚类重抽样和 participant-disjoint prediction 的 canonical 内部统计键。
+- 旧 `repeat_participant_id` 仅作为 cohort manifest 的 legacy input/provenance 和旧 Behavior 函数边界的兼容别名；进入正式推断前验证与 `participant_group_id` 一致。
+- staged NIR 的 `analysis_group_token` 只允许作为存储兼容别名；必须通过 partition parity 审计证明与 `participant_group_id` 等价。
 - questionnaire 始终 LEFT JOIN；缺问卷不能缩减 governed cohort。
+- **模态缺失不是身份缺失。** 某个已知 session/participant 没录到 RGB、mmWave 或 NIR，只能在该模态记录 `source_missing` / `structurally_invalid` / `not_estimable` 等 availability/QC 状态，不能因此删除 Behavior 或其他模态中的该 session。
+- 缺失模态不能填 0、不能伪装成功，也不能把该 participant 重新编号。未来 paired 多模态分析可以显式使用 common-available subset，但必须同时报告原 governed cohort 与各模态覆盖率。
 
 ## NIR ocular aperture 边界
 
 `fullclass_ocular_aperture_ratio_median` / `p90` 是生产 RITnet 可见 ocular mask（sclera + iris + pupil）的眼睛开合 **QC 候选**，staged NIR 必须保留，不得与 PIR 一起静默丢弃。它们不是 pupil metric、不是 iris diameter、不是 MediaPipe EAR，也不能直接叫 blink/PERCLOS。正式 PIR/iris-geometry 派生仍然禁止。
 
-详细身份/管线连续性审计见 `docs/060-formal-analysis/007-身份键与正式管线连续性联合审计_20260830.md`；最终修复后的复审记录应以本轮最新代码与 CI 为准。
+当前配置已经不再使用模糊的 `pir_oar_allowed` 混合开关，而是拆成：
+
+```text
+pir_candidate_allowed = false
+iris_geometry_candidate_allowed = false
+ocular_aperture_qc_allowed = true
+ocular_aperture_formal_endpoint = false
+```
+
+详细身份/管线连续性审计见 `docs/060-formal-analysis/007-身份键与正式管线连续性联合审计_20260830.md`；本轮修复后的完整复审与新电脑迁移清单见同目录最新 009/010 文档。
