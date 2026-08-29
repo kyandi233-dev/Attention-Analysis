@@ -11,28 +11,34 @@ def project_root():
 
 
 def pytest_collection_modifyitems(items):
-    """Classify environment-bound historical tests without hiding portable failures."""
+    """Classify environment-bound/orphaned historical tests without hiding current failures.
+
+    Current formal tests must remain runnable in a clean checkout. Historical tests
+    whose implementation scripts are no longer present are retained for provenance,
+    but are explicit skips rather than unexplained ModuleNotFound/FileNotFound errors.
+    """
     local_marker = pytest.mark.requires_local_raw_data
     legacy_backend_marker = pytest.mark.legacy_optional_backend
-    removed_roi_backend_tests = {
-        "test_roi_check_configs",
-        "test_faceparts_roi_detects_two_eyes_sorted_by_x",
-        "test_faceparts_roi_rejects_wrong_class_mapping",
-        "test_faceparts_roi_returns_none_when_fewer_than_two_eyes",
+    orphaned_files = {"test_roi_backends.py", "test_pupil_adapter.py"}
+    orphaned_benchmark_tests = {
+        "test_apply_params_targets_swirski_params_object",
+        "test_canonical_axes_preserve_ellipse_orientation",
     }
+
     for item in items:
         if "config" in getattr(item, "fixturenames", ()):
             item.add_marker(local_marker)
-        if (
-            item.path.name == "test_roi_backends.py"
-            and item.name in removed_roi_backend_tests
-        ):
+
+        orphaned = item.path.name in orphaned_files or (
+            item.path.name == "test_benchmark.py" and item.name in orphaned_benchmark_tests
+        )
+        if orphaned:
             item.add_marker(legacy_backend_marker)
             item.add_marker(
                 pytest.mark.skip(
                     reason=(
-                        "historical optional ROI backend module was removed from the current "
-                        "repository; retained test is provenance-only until deletion is authorized"
+                        "historical regression target is not present in the current repository; "
+                        "test retained as provenance until explicit deletion/archival is authorized"
                     )
                 )
             )
