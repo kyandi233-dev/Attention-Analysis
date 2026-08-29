@@ -10,15 +10,16 @@ from ritnet_fullclass_schema import (
     FRAME_COVERAGE_SCHEMA_VERSION,
     SOURCE_YOLO_FIELDS,
     UNCERTAINTY_BASE_FIELDS,
+    VALIDATION_GEOMETRY_FIELDS,
     project_row,
     validate_exact_schema,
 )
 
 
-def test_final_schemas_are_unique_and_versioned():
+def test_shadow_schema_is_unique_and_versioned():
     assert len(EYE_METRIC_FIELDS) == len(set(EYE_METRIC_FIELDS))
     assert len(FRAME_COVERAGE_FIELDS) == len(set(FRAME_COVERAGE_FIELDS))
-    assert EYE_METRICS_SCHEMA_VERSION == 6
+    assert EYE_METRICS_SCHEMA_VERSION == 7
     assert FRAME_COVERAGE_SCHEMA_VERSION == 2
     assert "source_detection_source" in SOURCE_YOLO_FIELDS
     assert "source_detection_source" in EYE_METRIC_FIELDS
@@ -27,7 +28,7 @@ def test_final_schemas_are_unique_and_versioned():
     assert "soft_class_fraction_domain_version" in UNCERTAINTY_BASE_FIELDS
 
 
-def test_v6_keeps_four_classes_and_pupil_geometry_without_iris_fit_or_pir():
+def test_shadow_schema_keeps_production_fields_and_adds_three_validation_paths():
     for name in ("background", "sclera", "iris", "pupil"):
         assert f"hard_{name}_pixels" in EYE_METRIC_FIELDS
         assert f"hard_{name}_fraction" in EYE_METRIC_FIELDS
@@ -40,6 +41,17 @@ def test_v6_keeps_four_classes_and_pupil_geometry_without_iris_fit_or_pir():
     assert "boundary_entropy_p95" not in EYE_METRIC_FIELDS
     assert "whole_max_probability_p50" not in EYE_METRIC_FIELDS
     assert "ocular_entropy_mean" in EYE_METRIC_FIELDS
+
+    assert "validation_geometry_version" in VALIDATION_GEOMETRY_FIELDS
+    for method in ("legacy", "topology", "ellseg"):
+        assert f"validation_{method}_pupil_fit_valid" in VALIDATION_GEOMETRY_FIELDS
+        assert f"validation_{method}_pupil_center_x" in VALIDATION_GEOMETRY_FIELDS
+        assert f"validation_{method}_pupil_geom_mean_diameter" in VALIDATION_GEOMETRY_FIELDS
+        assert f"validation_{method}_pupil_geometry_method" in VALIDATION_GEOMETRY_FIELDS
+        assert f"validation_{method}_pupil_geometry_failure_reason" in VALIDATION_GEOMETRY_FIELDS
+    assert "validation_ellseg_pupil_valid_boundary_point_count" in VALIDATION_GEOMETRY_FIELDS
+    assert "validation_ellseg_pupil_ransac_used" in VALIDATION_GEOMETRY_FIELDS
+    assert set(VALIDATION_GEOMETRY_FIELDS).issubset(set(EYE_METRIC_FIELDS))
 
 
 def test_analysis_domain_qc_facts_are_persisted_by_final_schema():

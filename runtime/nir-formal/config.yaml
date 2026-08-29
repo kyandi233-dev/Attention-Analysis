@@ -49,7 +49,7 @@ ritnet:
   pupil_confidence_min: null
 
 fullclass:
-  output_dirname: "ritnet-fullclass-final"
+  output_dirname: "ritnet-fullclass-geometry-validation"
   roi:
     target_width: 640
     target_height: 400
