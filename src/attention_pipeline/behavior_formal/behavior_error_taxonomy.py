@@ -29,6 +29,16 @@ def _bool(frame: pd.DataFrame, column: str) -> pd.Series:
     return frame[column].fillna(False).astype(bool)
 
 
+def _with_block_id(frame: pd.DataFrame) -> pd.DataFrame:
+    out = frame.copy()
+    if "block_id" not in out.columns:
+        if "block_num" not in out.columns:
+            raise ValueError("taxonomy requires block_id or block_num")
+        block = pd.to_numeric(out["block_num"], errors="coerce").astype("Int64")
+        out["block_id"] = "B" + block.astype(str)
+    return out
+
+
 def add_omission_taxonomy(trials: pd.DataFrame) -> pd.DataFrame:
     """Add non-destructive omission/error mechanism labels.
 
@@ -138,13 +148,14 @@ def enrich_multiscale_taxonomy(
         "block": ["repeat_participant_id", "session_id", "block_id"],
         "cycle": ["repeat_participant_id", "session_id", "block_id", "cycle_bin"],
     }
+    source_all = _with_block_id(trials)
     result: dict[str, pd.DataFrame] = {}
     for scale, table in scale_tables.items():
         if table is None or table.empty or scale not in specs:
             result[scale] = table.copy() if table is not None else pd.DataFrame()
             continue
         group_cols = specs[scale]
-        source = trials.copy()
+        source = source_all.copy()
         if scale == "cycle":
             source = source.dropna(subset=["cycle_bin"])
         taxonomy = _aggregate(source, group_cols)
@@ -159,6 +170,7 @@ def enrich_probe_taxonomy(
     """Recompute taxonomy inside each strict pre-probe window using the same anchor rules."""
     if probe_sensitivity is None or probe_sensitivity.empty:
         return probe_sensitivity.copy() if probe_sensitivity is not None else pd.DataFrame()
+    source = _with_block_id(trials)
     rows: list[dict[str, Any]] = []
     for record in probe_sensitivity.itertuples(index=False):
         session = str(record.session_id)
@@ -167,12 +179,12 @@ def enrich_probe_taxonomy(
         probe_time = float(record.probe_time_ms)
         seconds = int(record.window_seconds_nominal)
         lower = probe_time - seconds * 1000.0
-        current = trials[
-            trials["session_id"].astype(str).eq(session)
-            & trials["block_id"].astype(str).eq(block)
-            & _numeric(trials, "trial_num").lt(anchor_trial)
-            & _numeric(trials, "absolute_onset_time").lt(probe_time)
-            & _numeric(trials, "absolute_onset_time").ge(lower)
+        current = source[
+            source["session_id"].astype(str).eq(session)
+            & source["block_id"].astype(str).eq(block)
+            & _numeric(source, "trial_num").lt(anchor_trial)
+            & _numeric(source, "absolute_onset_time").lt(probe_time)
+            & _numeric(source, "absolute_onset_time").ge(lower)
         ]
         row = {
             "probe_event_id": str(record.probe_event_id),
