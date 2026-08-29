@@ -20,13 +20,16 @@ METRIC_LABELS_ZH = {
     "go_correct_rt_iqr_ms": "正确 Go RT 四分位距（ms）",
     "go_correct_rt_cv": "正确 Go RT 变异系数",
     "go_correct_rt_theilsen_slope_ms_per_s": "正确 Go RT 稳健斜率（ms/s）",
-    "omission_rate": "原始 Go 遗漏率",
+    "omission_rate": "原始 Go 遗漏率（兼容字段）",
+    "raw_go_omission_rate": "原始 Go 遗漏率",
+    "clean_go_omission_rate": "无已检出运动时序歧义的 Go 遗漏率",
+    "timing_ambiguous_go_omission_rate": "存在运动时序歧义的 Go 遗漏率",
     "commission_rate": "No-Go 误按率",
     "dprime_loglinear": "d′",
     "criterion_c": "判别标准 c",
     "beta": "β",
-    "omission_no_detected_motor_timing_ambiguity_rate": "未检测到运动时序歧义的 Go 遗漏率",
-    "omission_motor_timing_ambiguous_rate": "存在运动时序歧义的 Go 遗漏率",
+    "omission_no_detected_motor_timing_ambiguity_rate": "无已检出运动时序歧义的 Go 遗漏率（兼容字段）",
+    "omission_motor_timing_ambiguous_rate": "存在运动时序歧义的 Go 遗漏率（兼容字段）",
     "omission_prestimulus_only_ambiguity_rate": "仅刺激前按键歧义的 Go 遗漏率",
     "omission_carryover_only_ambiguity_rate": "仅前试次串键歧义的 Go 遗漏率",
     "omission_prestimulus_and_carryover_ambiguity_rate": "刺激前按键且串键歧义的 Go 遗漏率",
@@ -34,7 +37,11 @@ METRIC_LABELS_ZH = {
     "anticipatory_go_response_candidate_rate": "Go 提前反应候选率",
 }
 
-ALL_FIGURE_METRICS = tuple(dict.fromkeys([*CANONICAL_METRICS, *TAXONOMY_RATE_METRICS]))
+# ``omission_rate`` is the historical compatibility alias of
+# ``raw_go_omission_rate``.  The systematic publication pack renders the new
+# formal field once rather than creating two visually duplicate figure families.
+_BASE_FIGURE_METRICS = tuple(m for m in CANONICAL_METRICS if m != "omission_rate")
+ALL_FIGURE_METRICS = tuple(dict.fromkeys([*_BASE_FIGURE_METRICS, *TAXONOMY_RATE_METRICS]))
 FIGURE_FAMILIES = (
     "session_distribution",
     "block_pair",
