@@ -3,9 +3,9 @@
 This command never reads production NIR directly. It consumes the authoritative
 pupil-only analysis-ready layer plus the already-produced formal Behavior tables
 and writes 11_analysis_tables. Long overlapping windows are preserved for
-multiscale description but receive an explicit dependence audit.  After table
-construction, strict pre-probe behavior/visual exposure semantics are audited and
-repaired before the run is considered successful.
+multiscale description but receive an explicit dependence audit. After table
+construction, strict pre-probe semantics, candidate validation, and reference
+unadjusted/adjusted model interfaces are audited before success is returned.
 """
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from pathlib import Path
 from attention_pipeline.nir_formal_analysis.candidate_validation import run_candidate_validation
 from attention_pipeline.nir_formal_analysis.probe_contract import run_probe_contract_repair
 from attention_pipeline.nir_formal_analysis.pupil_tables import run_cohort
+from attention_pipeline.nir_formal_analysis.scientific_models import run_reference_adjusted_models
 
 
 def parse_args() -> argparse.Namespace:
@@ -56,8 +57,14 @@ def main() -> int:
 
     candidate_validation = run_candidate_validation(Path(args.config), subjects=sessions)
     payload["candidate_validation"] = candidate_validation
+    if candidate_validation.get("status") != "complete":
+        print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+        return 2
+
+    reference_models = run_reference_adjusted_models(Path(args.config), subjects=sessions)
+    payload["reference_adjusted_models"] = reference_models
     print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
-    return 0 if candidate_validation.get("status") == "complete" else 2
+    return 0 if reference_models.get("status") != "blocked" else 2
 
 
 if __name__ == "__main__":
