@@ -1,81 +1,82 @@
 pipeline:
-  name: attention-analysis-nir-analysis-ready
-  version: 1.0.0
-  schema_version: 1
-  cohort_label: cohort-44-exploratory
+  name: attention-analysis-nir-analysis-ready-pupil-only
+  version: 2.0.0
+  schema_version: 2
+  signal_semantics: pupil_geometry_only
   timezone: Asia/Shanghai
 
+# These are three different hierarchy/counting axes. They must never be reported
+# as one participant count or treated as evidence of measurement validity.
+cohort_topology:
+  sessions: 44
+  analysis_groups: 38
+  double_session_repeat_groups: 6
+
 paths:
-  # Frozen production discovery/alignment contract. Read-only input.
-  alignment_config: "configs/nir_behavior_alignment.yaml"
-  # Analysis-ready derived data live outside production and existing QC layers.
-  output_root: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v2/cohort-44-exploratory/10_analysis_ready"
+  # Site-local, read-only manifest. Do not commit the real manifest: it contains
+  # local source locations and anonymous analysis-group tokens used for leakage-safe
+  # grouping. Override this path in a local config when needed.
+  source_manifest: "../Attention-Analysis-local/nir_topology_pupil_only.json"
+  # Portable derived default; production runs may use --output-root.
+  output_root: "../Attention-Analysis-local/nir-behavior-v2/10_analysis_ready"
 
-subjects:
-  # Empty means: discover every completed production full-class subject through
-  # the frozen alignment source roots. For the current snapshot this should be 44.
-  include: []
+source_contract:
+  accepted_eye_metrics_schemas: [6, 7]
+  eye_mapping:
+    frame_left: left
+    frame_right: right
+  required_pupil_geometry:
+    - pupil_found
+    - pupil_fit_valid
+    - pupil_center_x
+    - pupil_center_y
+    - pupil_geom_mean_diameter
+  retained_segmentation_proportions:
+    - hard_pupil_fraction
+    - soft_pupil_fraction
+    - hard_iris_fraction
+    - soft_iris_fraction
+  # Iris fractions are retained only as segmentation proportions. They are not
+  # an iris diameter and can never authorize PIR/OAR reconstruction.
+  forbidden_derived_metrics:
+    - PIR
+    - OAR
+    - pupil_to_iris_ratio
+    - fullclass_pupil_to_iris_diameter_ratio
+    - fullclass_ocular_aperture_ratio_median
+    - fullclass_ocular_aperture_ratio_p90
 
-materialization:
-  formal_phases: ["block1", "block2"]
-  # Left/right rows sharing subject+phase+phase_segment+frame_idx should describe
-  # the same timepoint. Larger discrepancies are treated as a contract error.
-  max_eye_time_delta_ms: 1.0
-
-validity:
-  # Primary frame rule frozen by docs/020-nir/212-*.md.
-  primary:
-    require_pupil_fit_valid: true
-    require_iris_outer_fit_valid: true
-    require_pupil_center_in_iris_outer: true
-    require_iris_larger_than_pupil: true
-    require_pir_finite: true
-    require_pupil_whole_mask_not_edge: false
-    require_iris_whole_mask_not_edge: false
-    require_roi_not_clipped: false
-  # Historical production rule retained only as strict sensitivity.
-  strict:
-    require_fullclass_normalization_valid: true
-    require_pir_finite: true
+quality_tracks:
+  primary: "observed + RITnet success + positive finite fitted pupil geometry; interpolation-only excluded"
+  strict_sensitivity: "primary + no ROI clipping/padding-edge pupil + no temporal anomaly"
+  separate_failure_axes:
+    - source_missing
+    - ritnet_missing
+    - roi_clipped
+    - geometry_invalid
+    - temporal_flagged
+    - interpolation_only
 
 standardization:
-  primary: "subject_eye_median_centered_across_formal_blocks"
+  primary: "session_eye_median_centered_across_block1_block2"
   robust_z_scale: 1.4826
-  block_centering_primary: false
+  repeat_sessions_share_baseline: false
+  rationale: "repeat sessions remain separate to avoid cross-session leakage"
 
 binocular:
-  # Base analysis-ready layer fuses only after per-eye baseline adjustment.
-  # Coverage and binocular-concordance gates belong to later analysis windows.
-  base_layer_input: "primary_centered_pir"
-  both_valid: "equal_weight_mean"
+  base_layer_input: "centered_pupil_diameter"
+  both_valid: equal_weight_mean
   single_eye_fallback: true
-  apply_window_coverage_gate: false
-  apply_binocular_concordance_gate: false
-
-provenance:
-  # Completion markers are always hashed. Full source CSV hashing roughly doubles
-  # I/O on multi-million-row data, so it is optional for routine re-materialization.
-  hash_source_csv: false
-
-reporting:
-  known_low_usable_subjects:
-    - sub-035
-    - sub-036
-    - sub-047
-    - sub-050
-    - sub-150
-    - sub-153
-    - sub-163
-    - sub-165
-    - sub-171
-    - sub-176
+  preserve_left_right_tracks: true
 
 analysis_policy:
-  exploratory_cohort_only: true
+  enforce_expected_topology: true
   production_read_only: true
-  auto_exclude_subjects: false
+  max_eye_time_delta_ms: 1.0
+  auto_exclude_sessions: false
   auto_exclude_eyes: false
   auto_exclude_blocks: false
-  choose_coverage_from_outcome: false
+  choose_quality_threshold_from_outcome: false
   choose_window_from_outcome: false
   run_formal_statistics: false
+  interpretation_boundary: "engineering and analysis-readiness only"
