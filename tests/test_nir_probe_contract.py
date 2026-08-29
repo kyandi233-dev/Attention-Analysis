@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from attention_pipeline.nir_formal_analysis.probe_contract import (
@@ -66,5 +67,7 @@ def test_probe_visual_exposure_uses_only_strict_preprobe_trials() -> None:
     assert exposure["visual_trial_n"] == 2
     assert exposure["visual_joined_trial_n"] == 2
     assert exposure["visual_trial_coverage"] == 1.0
-    assert exposure["central_rel_lum_mean__preprobe_mean"] == 0.3
-    assert exposure["central_rms_contrast__preprobe_mean"] == 0.2
+    # Decimal means are floating-point values; test the scientific value rather
+    # than binary representation equality.
+    assert np.isclose(exposure["central_rel_lum_mean__preprobe_mean"], 0.3)
+    assert np.isclose(exposure["central_rms_contrast__preprobe_mean"], 0.2)
