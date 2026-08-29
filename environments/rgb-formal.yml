@@ -1,0 +1,17 @@
+name: attention-rgb-formal
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - numpy>=1.24,<3
+  - pandas>=2.0,<3
+  - pyarrow>=15,<25
+  - scipy>=1.10,<2
+  - statsmodels>=0.14,<1
+  - matplotlib>=3.8,<4
+  - pyyaml>=6,<7
+  - pytest>=8,<9
+# Install this repository after activation with: python -m pip install -e .
+# This environment consumes preserved RGB raw Parquet. It intentionally excludes
+# Py-Feat/LibreFace/MediaPipe/CUDA/DirectML producer dependencies.
