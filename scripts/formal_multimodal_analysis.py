@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -13,6 +14,7 @@ from attention_pipeline.config import Config, load_config
 from attention_pipeline.formal_analysis.cohort import included_cohort, load_cohort_manifest, summarize_cohort
 from attention_pipeline.formal_analysis.merge import merge_modalities
 from attention_pipeline.formal_analysis.nir_adapter import adapt_nir_csv
+from attention_pipeline.formal_analysis.provenance import collect_runtime_provenance
 
 
 def _resolve_external(config: Config, value: str) -> Path:
@@ -65,6 +67,33 @@ def _resolve_manifest_path(config: Config, manifest_path: Path, value: object) -
     return path if path.is_absolute() else (manifest_path.parent / path).resolve()
 
 
+def _runtime_provenance(config: Config) -> dict[str, object]:
+    provenance_cfg = config.section("provenance")
+    evidence_env = str(
+        provenance_cfg.get("evidence_repo_path_env", "ATTENTION_FORMAL_EVIDENCE_REPO")
+    )
+    evidence_path = os.environ.get(evidence_env)
+    if not evidence_path:
+        raise RuntimeError(
+            f"缺少 {evidence_env}；无法在运行时解析真实 evidence Git commit，拒绝写入伪 provenance"
+        )
+    pipeline_cfg = config.section("pipeline")
+    return collect_runtime_provenance(
+        code_repo=Path(__file__).resolve().parents[1],
+        evidence_repo=Path(evidence_path),
+        evidence_repository=str(pipeline_cfg.get("evidence_repo", "")) or None,
+        require_clean=bool(provenance_cfg.get("require_clean_git_checkout", True)),
+    )
+
+
+def _optional_record_text(record: dict[str, object], key: str) -> str | None:
+    value = record.get(key)
+    if value is None or pd.isna(value):
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def command_nir_adapt(config: Config, *, sessions: list[str] | None, run_id: str | None) -> dict[str, object]:
     if config.path_registry is None:
         raise ValueError("nir-adapt requires --paths-config or ATTENTION_ANALYSIS_PATHS_CONFIG")
@@ -81,9 +110,11 @@ def command_nir_adapt(config: Config, *, sessions: list[str] | None, run_id: str
         raise ValueError(f"NIR source manifest 每个session必须唯一: {sorted(set(map(str, dup)))}")
 
     cohort = included_cohort(_cohort(config), require_groups=False)
+    cohort_summary = summarize_cohort(cohort)
     allowed = set(cohort["session_id"].astype(str))
     manifest = manifest.loc[manifest["status"].astype(str).str.lower().eq("complete")].copy()
     manifest = manifest.loc[manifest["session_id"].astype(str).isin(allowed)].copy()
+    complete_eligible_sessions = int(len(manifest))
     if sessions:
         requested = set(sessions)
         manifest = manifest.loc[manifest["session_id"].astype(str).isin(requested)].copy()
@@ -96,6 +127,10 @@ def command_nir_adapt(config: Config, *, sessions: list[str] | None, run_id: str
     if manifest.empty:
         raise ValueError("没有可适配的 complete NIR session")
 
+    # Resolve both commits before creating output directories. There is no fixed
+    # SHA fallback: unresolved or dirty checkouts fail closed.
+    provenance = _runtime_provenance(config)
+
     run_id = run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     run_root = output_base / run_id
     if run_root.exists():
@@ -107,20 +142,58 @@ def command_nir_adapt(config: Config, *, sessions: list[str] | None, run_id: str
     for record in manifest.sort_values("session_id").to_dict("records"):
         session = str(record["session_id"])
         source_csv = _resolve_manifest_path(config, source_manifest, record["eye_metrics_csv"])
-        rows.append(adapt_nir_csv(
+        adapted = adapt_nir_csv(
             source_csv,
             frame_root / f"{session}.csv",
             session_id=session,
             schema_version=record.get("schema_version"),
             reject_pir=bool(nir_cfg.get("reject_historical_pir", True)),
-        ))
+        )
+        adapted["source_provenance"] = {
+            "status": _optional_record_text(record, "status"),
+            "source_pipeline_version": _optional_record_text(record, "source_pipeline_version"),
+            "source_commit": _optional_record_text(record, "source_commit"),
+            "source_selection_reason": _optional_record_text(record, "source_selection_reason"),
+            "eye_metrics_csv": str(source_csv),
+        }
+        adapted["qc_provenance"] = {
+            "preserved_in_frame_level_output": True,
+            "tracks": list(config.section("nir").get("qc_tracks", {}).keys()),
+        }
+        rows.append(adapted)
 
     result = {
         "run_id": run_id,
         "science_config_digest": config.digest,
         "paths_config_digest": config.path_registry.digest,
+        "provenance": provenance,
         "source_manifest": str(source_manifest),
         "source_manifest_rows": int(len(manifest)),
+        "nir_input_snapshot": {
+            "complete_eligible_sessions": complete_eligible_sessions,
+            "selected_sessions": int(len(manifest)),
+            "production_completion_is_input_availability_only": True,
+            "measurement_validity_or_formal_statistics_implied": False,
+        },
+        "cohort_snapshot": {
+            "sessions": cohort_summary.sessions,
+            "groups": cohort_summary.groups,
+            "repeated_groups": cohort_summary.repeated_groups,
+            "repeated_sessions": cohort_summary.repeated_sessions,
+            "anonymous_grouping_is_provisional": True,
+            "full_remap_required_after_cohort_append": True,
+        },
+        "science_boundaries": {
+            "nir_primary_line": "pupil-only",
+            "pir_or_iris_outer_formal_line_allowed": False,
+            "oar_role": "eye-opening-or-eyelid-candidate-qc-only",
+            "oar_must_not_be_reconstructed_from_iris_fraction": True,
+            "oar_is_not_blink_rate_or_perclos": True,
+            "engineering_validation_is_measurement_validity": False,
+            "behavior_window_gate_modified_here": False,
+            "mmwave_contract_modified_here": False,
+            "mmwave_external_ecg_rsp_validation_claim_allowed": False,
+        },
         "sessions": rows,
     }
     (run_root / "run_manifest.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -26,6 +26,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[test]"
 
+      - name: Run formal analysis contract tests
+        run: |
+          python -m pytest -q \
+            tests/test_formal_analysis_v2.py \
+            tests/test_nir_adapter_blockers.py
+
       - name: Run current repository baseline tests
         run: |
           pytest -q \

@@ -5,10 +5,10 @@ from .adapter import (
     OUTPUT_SCHEMA_VERSION,
     IrisGeometryUnavailableError,
     adapt_session,
-    attach_behavior_and_visual,
     classify_quality_tracks,
     refuse_pir_without_iris_geometry,
 )
+from .join import attach_behavior_and_visual
 
 __all__ = [
     "ADAPTER_VERSION",
