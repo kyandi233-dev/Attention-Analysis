@@ -1,25 +1,32 @@
 pipeline:
-  name: attention-analysis-nir-pipeline-validation
-  version: 3
-  schema_version: 4
-  purpose: "validation-only comprehensive downstream smoke tests plus publication-grade Figure 1-10 suite using completed 11_analysis_tables and read-only 10_analysis_ready"
+  name: attention-analysis-nir-pupil-validation
+  version: 4.0.0
+  schema_version: 5
+  purpose: "pupil-only formal validation and Figure01-10 report package from completed 11_analysis_tables"
 
 paths:
-  analysis_ready_root: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v2/cohort-44-exploratory/10_analysis_ready"
-  analysis_tables_root: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v2/cohort-44-exploratory/11_analysis_tables"
-  output_root: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v2/cohort-44-exploratory/12_pipeline_validation"
-
-  # Optional external covariates. Missing files do not abort validation; status is written to extension_readiness.json / publication_suite_summary.json.
+  analysis_tables_root: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v2/cohort-44-formal/11_analysis_tables"
+  output_root: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v2/cohort-44-formal/12_pipeline_validation"
   stimulus_visual_table: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v1/stimulus_visual_properties.csv"
-  questionnaire_csv: null
 
-subjects:
-  # Empty means discover only subjects with validated 11_analysis_tables completion.
-  include: []
+cohort:
+  expected_session_count: 44
+  expected_analysis_group_count: 38
+  expected_double_session_repeat_groups: 6
+
+source_contract:
+  required_stage: "11_analysis_tables"
+  require_session_manifest: true
+  require_session_completion: true
+  required_signal_semantics: "pupil_geometry_only"
+  direct_read_production_nir: false
+  direct_read_10_analysis_ready: false
+  pir_formal_use_allowed: false
+  oar_formal_use_allowed: false
+  iris_fraction_role: "segmentation_qc_only"
 
 analysis:
   main_track: "binocular_primary"
-  track: "binocular_primary"  # backwards-compatible alias used by original diagnostic code
   robustness_tracks:
     - "binocular_primary"
     - "left_primary"
@@ -27,100 +34,70 @@ analysis:
     - "binocular_strict"
     - "left_strict"
     - "right_strict"
+  feature_families:
+    tonic:
+      - pupil_median
+      - pupil_mean
+    variability:
+      - pupil_mad
+      - pupil_iqr
+      - pupil_sd
+      - pupil_p10
+      - pupil_p90
+    derivative:
+      - pupil_slope_per_sec
+      - pupil_diff_mad
+      - pupil_diff_rate_mad_per_sec
+    phasic:
+      baseline_window: pre_200ms
+      response_window: post_200_1150ms
+      feature: phasic_pupil_delta
+  prediction:
+    outer_folds: 5
+    group_key: analysis_group_token
+    targets:
+      - go_omission_target
+      - nogo_commission_target
+    majority_baseline_required: true
+    balanced_accuracy_required: true
+    roc_auc_required_when_estimable: true
+    pr_auc_required_when_estimable: true
 
-  # Fixed smoke-test windows. They are not selected from current outcome patterns.
-  trial_display_window: "pre_5s"
-  probe_model_window: "pre_20s"
-  precursor_trial_window: "pre_5s"
-  no_go_preceding_correct_go_trials: 5
-
-  trial_state_windows:
-    - "pre_1s"
-    - "pre_3s"
-    - "pre_5s"
-    - "pre_10s"
-    - "pre_20s"
-    - "pre_30s"
-    - "pre_60s"
-  trial_event_windows:
-    - "pre_200ms"
-    - "post_200ms"
-    - "post_200_1150ms"
-  probe_windows:
-    - "pre_10s"
-    - "pre_20s"
-    - "pre_30s"
-    - "pre_60s"
-
-  dynamic_pir_features:
-    - "pir_median"
-    - "pir_mean"
-    - "pir_mad"
-    - "pir_iqr"
-    - "pir_sd"
-    - "pir_p10"
-    - "pir_p90"
-    - "pir_slope_per_sec"
-    - "pir_diff_mad"
-    - "pir_diff_rate_mad_per_sec"
-
-  # Whole-experiment Figure 1 / Block-transition Figure 2.
-  global_display_block_gap_sec: 60
-  global_summary_bin_sec: 10
-  time_on_task_display_bin_sec: 30
-  block_transition_window_sec: 120
-  block_recovery_summary_sec: 60
-
-  # True continuous event-aligned trajectories read from 10_analysis_ready.
-  event_trajectory_start_sec: -60
-  event_trajectory_end_sec: 2
-  probe_trajectory_end_sec: 0
-  event_trajectory_bin_sec: 1
-  max_go_reference_events_per_subject_block: 60
-
-  minimum_subjects_for_models: 3
-
-  # Formal-statistics architecture flags. Validation may prepare these interfaces but must not select them from current effects.
-  preserve_program_scoring: true
-  preserve_omission_qc_subtypes: true
-  preserve_probe_response_raw_codes: true
-  use_raw_pir_for_between_person_characteristics: true
-  use_centered_pir_for_within_person_effects: true
-  visual_covariates_optional: true
-  questionnaire_optional: true
+visual_covariates:
+  enabled_when_table_exists: true
+  current_trial_visual_allowed_for_pre_stimulus: false
+  previous_trial_visual_allowed: true
+  temporal_tolerance_ms: 0
+  failure_state_required: true
 
 figures:
-  # Core/diagnostic outputs remain for engineering provenance.
+  required_names:
+    - Figure01
+    - Figure02
+    - Figure03
+    - Figure04
+    - Figure05
+    - Figure06
+    - Figure07
+    - Figure08
+    - Figure09
+    - Figure10
   formats:
     - png
     - pdf
-  dpi: 180
+  dpi: 220
 
-  # Manuscript-oriented Figure 1-10 outputs. PDF/SVG are vector; PNG/TIFF are high-resolution raster.
-  publication_formats:
-    - pdf
-    - svg
-    - png
-    - tiff
-  raster_dpi: 600
-  manuscript_widths_cm:
-    single: 8
-    medium: 14
-    full: 17
-  font_family: "Arial"
-  font_fallback: "DejaVu Sans"
-  nominal_font_size_pt: 8
-  panel_label_size_pt: 10
-  fixed_canvas: true
-  use_tight_bbox: false
+provenance:
+  require_clean_code_checkout: true
+  fixed_commit_fallback_allowed: false
+  unresolved_commit_behavior: fail_closed
+  record_config_digest: true
+  record_source_stage_manifest_hashes: true
 
 scientific_boundary:
-  validation_only: true
-  nir_values_known_invalid: true
-  allow_scientific_interpretation: false
-  allow_window_selection_from_effects: false
+  validation_and_report_packaging: true
+  scientific_inference_authorized_by_code_alone: false
+  measurement_validity_claim_authorized_by_code_alone: false
+  allow_window_selection_from_current_effects: false
   allow_significance_driven_qc_thresholds: false
-  write_formal_statistics: false
-  direct_read_production_nir: false
-  direct_read_oar_from_production: false
-  continuous_trajectories_may_read_analysis_ready_only: true
+  failed_models_must_be_written_as_not_estimable: true
