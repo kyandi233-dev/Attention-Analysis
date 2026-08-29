@@ -1,30 +1,33 @@
 # 配置
 
-`configs/` 保存当前行为分析配置，以及用户明确要求继续保留、可直接重跑的历史分析配置。正式 NIR GPU 分析使用独立 frozen runtime 配置：`runtime/nir-formal/config.yaml`。
+`configs/` 同时保存当前正式下游 science config 与需要长期保留的历史/兼容配置。**当前正式执行入口与历史配置必须分开理解；机器特定路径只能放在 `configs/paths.local.yaml`，不能再把 D:/E:/F:/J:/ 等盘符写入新的 science config。**
 
 | 文件 | 用途 | 当前定位 |
 |---|---|---|
-| `behavior_formal.yaml` | FocusWave v3.1.3、最终正式 BB 行为分析 | **当前行为配置** |
-| `sart_bbb_v3_0.yaml` | 2026-08-16、sub-011~030、BBB SART 分析 | **历史可执行配置，不是当前口径** |
+| `behavior_formal_v2.yaml` | FocusWave v3.1.3 Behavior science-v3 正式下游 | **当前正式 Behavior 配置**；`scripts/sart_formal_analysis.py` 默认入口 |
+| `behavior_formal.yaml` | 早期 BB/formal-v1 行为配置，含历史机器路径 | **历史/兼容配置，不是当前正式 science-v3 权威配置**；当前 NIR 仍引用它属于待修复的管线连续性缺陷，见 `docs/060-formal-analysis/007-身份键与正式管线连续性联合审计_20260830.md` |
+| `formal_multimodal_v2.yaml` | Behavior/NIR/RGB/mmWave 接入与 deferred fusion 的总合同 | 当前总合同；具体 RGB 范围以 `rgb_formal.yaml` 为更窄权威 |
+| `nir_analysis_ready.yaml` | staged NIR pupil-only analysis-ready materialization | 当前 NIR staged 配置之一；source manifest 权威格式仍需按 007 收口 |
+| `nir_formal_analysis.yaml` | NIR trial/probe/time-on-task 等正式分析表与模型配置 | 当前 NIR staged 配置；其 Behavior loader 仍需改为复用正式 Behavior runtime preparation |
+| `rgb_formal.yaml` | preserved RGB 输出的轻量 Motion/Pose/Blink downstream | **当前正式 RGB 轻量配置**；PERCLOS/AU/emotion/rPPG/复杂预测/fusion 默认 deferred |
+| `sart_bbb_v3_0.yaml` | 2026-08-16、sub-011~030、BBB SART 分析 | 历史可执行配置，不是当前口径 |
 | `preexperiment.yaml` | 预实验 v2 路径、窗口、审批门等 | 历史兼容配置；不作为 current CLI 默认入口 |
 | `formal.yaml` | 08-16 阶段 NIR ROI / PuReST 候选链 | 历史兼容配置；不作为 current NIR 配置 |
-| `../runtime/nir-formal/config.yaml` | YOLO26n + RITnet 正式 NIR | **当前正式 NIR 配置** |
+| `../runtime/nir-formal/config.yaml` | YOLO26n + RITnet 正式 NIR 生产提取 | 当前生产 runtime 配置；与本目录的 downstream science config 分层 |
 
-## 正式原始数据根
+## 本机路径规则
 
-正式原始数据位于两个逻辑目录 `正式实验` 与 `Data`，但两块外接存储设备在 Windows 下的盘符可能根据连接顺序在 `E:` / `F:` 之间变化。因此 current Behavior 与 NIR 配置统一声明四个候选根：
+正式下游统一通过 `configs/paths.local.yaml` 或环境变量 `ATTENTION_ANALYSIS_PATHS_CONFIG` 解析本机路径。仓库只提交 `configs/paths.example.yaml` 作为字段模板；`paths.local.yaml` 必须 gitignored。
 
-```text
-E:/正式实验
-F:/正式实验
-E:/Data
-F:/Data
-```
+历史配置中仍存在的 D:/E:/F: 等绝对路径只代表历史运行环境，不得复制到新的正式配置。当前代码若仍从这些历史配置读取正式输入，应视为待修复的 active-path 合同问题，而不是继续扩大硬编码路径。
 
-运行时忽略不存在的候选路径，并在所有有效根中发现被试。若同一被试在多个有效根中出现重复正式数据，current reader 应拒绝静默选择并明确报错。
+## 身份和 cohort 配置边界
 
-当前 BB reader 同时接受 `sub-XXX_` 与 `sub-XXX` 被试目录；正式 BB 数据只纳入编号 ≥31 且同时具有 `Block1`、`Block2` 行为文件的完整被试。
+- `session_id`/`subid` 是一次实验/采集场次，不是 participant。
+- `participant_key` 是问卷/重复登记中的已核验匿名参与者来源字段。
+- `participant_group_id` 是正式推断、聚类重抽样和 participant-disjoint prediction 的统一内部统计键目标。
+- 旧 `repeat_participant_id` 继续作为 cohort manifest 的历史输入/来源追踪字段；Behavior 当前还有兼容列名使用。
+- staged NIR 仍保留 `analysis_group_token` 兼容接口；它不得形成第四套独立身份语义。
+- 身份无法解析的 session 仍可进入单模态 QC，但不得用 `session_id` 回退为 participant；参与者级分析必须输出 `not_estimable + reason`。
 
-旧 BBB 的配置、程序和结果均与当前 BB 分离：配置为 `sart_bbb_v3_0.yaml`，脚本为 `scripts/sart_bbb_v3_0_analysis.py`，实现包为 `src/attention_pipeline/behavior_bbb_v3_0/`。历史报告和图保存在 `docs/030-behavior/history/BBB-v3.0/`。这样以后需要重跑 BBB 时不必重新写代码，同时不会把三 block 统计逻辑混入当前 BB。
-
-当前行为配置不从 BBB 直接继承每 block 的 trial / No-Go / probe 固定数；这些值依据最终 v3.1.3 任务源文件和正式数据审计后再冻结。
+详细当前实现、已确认缺陷和验收顺序见 `docs/060-formal-analysis/007-身份键与正式管线连续性联合审计_20260830.md`。
