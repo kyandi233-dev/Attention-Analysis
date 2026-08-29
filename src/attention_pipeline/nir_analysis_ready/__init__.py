@@ -5,6 +5,14 @@ importable from ``nir_analysis_ready.materialize`` for provenance and legacy
 tests, but they are not used by the authoritative downstream entry points.
 """
 
+from .candidate_metrics import (
+    CANDIDATE_PIPELINE_VERSION,
+    CANDIDATE_SCHEMA_VERSION,
+    PUPIL_CANDIDATE_METRICS,
+    apply_candidate_standardization,
+    compute_candidate_baselines,
+    run_candidate_materialization,
+)
 from .materialize import (
     apply_subject_eye_standardization as legacy_apply_subject_eye_standardization,
     build_wide_timepoints as legacy_build_wide_timepoints,
@@ -24,6 +32,12 @@ from .pupil_only import (
 __all__ = [
     "ANALYSIS_READY_PIPELINE_VERSION",
     "ANALYSIS_READY_SCHEMA_VERSION",
+    "CANDIDATE_PIPELINE_VERSION",
+    "CANDIDATE_SCHEMA_VERSION",
+    "PUPIL_CANDIDATE_METRICS",
+    "apply_candidate_standardization",
+    "compute_candidate_baselines",
+    "run_candidate_materialization",
     "apply_session_eye_standardization",
     "build_wide_timepoints",
     "compute_session_eye_baselines",
