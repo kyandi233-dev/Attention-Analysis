@@ -2,10 +2,9 @@
 
 This command never reads production NIR directly. It consumes the authoritative
 pupil-only analysis-ready layer plus the already-produced formal Behavior tables
-and writes 11_analysis_tables. Long overlapping windows are preserved for
-multiscale description but receive an explicit dependence audit. Participant
-identity parity, baseline semantics, strict pre-probe semantics, candidate
-validation, event-response candidates, adjustment auditing and title-free figure
+and writes 11_analysis_tables. Participant identity parity, baseline semantics,
+strict pre-probe semantics, candidate validation, verified visit-order
+sensitivity, event-response candidates, adjustment auditing and title-free figure
 coverage are required before success is returned.
 """
 from __future__ import annotations
@@ -15,6 +14,7 @@ import json
 from pathlib import Path
 
 from attention_pipeline.nir_formal_analysis.adjustment_audit import run_adjustment_audit
+from attention_pipeline.nir_formal_analysis.adjustment_figures import run_adjustment_figures
 from attention_pipeline.nir_formal_analysis.baseline_contract import run_baseline_contract
 from attention_pipeline.nir_formal_analysis.candidate_validation import run_candidate_validation
 from attention_pipeline.nir_formal_analysis.event_response import run_event_response_candidates
@@ -22,13 +22,14 @@ from attention_pipeline.nir_formal_analysis.figures import generate_nir_figure_p
 from attention_pipeline.nir_formal_analysis.identity_audit import run_nir_identity_audit
 from attention_pipeline.nir_formal_analysis.probe_contract import run_probe_contract_repair
 from attention_pipeline.nir_formal_analysis.pupil_tables import run_cohort
+from attention_pipeline.nir_formal_analysis.repeat_visit_sensitivity import run_candidate_visit_sensitivity
 from attention_pipeline.nir_formal_analysis.scientific_models import run_reference_adjusted_models
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="configs/nir_formal_analysis.yaml")
-    parser.add_argument("--paths-config", default=None, help="Machine-local path registry used by identity audit.")
+    parser.add_argument("--paths-config", default=None, help="Machine-local path registry used by identity/visit audits.")
     parser.add_argument("--subjects", help="Optional comma-separated session-key override.")
     parser.add_argument(
         "--force", action="store_true",
@@ -74,6 +75,13 @@ def main() -> int:
     if candidate_validation.get("status") != "complete":
         return _fail(payload)
 
+    visit_sensitivity = run_candidate_visit_sensitivity(
+        Path(args.config), subjects=sessions, paths_config=args.paths_config
+    )
+    payload["candidate_visit_sensitivity"] = visit_sensitivity
+    if visit_sensitivity.get("status") != "complete":
+        return _fail(payload)
+
     event_response = run_event_response_candidates(Path(args.config), subjects=sessions)
     payload["event_response_candidates"] = event_response
     if int(event_response.get("n_sessions_failed", 0)):
@@ -92,6 +100,10 @@ def main() -> int:
     figures = generate_nir_figure_pack(Path(args.config), subjects=sessions)
     payload["figures"] = figures
     if figures.get("status") != "complete":
+        return _fail(payload)
+    adjustment_figures = run_adjustment_figures(Path(args.config))
+    payload["adjustment_figures"] = adjustment_figures
+    if adjustment_figures.get("status") != "complete":
         return _fail(payload)
 
     print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
