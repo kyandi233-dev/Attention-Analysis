@@ -9,13 +9,15 @@ import pandas as pd
 
 from attention_pipeline.config import load_config
 from attention_pipeline.formal_analysis.cohort import included_cohort, load_cohort_manifest
-from attention_pipeline.formal_analysis.identity_questionnaire import (
-    load_repeat_registry,
-    reconcile_cohort_identity,
+from attention_pipeline.formal_analysis.identity_contract import (
+    DEFAULT_ALLOWED_LEGACY_IDENTITY_STATUSES,
+    assert_participant_group_contract,
+    reconcile_formal_identity,
 )
+from attention_pipeline.formal_analysis.identity_questionnaire import load_repeat_registry
 from .pupil_tables import selected_sessions
 
-IDENTITY_AUDIT_VERSION = "nir-participant-identity-audit-v1"
+IDENTITY_AUDIT_VERSION = "nir-participant-identity-audit-v2"
 
 
 def _resolve(config, key: str) -> Path:
@@ -42,7 +44,19 @@ def _analysis_group_token(config, session_id: str) -> str:
     return str(tokens[0])
 
 
+def _legacy_identity_policy(policy: dict[str, Any]) -> tuple[str, tuple[str, ...]]:
+    status_column = str(policy.get("legacy_identity_status_column", "identity_status"))
+    raw_allowed = policy.get(
+        "allowed_legacy_identity_statuses",
+        sorted(DEFAULT_ALLOWED_LEGACY_IDENTITY_STATUSES),
+    )
+    if not isinstance(raw_allowed, list) or not raw_allowed:
+        raise ValueError("identity.allowed_legacy_identity_statuses must be a non-empty list")
+    return status_column, tuple(str(value) for value in raw_allowed)
+
+
 def load_reconciled_identity(config_path: str | Path, *, paths_config: str | Path | None = None) -> pd.DataFrame:
+    """Load NIR identity through the same governance gate used by Behavior/RGB."""
     config = load_config(config_path, paths_config=paths_config)
     policy = config.section("identity")
     cohort = load_cohort_manifest(
@@ -56,7 +70,13 @@ def load_reconciled_identity(config_path: str | Path, *, paths_config: str | Pat
         config,
         path_key=str(policy.get("repeat_registry_path_key", "repeat_registry")),
     )
-    return reconcile_cohort_identity(cohort, registry)
+    status_column, allowed_statuses = _legacy_identity_policy(policy)
+    return reconcile_formal_identity(
+        cohort,
+        registry,
+        legacy_status_column=status_column,
+        allowed_legacy_statuses=allowed_statuses,
+    )
 
 
 def run_nir_identity_audit(
@@ -67,7 +87,9 @@ def run_nir_identity_audit(
 ) -> dict[str, Any]:
     config = load_config(config_path, paths_config=paths_config)
     identity = load_reconciled_identity(config_path, paths_config=paths_config)
-    governed = included_cohort(identity, require_groups=True)
+    # Cohort membership and participant-level estimability are separate. Keep every
+    # included session here; unresolved identity becomes an explicit per-session failure.
+    governed = included_cohort(identity, require_groups=False)
     sessions = selected_sessions(config, subjects)
     if not sessions:
         raise ValueError("NIR identity audit has no selected sessions")
@@ -82,13 +104,21 @@ def run_nir_identity_audit(
             row = governed_map.loc[session_id]
             if isinstance(row, pd.DataFrame):
                 raise ValueError("governed cohort contains duplicate session_id")
+            participant_group_id = row.get("participant_group_id", pd.NA)
+            if pd.isna(participant_group_id):
+                reason = row.get(
+                    "participant_identity_resolution_reason",
+                    "participant identity unresolved",
+                )
+                raise ValueError(f"participant_identity_unresolved:{reason}")
             token = _analysis_group_token(config, session_id)
             records.append({
                 "session_id": session_id,
                 "analysis_group_token": token,
                 "participant_key": row.get("participant_key", pd.NA),
-                "participant_group_id": row.get("participant_group_id", pd.NA),
+                "participant_group_id": participant_group_id,
                 "participant_identity_source": row.get("participant_identity_source", pd.NA),
+                "participant_identity_resolution_reason": row.get("participant_identity_resolution_reason", pd.NA),
                 "visit_order": row.get("visit_order", pd.NA),
                 "prior_visit_count": row.get("prior_visit_count", pd.NA),
                 "identity_conflict_flag": row.get("identity_conflict_flag", pd.NA),
@@ -111,6 +141,7 @@ def run_nir_identity_audit(
     partition_rows: list[dict[str, Any]] = []
     partition_ok = False
     if not table.empty and not failures:
+        assert_participant_group_contract(table, require_resolved=True)
         token_to_group = table.groupby("analysis_group_token")["participant_group_id"].nunique(dropna=True)
         group_to_token = table.groupby("participant_group_id")["analysis_group_token"].nunique(dropna=True)
         bad_tokens = token_to_group[token_to_group > 1]
@@ -141,7 +172,7 @@ def run_nir_identity_audit(
     else:
         partition_rows.append({
             "audit": "participant_partition_parity", "status": "not_estimable",
-            "conflict_n": len(failures), "detail": "session load failure(s)",
+            "conflict_n": len(failures), "detail": "session identity/source load failure(s)",
         })
 
     table.to_csv(root / "nir_identity_group_audit.csv", index=False, encoding="utf-8-sig")
@@ -159,6 +190,7 @@ def run_nir_identity_audit(
         "partition_parity": partition_ok,
         "grouping_semantics": "analysis_group_token may retain its storage label only when its partition is one-to-one equivalent to the governed participant_group_id partition",
         "participant_key_missing_policy": "preserve missing participant_key; do not invent it from session number",
+        "legacy_only_identity_policy": "must pass the same governance-status gate used by Behavior and RGB",
         "outside_governed_cohort_allowed": False,
         "scientific_inference_authorized": bool(status == "complete"),
     }
