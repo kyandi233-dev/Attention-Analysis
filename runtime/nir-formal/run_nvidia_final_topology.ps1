@@ -8,14 +8,14 @@ param(
 
 $ErrorActionPreference = "Stop"
 $RuntimeDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$PythonExe = "D:\Project\厚粲杯\08_算法\.venv_nir_gpu\Scripts\python.exe"
+$PythonExe = "D:\CondaEnvs\nir-nvidia\python.exe"
 $Config = (Resolve-Path -LiteralPath $Config).Path
 Set-Location -LiteralPath $RuntimeDir
 
 Write-Host "=== NVIDIA FINAL TOPOLOGY RUNNER ==="
 Write-Host "PythonExe: $PythonExe"
 Write-Host "Output: $Output"
-Write-Host "Policy: fixed .venv_nir_gpu; no PATH Python resolution; fail-closed."
+Write-Host "Policy: fixed D:\CondaEnvs\nir-nvidia; no PATH Python resolution; fail-closed."
 
 if (-not (Test-Path -LiteralPath $PythonExe -PathType Leaf)) {
     throw "Required NVIDIA NIR Python executable not found: $PythonExe"
@@ -25,13 +25,17 @@ if (-not (Test-Path -LiteralPath $PythonExe -PathType Leaf)) {
 # The NVIDIA pip wheels keep their runtime DLLs in one bin directory per
 # package (cublas, cudnn, cufft, ...). Enumerate those direct package bins so
 # every child process inherits the complete CUDA dependency path.
-$VenvRoot = Split-Path -Parent (Split-Path -Parent $PythonExe)
-$NvidiaRoot = Join-Path $VenvRoot "Lib\site-packages\nvidia"
+$EnvRoot = Split-Path -Parent $PythonExe
+$NvidiaRoot = Join-Path $EnvRoot "Lib\site-packages\nvidia"
 if (-not (Test-Path -LiteralPath $NvidiaRoot -PathType Container)) {
     throw "Required NVIDIA wheel root not found: $NvidiaRoot"
 }
 
 $DllDirs = @(
+    $CondaBin = Join-Path $EnvRoot "Library\bin"
+    if (Test-Path -LiteralPath $CondaBin -PathType Container) {
+        (Resolve-Path -LiteralPath $CondaBin).Path
+    }
     Get-ChildItem -LiteralPath $NvidiaRoot -Directory -ErrorAction Stop |
         Where-Object { $_.Name -ne "__pycache__" } |
         ForEach-Object {
@@ -64,7 +68,7 @@ print("onnxruntime.__version__:", ort.__version__)
 available = ort.get_available_providers()
 print("onnxruntime providers:", available)
 print("CUDAExecutionProvider available:", "CUDAExecutionProvider" in available)
-if sys.executable.casefold() != r"D:\Project\厚粲杯\08_算法\.venv_nir_gpu\Scripts\python.exe".casefold():
+if sys.executable.casefold() != r"D:\CondaEnvs\nir-nvidia\python.exe".casefold():
     raise SystemExit("FAIL-CLOSED: wrong Python executable")
 if "g:\\program files python" in sys.executable.casefold():
     raise SystemExit("FAIL-CLOSED: disallowed G:\\Program Files Python executable")
