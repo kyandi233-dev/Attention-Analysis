@@ -940,22 +940,22 @@ def figure09_quality_control(
         "internal_coverage_fraction_median": "窗内覆盖占比中位数",
         "boundary_truncated_fraction": "边界截断占比",
     }
-    fig, axes = make_figure(width="full", height_cm=16.5, nrows=2, ncols=2)
+    fig, axes = make_figure(width="full", height_cm=6.5, nrows=1, ncols=3)
     trial_matrix = _coverage_fraction_matrix(coverage, level="trial", track=track)
     if not trial_matrix.empty:
         trial_matrix.index = [coverage_metric_zh.get(str(name), str(name)) for name in trial_matrix.index]
-    _heatmap(axes[0, 0], trial_matrix, vmin=0, vmax=1, cmap="viridis", cbar_label="占比")
-    axes[0, 0].set_title("试次窗口覆盖维度")
-    panel_label(axes[0, 0], "A")
+    _heatmap(axes[0], trial_matrix, vmin=0, vmax=1, cmap="viridis", cbar_label="占比")
+    axes[0].set_title("试次窗口覆盖维度")
+    panel_label(axes[0], "A")
 
     probe_matrix = _coverage_fraction_matrix(coverage, level="probe", track=track)
     if not probe_matrix.empty:
         probe_matrix.index = [coverage_metric_zh.get(str(name), str(name)) for name in probe_matrix.index]
-    _heatmap(axes[0, 1], probe_matrix, vmin=0, vmax=1, cmap="viridis", cbar_label="占比")
-    axes[0, 1].set_title("探针窗口覆盖维度")
-    panel_label(axes[0, 1], "B")
+    _heatmap(axes[1], probe_matrix, vmin=0, vmax=1, cmap="viridis", cbar_label="占比")
+    axes[1].set_title("探针窗口覆盖维度")
+    panel_label(axes[1], "B")
 
-    ax = axes[1, 0]
+    ax = axes[2]
     if source_mode.empty:
         _empty(ax, "无双眼来源模式 QC")
     else:
@@ -979,31 +979,9 @@ def figure09_quality_control(
     ax.set_title("双眼/单眼/缺失构成")
     panel_label(ax, "C")
 
-    ax = axes[1, 1]
-    if coverage.empty:
-        _empty(ax, "无时间间隔 QC")
-    else:
-        df = coverage[
-            coverage["track"].astype(str).eq(track)
-            & coverage["coverage_metric"].astype(str).eq("max_temporal_gap_sec_p95")
-        ].copy()
-        if df.empty:
-            _empty(ax, "无最大间隔指标")
-        else:
-            df["coverage_value"] = _numeric(df["coverage_value"])
-            for idx, level in enumerate(("trial", "probe"), start=1):
-                values = df.loc[df["analysis_level"].astype(str).eq(level), "coverage_value"].dropna().to_numpy(dtype=float)
-                if len(values):
-                    ax.boxplot([values], positions=[idx], widths=0.48, showfliers=False, manage_ticks=False)
-                    rng = np.random.default_rng(900 + idx)
-                    ax.scatter(idx + rng.normal(0, 0.035, len(values)), values, s=7, color="#666666", alpha=0.45, linewidths=0)
-            ax.set_xticks([1, 2], ["试次", "探针"])
-            ax.set_ylabel("最大时间间隔 P95（s）")
-            clean_axis(ax, grid_y=True)
-    ax.set_title("时间不连续 QC")
-    panel_label(ax, "D")
 
-    finalize_layout(fig, left=0.20, wspace=0.44, hspace=0.48)
+
+    finalize_layout(fig, left=0.12, wspace=0.62, hspace=None)
     return save_figure(fig, base, formats, raster_dpi=raster_dpi)
 
 
@@ -1016,13 +994,13 @@ def figure10_robustness(
     formats: Iterable[str],
     raster_dpi: int,
 ) -> list[str]:
-    fig, axes = make_figure(width="full", height_cm=15.5, nrows=2, ncols=2)
+    fig, axes = make_figure(width="full", height_cm=6.5, nrows=1, ncols=3)
     matrix = _corr_matrix(track_correlations, "track_a", "track_b", "correlation")
-    _heatmap(axes[0, 0], matrix, vmin=-1, vmax=1, cmap="coolwarm", cbar_label="Pearson r", annotate=True)
-    axes[0, 0].set_title("六轨道一致性")
-    panel_label(axes[0, 0], "A")
+    _heatmap(axes[0], matrix, vmin=-1, vmax=1, cmap="coolwarm", cbar_label="Pearson r", annotate=True)
+    axes[0].set_title("六轨道一致性")
+    panel_label(axes[0], "A")
 
-    ax = axes[0, 1]
+    ax = axes[1]
     if track_agreement.empty:
         _empty(ax, "无轨道一致性汇总")
     else:
@@ -1036,7 +1014,7 @@ def figure10_robustness(
     ax.set_title("与双眼主轨道一致性")
     panel_label(ax, "B")
 
-    ax = axes[1, 0]
+    ax = axes[2]
     if track_agreement.empty:
         _empty(ax, "无绝对差值汇总")
     else:
@@ -1048,66 +1026,9 @@ def figure10_robustness(
     ax.set_title("轨道分歧程度")
     panel_label(ax, "C")
 
-    ax = axes[1, 1]
-    if model_results.empty:
-        _empty(ax, "无烟雾模型系数")
-    else:
-        df = model_results.copy()
-        df["estimate"] = _numeric(df["estimate"])
-        df["se"] = _numeric(df["se"])
-        df = df.dropna(subset=["estimate", "se"])
-        df = df[~df["term"].astype(str).str.contains("Intercept|Group Var", regex=True, na=False)].head(12)
-        if df.empty:
-            _empty(ax, "无非截距系数")
-        else:
-            model_labels = {
-                "lmm_time_on_task_pir": "时间效应 LMM",
-                "lmm_go_rt_pir_within_between": "Go-RT LMM",
-                "gee_nogo_commission_pir": "误按 GEE",
-                "gee_go_program_omission_pir": "程序遗漏 GEE",
-                "gee_go_clean_omission_sensitivity": "无歧义遗漏 GEE",
-            }
-            term_labels = {
-                "C(block_num)[T.2]": "B2",
-                "pupil_median_within": "PIR 个体内",
-                "pupil_median_between": "PIR 个体间",
-                "time_z": "时间",
-                "pupil_median": "PIR",
-            }
-            labels = [
-                f"{model_labels.get(str(model), str(model).replace('_', ' '))}: "
-                f"{term_labels.get(str(term), str(term).replace('_', ' '))}"
-                for model, term in zip(df["model"], df["term"])
-            ]
-            labels = [
-                textwrap.fill(
-                    label,
-                    width=24,
-                    break_long_words=False,
-                )
-                for label in labels
-            ]
-            y = np.arange(len(df))
-            ax.errorbar(df["estimate"], y, xerr=1.96 * df["se"], fmt="o", markersize=2.8, color="#555555", ecolor="#888888", elinewidth=0.7, capsize=1.5)
-            ax.set_yticks(y, labels)
-            ax.tick_params(axis="y", labelsize=5.5)
-            ax.invert_yaxis()
-            ax.axvline(0, color="#777777", linestyle=":", linewidth=0.65)
-            ax.set_xscale("symlog", linthresh=1.0, linscale=1.0)
-            # Singular smoke-test fits can produce very wide, non-scientific
-            # confidence intervals. Keep them visible while using a sparse,
-            # deterministic set of readable symlog ticks.
-            smoke_ticks = np.array([-1e10, -1e6, -1e2, 0.0, 1e2, 1e6, 1e10])
-            smoke_tick_labels = ["-10¹⁰", "-10⁶", "-10²", "0", "10²", "10⁶", "10¹⁰"]
-            ax.set_xticks(smoke_ticks)
-            ax.set_xticklabels(smoke_tick_labels, fontsize=5.5)
-            ax.xaxis.get_offset_text().set_visible(False)
-            ax.set_xlabel("仅验证系数 ± 95% CI（symlog）", fontsize=7, labelpad=5)
-            clean_axis(ax)
-    ax.set_title("模型接口烟雾测试")
-    panel_label(ax, "D")
 
-    finalize_layout(fig, left=0.28, bottom=0.15, wspace=0.50, hspace=0.46)
+
+    finalize_layout(fig, left=0.14, bottom=0.16, wspace=0.55, hspace=None)
     return save_figure(fig, base, formats, raster_dpi=raster_dpi)
 
 
