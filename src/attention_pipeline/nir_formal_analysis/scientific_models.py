@@ -1,10 +1,16 @@
 """Reference explanatory models for pupil-only NIR × Behavior associations.
 
-These models validate the formal statistical interface before final pupil and
-behavior endpoints are frozen on real data.  They deliberately separate
-within-participant pupil deviation from between-participant pupil mean and write
-model failures instead of silently dropping them.  The current geom-mean track
-is a reference signal, not a scientifically frozen winning pupil metric.
+These models validate the formal statistical interface at the trial scale.
+They deliberately separate within-participant pupil deviation from
+between-participant pupil mean and write model failures instead of silently
+dropping them.  The current geom-mean track is a reference signal, not a
+scientifically frozen winning pupil metric.
+
+Endpoints are now frozen (configs/nir_formal_analysis.yaml candidate_metrics
+final_endpoint_freeze = frozen_20260831_primary_plus_sensitivity) and the two
+previously deferred layers are implemented in sibling modules: probe Q1/Q2 in
+``probe_pupil_models.py`` and block/session behavior associations in
+``block_session_models.py`` (see the deferred registration below).
 """
 from __future__ import annotations
 
@@ -404,8 +410,20 @@ def run_reference_adjusted_models(
     results.to_csv(root / "trial_unadjusted_adjusted_effects.csv", index=False, encoding="utf-8-sig")
     failures.to_csv(root / "model_failures.csv", index=False, encoding="utf-8-sig")
     deferred = pd.DataFrame([
-        {"analysis_level": "probe", "outcomes": "Q1 nominal; Q2 ordinal; validated local behavior endpoints", "status": "pending_behavior_and_pupil_endpoint_freeze"},
-        {"analysis_level": "block_session", "outcomes": "dprime;c;beta;omission;commission;RT level;RT variability;RT slope", "status": "pending_behavior_and_pupil_endpoint_freeze"},
+        {
+            "analysis_level": "probe",
+            "outcomes": "Q1 nominal; Q2 ordinal",
+            "status": "frozen_and_implemented",
+            "implemented_step": "probe_pupil_models",
+            "module": "nir_formal_analysis.probe_pupil_models",
+        },
+        {
+            "analysis_level": "block_session",
+            "outcomes": "dprime;c;beta;omission;commission;RT level;RT variability;RT slope",
+            "status": "frozen_and_implemented",
+            "implemented_step": "block_session_models",
+            "module": "nir_formal_analysis.block_session_models",
+        },
     ])
     deferred.to_csv(root / "deferred_endpoint_models.csv", index=False, encoding="utf-8-sig")
 

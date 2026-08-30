@@ -39,6 +39,8 @@ from attention_pipeline.nir_analysis_ready import (
 from attention_pipeline.nir_formal_analysis.adjustment_audit import run_adjustment_audit
 from attention_pipeline.nir_formal_analysis.adjustment_figures import run_adjustment_figures
 from attention_pipeline.nir_formal_analysis.baseline_contract import run_baseline_contract
+from attention_pipeline.nir_formal_analysis.block_session_models import run_block_session_models
+from attention_pipeline.nir_formal_analysis.probe_pupil_models import run_probe_pupil_models
 from attention_pipeline.nir_formal_analysis.candidate_validation import run_candidate_validation
 from attention_pipeline.nir_formal_analysis.event_response import run_event_response_candidates
 from attention_pipeline.nir_formal_analysis.figures import generate_nir_figure_pack
@@ -56,6 +58,8 @@ OPTIONAL_TABLE_STEPS = (
     "visit_sensitivity",
     "event_response",
     "reference_models",
+    "probe_pupil_models",
+    "block_session_models",
     "adjustment_audit",
     "figures",
     "adjustment_figures",
@@ -326,6 +330,35 @@ def main() -> int:
                 skip_reason="user omitted reference_models",
             )
             result["reference_adjusted_models"] = reference_models
+
+            # Frozen-endpoint formal association layers (previously deferred).
+            # These run after probe_contract so the strict pre-probe behavior
+            # repair is already applied to the probe windows they read.
+            probe_pupil_models = ledger.run(
+                "probe_pupil_models",
+                lambda: _require_result(
+                    "probe_pupil_models",
+                    lambda: run_probe_pupil_models(Path(args.tables_config), subjects=sessions),
+                    invalid=lambda x: x.get("status") == "blocked",
+                ),
+                required=False,
+                requested="probe_pupil_models" in selected_optional,
+                skip_reason="user omitted probe_pupil_models",
+            )
+            result["probe_pupil_models"] = probe_pupil_models
+
+            block_session_models = ledger.run(
+                "block_session_models",
+                lambda: _require_result(
+                    "block_session_models",
+                    lambda: run_block_session_models(Path(args.tables_config), subjects=sessions),
+                    invalid=lambda x: x.get("status") == "blocked",
+                ),
+                required=False,
+                requested="block_session_models" in selected_optional,
+                skip_reason="user omitted block_session_models",
+            )
+            result["block_session_models"] = block_session_models
 
             adjustment_audit = ledger.run(
                 "adjustment_audit",
