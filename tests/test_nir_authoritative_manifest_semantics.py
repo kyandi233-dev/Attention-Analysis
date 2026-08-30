@@ -27,7 +27,25 @@ def test_authoritative_materialization_splits_pir_from_ocular_aperture_qc(tmp_pa
             "manifest_path": str(manifest_path),
         }
 
+    fake_contract = {
+        "canonical_cohort_topology": {
+            "n_sessions": 4,
+            "n_analysis_groups": 2,
+            "n_repeated_participant_groups": 1,
+            "max_sessions_per_participant": 3,
+            "group_size_distribution": {"1": 1, "3": 1},
+        },
+        "nir_availability": {
+            "n_available_sessions": 3,
+            "n_unavailable_sessions": 1,
+            "n_canonical_sessions": 4,
+            "complete_accounting": True,
+            "availability_does_not_redefine_cohort": True,
+        },
+    }
+
     monkeypatch.setattr(nir_ready, "_run_materialization", fake_materializer)
+    monkeypatch.setattr(nir_ready, "_full_contract", lambda *_args, **_kwargs: fake_contract)
     result = nir_ready.run_materialization("unused-config.yaml")
 
     assert "pir_oar_allowed" not in result["summary"]
