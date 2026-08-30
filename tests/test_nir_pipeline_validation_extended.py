@@ -53,16 +53,16 @@ def _trial_windows() -> pd.DataFrame:
                         "global_trial_index": trial,
                         "track": track,
                         "window_name": window,
-                        "pir_median": 0.01 * trial + offset,
-                        "pir_mean": 0.01 * trial + offset,
-                        "pir_mad": 0.001 * scale * trial,
-                        "pir_iqr": 0.002 * scale * trial,
-                        "pir_sd": 0.003 * scale * trial,
-                        "pir_p10": 0.01 * trial - 0.005,
-                        "pir_p90": 0.01 * trial + 0.005,
-                        "pir_slope_per_sec": 0.0001 * trial,
-                        "pir_diff_mad": 0.0002 * trial,
-                        "pir_diff_rate_mad_per_sec": 0.0003 * trial,
+                        "pupil_median": 0.01 * trial + offset,
+                        "pupil_mean": 0.01 * trial + offset,
+                        "pupil_mad": 0.001 * scale * trial,
+                        "pupil_iqr": 0.002 * scale * trial,
+                        "pupil_sd": 0.003 * scale * trial,
+                        "pupil_p10": 0.01 * trial - 0.005,
+                        "pupil_p90": 0.01 * trial + 0.005,
+                        "pupil_slope_per_sec": 0.0001 * trial,
+                        "pupil_diff_mad": 0.0002 * trial,
+                        "pupil_diff_rate_mad_per_sec": 0.0003 * trial,
                     }
                 )
     return pd.DataFrame(rows)
@@ -90,7 +90,7 @@ def test_trial_dynamic_feature_long_preserves_feature_families():
         tracks=["binocular_primary"],
         window_names=["pre_1s", "pre_5s"],
     )
-    assert {"pir_median", "pir_mad", "pir_slope_per_sec", "pir_diff_rate_mad_per_sec"}.issubset(
+    assert {"pupil_median", "pupil_mad", "pupil_slope_per_sec", "pupil_diff_rate_mad_per_sec"}.issubset(
         set(result["feature"])
     )
     assert {"pre_1s", "pre_5s"} == set(result["window_name"])

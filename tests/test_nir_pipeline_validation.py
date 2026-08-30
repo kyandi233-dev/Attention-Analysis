@@ -68,13 +68,13 @@ def test_within_between_split_centers_each_subject():
     frame = pd.DataFrame(
         {
             "subject": ["sub-031", "sub-031", "sub-032", "sub-032"],
-            "pir_median": [1.0, 3.0, 10.0, 14.0],
+            "pupil_median": [1.0, 3.0, 10.0, 14.0],
         }
     )
     result = add_within_between(frame)
-    assert np.allclose(result["pir_median_between"], [2.0, 2.0, 12.0, 12.0])
-    assert np.allclose(result["pir_median_within"], [-1.0, 1.0, -2.0, 2.0])
-    centered = result.groupby("subject")["pir_median_within"].mean()
+    assert np.allclose(result["pupil_median_between"], [2.0, 2.0, 12.0, 12.0])
+    assert np.allclose(result["pupil_median_within"], [-1.0, 1.0, -2.0, 2.0])
+    centered = result.groupby("subject")["pupil_median_within"].mean()
     assert np.allclose(centered.to_numpy(), 0.0)
 
 
@@ -126,7 +126,7 @@ def test_omission_subtype_figure_is_code_generated(tmp_path):
                 "prestimulus_associated_omission",
                 "carryover_associated_omission",
             ],
-            "pir_median": [0.1, 0.2, 0.3],
+            "pupil_median": [0.1, 0.2, 0.3],
         }
     )
     outputs = plot_omission_subtypes(

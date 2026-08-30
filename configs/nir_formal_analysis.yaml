@@ -102,7 +102,19 @@ tracks:
 
 candidate_metrics:
   source_stage: 10_analysis_ready_candidate_sidecar
-  final_endpoint_freeze: pending_real_data_scientific_review
+  final_endpoint_freeze: frozen_20260831_primary_plus_sensitivity
+  primary_metrics:
+    - pupil_geom_mean_diameter
+    - hard_pupil_fraction
+  sensitivity_metrics:
+    - pupil_equivalent_diameter
+    - pupil_axis_a
+    - pupil_axis_b
+    - pupil_contour_area
+    - pupil_ellipse_area
+    - soft_pupil_fraction
+  primary_probe_window: pre_30s
+  primary_event_baseline_window: pre_200ms
   outcome_pvalue_selection_allowed: false
   compare_coverage: true
   compare_within_between_structure: true

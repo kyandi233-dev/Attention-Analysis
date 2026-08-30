@@ -141,6 +141,40 @@ def test_rgb_identity_reconciles_before_participant_group_gate() -> None:
     assert "reconcile_cohort_identity(" not in governed
 
 
+def test_rgb_identity_order_keeps_key_without_legacy_session() -> None:
+    """Behavioral lock for the identity-order fix (audit 3.1).
+
+    A session with a verified participant_key but an empty legacy
+    repeat_participant_id must survive cohort inclusion and reconcile as
+    resolved; a legacy-only session without an allow-listed governance status
+    must survive as unresolved instead of failing before reconciliation.
+    """
+    from attention_pipeline.formal_analysis.cohort import included_cohort
+    from attention_pipeline.formal_analysis.identity_contract import reconcile_formal_identity
+
+    cohort = pd.DataFrame({
+        "session_id": ["sub-001", "sub-002", "sub-003", "sub-004"],
+        "include": [True, True, True, True],
+        "repeat_participant_id": ["P-A", None, "P-C", "P-D"],
+        "identity_status": ["confirmed", None, "confirmed", None],
+    })
+    registry = pd.DataFrame({
+        "session_id": ["sub-001", "sub-002"],
+        "participant_key": ["participant:A", "participant:B"],
+    })
+    # require_groups=True would raise on sub-002 before reconciliation (old bug).
+    included = included_cohort(cohort, require_groups=False)
+    identity = reconcile_formal_identity(
+        included, registry, legacy_status_column="identity_status",
+    )
+    by = identity.set_index("session_id")
+    assert len(identity) == 4
+    assert by.loc["sub-002", "participant_group_id"] == "participant:B"
+    assert by.loc["sub-003", "participant_group_id"] == "legacy:P-C"
+    assert pd.isna(by.loc["sub-004", "participant_group_id"])
+    assert by.loc["sub-004", "participant_identity_source"] == "unresolved"
+
+
 def test_rgb_config_uses_shared_identity_contract() -> None:
     import yaml
 
