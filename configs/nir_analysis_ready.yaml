@@ -1,6 +1,6 @@
 pipeline:
   name: attention-analysis-nir-analysis-ready-pupil-only
-  version: 2.3.0
+  version: 2.4.0
   schema_version: 4
   signal_semantics: pupil_geometry_plus_ocular_aperture_qc
   timezone: Asia/Shanghai
@@ -11,13 +11,16 @@ cohort_topology:
   double_session_repeat_groups: 10
 
 paths:
-  # JSON session manifest consumed only by the staged pupil-only materializer.
+  # JSON source-availability manifest consumed by the staged pupil-only materializer.
   source_manifest: "@path:nir_analysis_ready_source_manifest_json"
   output_root: "@path:nir_analysis_ready_root"
 
 source_contract:
   manifest_format: json_object_with_sessions
   accepted_eye_metrics_schemas: [6, 7]
+  availability_accounting: available_sessions_plus_unavailable_sessions_equals_canonical_cohort
+  canonical_cohort_source: "@path:cohort_manifest"
+  missing_nir_never_redefines_cohort: true
   eye_mapping:
     frame_left: left
     frame_right: right
@@ -81,6 +84,10 @@ sessions:
 analysis_policy:
   formal_cluster_key: participant_group_id
   analysis_group_token_is_nir_compatibility_alias: true
+  # The authoritative wrapper validates 116/61/10 against cohort_manifest and
+  # validates NIR availability separately. The low-level materializer therefore
+  # must not mistake the 109 available source records for the full cohort.
+  enforce_expected_topology: false
   production_nir_read_directly: false
   rerun_yolo_allowed: false
   rerun_ritnet_allowed: false

@@ -1,14 +1,13 @@
 """Versioned pupil-only NIR contracts and adapter APIs.
 
 The package exposes two compatible layers:
-- ``adapter`` / ``join``: the PR #27 canonical source adapter plus PR #28 join contract.
-- ``contract``: the formal staged-analysis identity/topology contract used by
+- ``adapter`` / ``join``: the canonical source adapter and join contract.
+- ``contract``: the formal staged-analysis identity/row contract used by
   ``10_analysis_ready -> 11_analysis_tables -> validation``.
 
-The two SourceIdentity types intentionally have different responsibilities; the
-formal staged contract is exported as ``SourceIdentity`` because the staged
-materializer consumes it, while the original adapter identity remains available
-as ``AdapterSourceIdentity`` for callers that need source-manifest path metadata.
+Topology is exported from ``topology`` rather than the historical contract
+implementation because repeat participants are not limited to one or two
+sessions in the governed 116-session cohort.
 """
 
 from .adapter import (
@@ -26,11 +25,10 @@ from .contract import (
     IrisGeometryUnavailableError,
     SourceIdentity,
     adapt_session_rows,
-    cohort_topology_summary,
     refuse_iris_derived_metrics,
-    validate_cohort_topology,
 )
 from .join import attach_behavior_and_visual
+from .topology import cohort_topology_summary, validate_cohort_topology
 
 __all__ = [
     "ADAPTER_VERSION",
