@@ -1,16 +1,18 @@
 """Materialize pupil-only candidate metrics beside the canonical analysis-ready table.
 
-The existing canonical frame table remains backward compatible.  This sidecar
-prevents producer-provided pupil geometry/segmentation candidates from being
-lost before scientific candidate validation.  Iris fractions are deliberately
-excluded: they are QC proportions, not iris geometry.
+The existing canonical frame table remains backward compatible. This sidecar
+prevents producer-provided pupil geometry candidates from being lost before
+scientific candidate validation. Producer ocular-aperture ratios are preserved
+verbatim as QC-only fields; they are not pupil candidates, EAR, blink events,
+PERCLOS, or formal endpoints. Iris fractions remain excluded from candidate
+geometry because segmentation proportions are not iris geometry.
 """
 from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable
 
 import numpy as np
 import pandas as pd
@@ -19,10 +21,14 @@ from attention_pipeline.config import Config, load_config
 from attention_pipeline.nir_pupil_only import adapt_session_rows
 from .pupil_only import load_source_manifest
 
-CANDIDATE_SCHEMA_VERSION = 1
-CANDIDATE_PIPELINE_VERSION = "nir-analysis-ready-pupil-candidates-v1"
+CANDIDATE_SCHEMA_VERSION = 2
+CANDIDATE_PIPELINE_VERSION = "nir-analysis-ready-pupil-candidates-v2"
 ROBUST_Z_SCALE = 1.4826
 FORMAL_PHASES = {"block1", "block2"}
+OCULAR_APERTURE_QC_FIELDS = (
+    "fullclass_ocular_aperture_ratio_median",
+    "fullclass_ocular_aperture_ratio_p90",
+)
 
 # These are pupil-only candidates explicitly supported by the formal evidence
 # plan and already available from the accepted fullclass-final producer schema.
@@ -144,6 +150,9 @@ def _candidate_columns() -> list[str]:
         "eye_raw", "unix_ms", "video_time_ms", "phase_time_ms",
         "pupil_valid_primary", "pupil_valid_strict", "quality_track",
         "roi_clipped", "temporal_flagged",
+        *OCULAR_APERTURE_QC_FIELDS,
+        "ocular_aperture_available", "ocular_aperture_role",
+        "ocular_aperture_interpretation",
     ]
     for metric in PUPIL_CANDIDATE_METRICS:
         cols.append(f"{metric}__raw")
@@ -176,6 +185,22 @@ def _availability_rows(frame: pd.DataFrame) -> list[dict[str, Any]]:
                     "n_valid": int(valid.sum()),
                     "valid_fraction": float(valid.mean()) if len(valid) else np.nan,
                 })
+        for metric in OCULAR_APERTURE_QC_FIELDS:
+            raw = pd.to_numeric(group.get(metric), errors="coerce")
+            finite = np.isfinite(raw)
+            rows.append({
+                "session_id": str(session_id),
+                "analysis_group_token": str(group["analysis_group_token"].iloc[0]),
+                "eye": str(eye),
+                "metric": metric,
+                "metric_kind": "ocular_aperture_qc",
+                "unit": "ratio",
+                "quality_track": "producer_qc_only",
+                "n_rows": int(len(group)),
+                "n_finite_raw": int(finite.sum()),
+                "n_valid": int(finite.sum()),
+                "valid_fraction": float(finite.mean()) if len(group) else np.nan,
+            })
     return rows
 
 
@@ -247,9 +272,13 @@ def run_candidate_materialization(
         "source": "accepted fullclass-final pupil-only adapter fields",
         "candidate_metrics": PUPIL_CANDIDATE_METRICS,
         "iris_geometry_used": False,
-        "pir_oar_allowed": False,
+        "pir_iris_geometry_allowed": False,
+        "ocular_aperture_qc_preserved": True,
+        "ocular_aperture_qc_fields": list(OCULAR_APERTURE_QC_FIELDS),
+        "ocular_aperture_formal_endpoint": False,
+        "ocular_aperture_interpretation": "producer_qc_not_ear_not_blink_not_perclos",
         "iris_fraction_policy": "retained elsewhere as segmentation QC only; excluded from candidate geometry",
-        "baseline_contract": "session×eye per candidate; repeat sessions never share baselines",
+        "baseline_contract": "session×eye per pupil candidate; repeat sessions never share baselines",
         "n_sessions_requested": len(records),
         "n_sessions_materialized": len(materialized),
         "n_sessions_failed": len(failures),
