@@ -31,6 +31,7 @@ path_contract:
     - rgb_raw_output_root
     - rgb_analysis_ready_root
     - rgb_analysis_tables_root
+    - mmwave_output_root
 
 cohort:
   manifest_path_key: cohort_manifest
