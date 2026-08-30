@@ -145,9 +145,9 @@ def main() -> None:
                     elinewidth=1.4, capsize=3, zorder=3)
     ax.set_xticks([0, 1], ["B1", "B2"])
     ax.set_xlim(-0.45, 1.45)
-    ax.set_ylabel("时序歧义遗漏率（%）", fontsize=9)
+    ax.set_ylabel("预判遗漏率（%）", fontsize=9)
     _clean(ax)
-    panel_label(ax, "C", "时序歧义遗漏率区块配对")
+    panel_label(ax, "C", "预判遗漏率区块配对")
 
     # ---------- D: 错误事件轨迹 ----------
     ax = fig.add_subplot(gs[1, 1])
