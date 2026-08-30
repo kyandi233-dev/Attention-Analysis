@@ -26,6 +26,7 @@ path_contract:
     - nir_analysis_ready_source_manifest_json
     - nir_analysis_ready_root
     - nir_analysis_tables_root
+    - nir_pipeline_validation_root
     - stimulus_visual_properties
     - rgb_raw_output_root
     - rgb_analysis_ready_root
@@ -39,10 +40,10 @@ cohort:
   legacy_identity_status_column: identity_status
   allowed_legacy_identity_statuses: [temporary_confirmed, confirmed, verified, validated, governed]
   require_session_unique: true
-  expected_session_count: 44
-  expected_group_count: 38
-  expected_double_session_repeat_groups: 6
-  note: "44 sessions / 38 current anonymous participant groups / 6 double-session repeat groups are distinct counting axes and current-cohort facts, not permanent study totals."
+  expected_session_count: 116
+  expected_group_count: 61
+  expected_double_session_repeat_groups: 10
+  note: "116 identity-resolved sessions / 61 anonymous participant groups / 10 groups with exactly two sessions are distinct counting axes; 32 groups have more than one session overall. Modality availability never defines this cohort."
 
 identity:
   canonical_statistical_unit: participant_group_id

@@ -1,10 +1,11 @@
-"""Behavior science v3 contract for the formal FocusWave analysis line.
+﻿"""Behavior science v3 contract for the formal FocusWave analysis line.
 
 This module is the formal replacement for the historical session-as-participant
 statistics. It keeps Go omission and No-Go commission separate, produces the
 same canonical metrics at probe/block/session/cycle scales, preserves governed
-participant clustering, and fail-closes model failures. The 44/38/6 topology is
-a current analysis-cohort contract, not the study-wide sample definition.
+participant clustering, and fail-closes model failures. The governed formal cohort
+is 116 sessions across 61 participant groups; 10 groups have exactly two sessions.
+The 149-session registration universe is provenance and does not define the downstream cohort.
 """
 from __future__ import annotations
 

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+from pathlib import Path
 
 from attention_pipeline.nir_pipeline_validation.publication_run import (
     run_publication_validation,
@@ -24,6 +26,7 @@ def parse_args() -> argparse.Namespace:
         "--config",
         default="configs/nir_pipeline_validation.yaml",
     )
+    parser.add_argument("--paths-config", default=None)
     parser.add_argument(
         "--subjects",
         help="Optional comma-separated override, e.g. sub-031,sub-032",
@@ -43,6 +46,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    if args.paths_config:
+        os.environ["ATTENTION_ANALYSIS_PATHS_CONFIG"] = str(Path(args.paths_config).resolve())
     if args.core_only and args.publication_only:
         raise SystemExit("--core-only and --publication-only are mutually exclusive")
     subjects = (

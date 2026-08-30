@@ -472,11 +472,13 @@ def track_robustness(
     df["pir_median"] = _numeric(df["pir_median"])
     wide = df.pivot_table(index=keys, columns="track", values="pir_median", aggfunc="first")
     corr = wide.corr(min_periods=3)
+    # ``stack(dropna=False)`` is rejected by the new pandas stack
+    # implementation.  Melt the complete correlation matrix instead so NaN
+    # comparisons remain explicit and the output schema is unchanged.
     corr_long = (
         corr.rename_axis(index="track_a", columns="track_b")
-        .stack(dropna=False)
-        .rename("correlation")
         .reset_index()
+        .melt(id_vars="track_a", var_name="track_b", value_name="correlation")
     )
 
     agreement_rows: list[dict[str, Any]] = []

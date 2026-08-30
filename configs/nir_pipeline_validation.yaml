@@ -5,14 +5,14 @@ pipeline:
   purpose: "pupil-only formal validation and Figure01-10 report package from completed 11_analysis_tables"
 
 paths:
-  analysis_tables_root: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v2/cohort-44-formal/11_analysis_tables"
-  output_root: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v2/cohort-44-formal/12_pipeline_validation"
-  stimulus_visual_table: "D:/_AttentionData/Beijing-NIR/analysis/nir-behavior-v1/stimulus_visual_properties.csv"
+  analysis_tables_root: "@path:nir_analysis_tables_root"
+  output_root: "@path:nir_pipeline_validation_root"
+  stimulus_visual_table: "@path:stimulus_visual_properties"
 
 cohort:
-  expected_session_count: 44
-  expected_analysis_group_count: 38
-  expected_double_session_repeat_groups: 6
+  expected_session_count: 116
+  expected_analysis_group_count: 61
+  expected_double_session_repeat_groups: 10
 
 source_contract:
   required_stage: "11_analysis_tables"

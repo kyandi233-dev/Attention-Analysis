@@ -20,6 +20,7 @@ paths:
   nir_standardized_root: "${FOCUSWAVE_NIR_STANDARDIZED_ROOT}"
   nir_analysis_ready_root: "${FOCUSWAVE_NIR_ANALYSIS_READY_ROOT}"
   nir_analysis_tables_root: "${FOCUSWAVE_NIR_ANALYSIS_TABLES_ROOT}"
+  nir_pipeline_validation_root: "${FOCUSWAVE_NIR_PIPELINE_VALIDATION_ROOT}"
   stimulus_visual_properties: "${FOCUSWAVE_STIMULUS_VISUAL_PROPERTIES}"
 
   rgb_raw_output_root: "${FOCUSWAVE_RGB_RAW_OUTPUT_ROOT}"

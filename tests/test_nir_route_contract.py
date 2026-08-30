@@ -21,6 +21,13 @@ def test_staged_nir_and_legacy_adapter_use_different_manifest_path_keys() -> Non
     assert ready["source_contract"]["manifest_format"] == "json_object_with_sessions"
 
 
+def test_validation_uses_portable_path_registry_keys() -> None:
+    validation = _yaml("nir_pipeline_validation.yaml")
+    assert validation["paths"]["analysis_tables_root"] == "@path:nir_analysis_tables_root"
+    assert validation["paths"]["output_root"] == "@path:nir_pipeline_validation_root"
+    assert validation["paths"]["stimulus_visual_table"] == "@path:stimulus_visual_properties"
+
+
 def test_nir_formal_uses_behavior_v2_and_canonical_participant_group() -> None:
     config = _yaml("nir_formal_analysis.yaml")
     assert config["paths"]["behavior_config"] == "configs/behavior_formal_v2.yaml"

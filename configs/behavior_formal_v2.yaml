@@ -32,9 +32,9 @@ cohort:
     - governed
   formal_cluster_key: participant_group_id
   legacy_repeat_group_is_source_not_canonical_statistical_key: true
-  expected_session_count: 44
-  expected_group_count: 38
-  expected_double_session_repeat_groups: 6
+  expected_session_count: 116
+  expected_group_count: 61
+  expected_double_session_repeat_groups: 10
   current_queue_is_full_study_sample: false
 
 paths:
@@ -135,7 +135,7 @@ analysis_policy:
   participant_identity_unresolved_blocks_inference_not_session_qc: true
   forbid_session_id_participant_fallback: true
   cohort_manifest_defines_session_membership: true
-  current_44_38_6_is_analysis_subset_not_study_total: true
+  current_116_61_10_is_analysis_subset_not_study_total: true
   questionnaire_must_left_join_sessions: true
   questionnaire_missing_does_not_drop_session: true
   preserve_raw_omission_scoring: true

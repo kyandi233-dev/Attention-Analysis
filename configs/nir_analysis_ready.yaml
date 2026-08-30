@@ -6,9 +6,9 @@ pipeline:
   timezone: Asia/Shanghai
 
 cohort_topology:
-  sessions: 44
-  analysis_groups: 38
-  double_session_repeat_groups: 6
+  sessions: 116
+  analysis_groups: 61
+  double_session_repeat_groups: 10
 
 paths:
   # JSON session manifest consumed only by the staged pupil-only materializer.

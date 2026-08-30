@@ -1,4 +1,4 @@
-"""FocusWave formal SART behavior science-v3 runner.
+﻿"""FocusWave formal SART behavior science-v3 runner.
 
 The governed cohort remains authoritative. Optional scientific layers can be
 selected with ``--only-steps`` or omitted with ``--skip-steps``; required
@@ -656,7 +656,7 @@ def main() -> int:
                 "questionnaire_derived_data": {"logical_key": questionnaire_key, "sha256": _file_sha256(questionnaire_path)},
             },
             "current_analysis_cohort_topology": topology,
-            "study_total_scope_contract": "current 44/38/6 queue is an analysis subset and must not be reported as the full formal-study sample",
+            "study_total_scope_contract": "registered session universe = 149; governed formal cohort = 116 sessions / 61 participant groups; modality availability does not redefine cohort membership",
             "questionnaire_present_session_n": int(session_questionnaire["questionnaire_present"].sum()),
             "questionnaire_missing_session_n": int(session_questionnaire["questionnaire_present"].eq(0).sum()),
             "participant_key_present_session_n": int(tables["session"].get("participant_key", pd.Series(dtype=object)).notna().sum()),
