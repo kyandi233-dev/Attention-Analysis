@@ -11,6 +11,14 @@ paths:
   raw_root: "@path:rgb_raw_output_root"
   analysis_ready_root: "@path:rgb_analysis_ready_root"
   output_root: "@path:rgb_analysis_tables_root"
+  # 116-cohort 口径的行级过滤产物 (rgb_probe_pre30s_features.csv 等, 供 5.6 融合)
+  analysis_ready_116cohort_root: "@path:rgb_analysis_tables_116cohort_root"
+  # 5.5 节下游分析输出 (aggregate tables / models / figures / failures)
+  analysis_tables_55_root: "@path:rgb_analysis_tables_55_root"
+  # 行为权威 probe 表与毫米波 merge-ready 表 (5.5 关联分析输入)
+  behavior_probe_primary_30s: "@path:behavior_probe_primary_30s"
+  mmwave_probe_merge_ready: "@path:mmwave_probe_merge_ready"
+  mmwave_probe_merge_ready_e: "@path:mmwave_probe_merge_ready_e"
 
 identity:
   cohort_manifest_path_key: cohort_manifest
@@ -168,6 +176,36 @@ mmwave_interface:
   formal_join_keys:
     probe_window: [session_id, block_id, probe_id, window_name]
     pure_time_window: [session_id, mmwave_window_id, window_start_unix_ms, window_end_unix_ms]
+
+# 5.5 节「RGB 可见行为结果」下游分析 (scripts/rgb_55_analysis.py)。
+# 只读消费既有帧级产物; 严格 pre-probe 窗口; 模型只输出 B/SE/95% CI。
+section_55:
+  active: true
+  probe_window_ms: 30000
+  cycle_bins: 6
+  q1_reference_category: 1
+  strict_pre_probe_no_anchor_trial: true
+  future_information_allowed: false
+  model_failures_must_be_written: true
+  pvalues_not_exported: true
+  mmwave_probe_onset_max_delta_ms: 5000
+  rgb_probe_metrics:
+    - body_motion_energy_median
+    - exposure_change_abs_median
+    - pose_lateral_right_per_sec_median
+    - pose_vertical_up_per_sec_median
+    - pose_radial_proximity_direction_score_median
+    - blink_event_rate_per_min
+  behavior_probe_metrics:
+    - go_correct_rt_median_ms
+    - go_correct_rt_cv
+    - omission_rate
+    - commission_rate
+    - dprime_loglinear
+  mmwave_probe_metrics:
+    - mmwave_motion_proxy_median
+    - mmwave_hr_fused_bpm_median
+    - mmwave_breath_rate_breaths_per_min_median
 
 analysis_policy:
   qc_flag_first_filter_later: true
