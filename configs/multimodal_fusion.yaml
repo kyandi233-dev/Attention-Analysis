@@ -1,0 +1,169 @@
+# FocusWave 正式多模态融合分析科学配置
+#
+# 本文件只保存科学合同（特征块、组合阶梯、模型、LOSO、指标、bootstrap、
+# 边际贡献定义），不保存任何机器盘符；机器路径在 configs/paths.local.yaml。
+# 依据：分析设计/1.10-多模态融合分析设计规格_20260831.md（项目负责人已确认）。
+#
+# 边界：fusion 状态解锁（formal_multimodal_v2.yaml fusion.status 由
+# disabled_deferred 改为 frozen_and_implemented）由项目负责人在规格确认、
+# 测试全绿、全量结果可复现后执行；本配置与 runner 不执行该解锁。
+
+pipeline:
+  name: focuswave-formal-multimodal-fusion
+  version: 1.0.0
+  schema_version: 1
+  evidence_repo: "kyandi233-dev/FocusWave-Formal-Analysis"
+  timezone: Asia/Shanghai
+  specification_source: "分析设计/1.10-多模态融合分析设计规格_20260831.md"
+  fusion_unlock_by_runner: false
+
+paths:
+  data_root: "@path:multimodal_fusion_data_root"
+  output_root: "@path:multimodal_fusion_output_root"
+
+# ---- 输入表（相对 data_root 的子路径，不含盘符） ----
+inputs:
+  behavior_probe: "Behavior/formal_v3/probe_primary_30s.csv"
+  nir_probe_model_table: "NIR/11_analysis_tables/probe_pupil_models/probe_pupil_model_table.csv"
+  mmwave_probe_merge_ready: "mmWave/mmwave_probe_merge_ready.csv"
+  mmwave_probe_merge_ready_e: "mmWave/mmwave_probe_merge_ready_E.csv"
+  rgb_probe_pre30s: "RGB/11_analysis_tables_116cohort/rgb_probe_pre30s_features.csv"
+  mmwave_identity_bridge: "mapping/mmwave_identity_bridge.csv"
+
+# ---- 键名别名（各模态表 -> 标准 probe 融合键） ----
+key_aliases:
+  session_id: session_id
+  block_id:
+    behavior: block_id        # B1/B2
+    nir: block_num            # 1/2
+    mmwave: block_id          # block-1/block-2
+    rgb: block_id             # B1/B2
+  probe_index_in_block:
+    behavior: probe_order_in_block
+    nir: probe_index_in_block
+    mmwave: probe_index_in_block
+    rgb: probe_order_in_block
+  window_name: pre_30s        # 三模态唯一共面窗口；RGB 表即 pre_30s 口径
+  label_q1:
+    behavior: q1_nominal_4class
+    nir: probe_response
+    mmwave: label_probe_response
+    rgb: q1_nominal_4class
+  label_q2:
+    behavior: q2_ordinal_4level
+    nir: probe_vigilance
+    mmwave: label_probe_vigilance
+    rgb: q2_ordinal_4level
+
+# ---- 特征块（规格第 3 节主分析特征） ----
+feature_blocks:
+  behavior:
+    - go_correct_rt_median_ms     # 近期正确 Go RT 中位数
+    - go_correct_rt_cv            # RT-CV（RT 数低于门槛时缺失，语义 QC 缺失）
+    - omission_rate               # Go 遗漏率（主）
+    - raw_go_omission_rate        # 真遗漏率
+    - timing_ambiguous_go_omission_rate  # 预判/时序模糊遗漏率
+    - commission_rate             # No-Go 误按率
+    - dprime_loglinear            # d'（loglinear 校正，机会数不足时不失效）
+  nir_primary:
+    # 冻结主指标 pupil_geom_mean_diameter / hard_pupil_fraction 的
+    # within/between 两项：训练折内按 participant_group_id 组均值分解。
+    metrics: [pupil_geom_mean_diameter, hard_pupil_fraction]
+    decomposition: within_between
+  mmwave:
+    - mmwave_hr_fused_bpm_median                    # HR（融合版，pre_30s 完整链核验）
+    - mmwave_breath_rate_breaths_per_min_median     # BR
+    - mmwave_motion_proxy_median                    # 体动
+    - mmwave_hr_usable_window_fraction              # 窗口可用比例（质量）
+    - mmwave_hr_mean_confidence                     # HR 置信度（质量）
+    - mmwave_phase_stability_median                 # 相位稳定性（质量）
+    - mmwave_timestamp_coverage_fraction            # 时间戳覆盖率（质量）
+  rgb:
+    - body_motion_energy_median                     # 运动能量
+    - exposure_change_abs_median                    # 亮度变化（与运动分轨）
+    - pose_lateral_right_per_sec_median             # 姿态方向候选
+    - pose_vertical_up_per_sec_median               # 姿态方向候选
+    - pose_radial_proximity_direction_score_median  # 姿态方向候选
+    - blink_event_rate_per_min                      # 眨眼候选
+    - blink_frame_ratio                             # 眨眼候选
+    - win_valid_frame_ratio                         # 窗口有效帧比例（质量）
+
+# ---- 八组合阶梯（规格第 4 节） ----
+combinations:
+  M0: [behavior]                       # 任务背景/行为基准
+  M1: [behavior, nir]                  # +NIR
+  M2: [behavior, mmwave]               # +毫米波
+  M3: [behavior, rgb]                  # +RGB
+  M4: [behavior, nir, mmwave]          # NIR+毫米波
+  M5: [behavior, nir, rgb]             # NIR+RGB
+  M6: [behavior, mmwave, rgb]          # 毫米波+RGB
+  M7: [behavior, nir, mmwave, rgb]     # 完整三模态
+
+# ---- 结局（规格第 5 节） ----
+outcomes:
+  q1:
+    column: q1_nominal_4class
+    kind: nominal_4class            # 完全专注/在任务上没想目标/走神/大脑空白
+    reference_category: 1
+  q2:
+    column: q2_ordinal_4level
+    kind: ordinal_4level
+    note: "主分析不引入有序模型新依赖（sklearn 内有序累积链接需额外依赖且无规则化）；与行为正式模型口径一致用规则化多项逻辑回归"
+
+# ---- 模型（规格第 5 节） ----
+models:
+  logistic:
+    kind: multinomial_logistic_l2
+    solver: lbfgs
+    max_iter: 2000
+    class_weight: null
+    C_candidates: [0.01, 0.1, 1.0, 10.0]
+    inner_cv:
+      scheme: group_k_fold
+      group: participant_group_id
+      n_splits: 5
+      scoring: neg_log_loss
+      fallback_C: 1.0
+    note: "C 只在训练折内按参与者 GroupKFold 选择；内层 CV 失败时回退 C=1.0 并记录"
+  random_forest:
+    kind: random_forest_classifier
+    n_estimators: 300
+    max_features: sqrt
+    min_samples_leaf: 5
+    random_state: 0
+    class_weight: null
+    note: "固定超参，声明于配置；无折外参数选择"
+
+# ---- 验证与预处理（规格第 6 节） ----
+validation:
+  scheme: loso_by_participant_group
+  outer_group_column: participant_group_id
+  fold_parallel_backend: loky
+preprocessing:
+  within_fold_only: [standardization, median_imputation, feature_drop, parameter_selection]
+  imputation: median
+  drop_all_nan_columns: true          # 训练折内全缺失列（如毫米波 probe 层全 NaN 列）
+  drop_zero_variance_columns: true
+  nir_within_between:
+    fit_in: training_fold
+    test_between: training_group_mean_prior
+    note: "测试参与者 between 分量 = 训练折组均值的均值（先验），within = x - 先验；测试折不使用自身统计量，与 preprocessing_inside_training_folds 契约一致"
+
+# ---- 指标与比较（规格第 6 节） ----
+metrics: [roc_auc_ovr_macro, balanced_accuracy, macro_f1, log_loss]
+comparison:
+  baseline: M0
+  paired_by: fold                     # 同一测试参与者集合上的逐折配对差异
+  bootstrap:
+    n: 2000
+    resample_unit: participant        # 按参与者（=LOSO 折）重抽样，与折结构一致
+    seed: 42
+    ci_percentiles: [2.5, 97.5]
+
+# ---- 边际贡献（规格第 7 节） ----
+marginal_contribution:
+  kind: shapley_average_over_permutations
+  modalities: [nir, mmwave, rgb]
+  base: behavior                       # M0 为基值
+  permutations: 6                      # 3! 种加入顺序平均
+  note: "仅描述不作因果；解释与预测分轨报告"
