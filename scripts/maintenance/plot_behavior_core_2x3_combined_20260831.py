@@ -179,13 +179,13 @@ def main() -> None:
     ax = fig.add_subplot(gs[2, 0])
     rows = []
     for predictor, color, base in (
-        ("commission_rate", COLOR_OMISSION, "误按"),
+        ("commission_rate", COLOR_OMISSION, "误按率"),
         ("dprime_loglinear", COLOR_COMMISSION, "d′"),
     ):
         sub = q1[q1["predictor"].astype(str).eq(predictor)]
         for _, row in sub.iterrows():
             cat = str(row["contrast_category"])
-            rows.append((f"{base} {cat} vs 1", float(row["estimate_per_predictor_sd"]),
+            rows.append((f"{base} 类别{cat}比1", float(row["estimate_per_predictor_sd"]),
                          float(row["ci_low"]), float(row["ci_high"]), color))
     labels = [r[0] for r in rows]
     _forest(ax, labels, [r[1] for r in rows], [r[2] for r in rows],
