@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib import font_manager
 from attention_pipeline.formal_analysis.publication_style import (
     configure_publication_style,
     finalize_publication_figure,
@@ -15,6 +16,21 @@ from attention_pipeline.formal_analysis.publication_style import (
 from attention_pipeline.config import load_config
 
 configure_publication_style()
+
+# 中文出图字体：SimSun 优先，依次回退 Microsoft YaHei / SimHei；
+# 数字与西文使用 Arial。检测块写法与 Behavior/mmWave 定稿基准脚本一致。
+def _detect_cjk_font() -> str:
+    """检测本机可用的中文字体，返回字体族名。"""
+    for name in ("SimSun", "Microsoft YaHei", "SimHei"):
+        if any(f.name == name for f in font_manager.fontManager.ttflist):
+            return name
+    return "SimSun"
+
+
+FIGURE_FONT = _detect_cjk_font()
+plt.rcParams["font.family"] = "sans-serif"
+plt.rcParams["font.sans-serif"] = [FIGURE_FONT, "Arial"]
+plt.rcParams["axes.unicode_minus"] = False
 
 
 def _resolve(config, key: str) -> Path:
@@ -88,8 +104,8 @@ def run_adjustment_figures(config_path: str | Path) -> dict[str, Any]:
         lows: list[float] = []
         highs: list[float] = []
         for r in current.itertuples(index=False):
-            term = "Within-participant" if str(r.pupil_term) == "pupil_within" else "Between-participant"
-            labels.extend([f"{term}: unadjusted", f"{term}: adjusted"])
+            term = "个体内" if str(r.pupil_term) == "pupil_within" else "个体间"
+            labels.extend([f"{term}：未调整", f"{term}：调整后"])
             estimates.extend([float(r.unadjusted_estimate), float(r.adjusted_estimate)])
             lows.extend([float(r.unadjusted_ci_low), float(r.adjusted_ci_low)])
             highs.extend([float(r.unadjusted_ci_high), float(r.adjusted_ci_high)])
@@ -99,7 +115,7 @@ def run_adjustment_figures(config_path: str | Path) -> dict[str, Any]:
         ax.errorbar(est, y, xerr=np.vstack([est - lo, hi - est]), fmt="o", capsize=3)
         ax.axvline(0, linestyle="--", linewidth=1)
         ax.set_yticks(y); ax.set_yticklabels(labels)
-        ax.set_xlabel("Effect estimate and 95% CI"); ax.set_ylabel("Pupil effect and adjustment status")
+        ax.set_xlabel("效应估计与 95% CI"); ax.set_ylabel("Pupil 效应与调整状态")
         filename = f"NIR模型_{outcome}_调整前后审计.png"
         path = _save(fig, figure_root / filename)
         generated.append(path)

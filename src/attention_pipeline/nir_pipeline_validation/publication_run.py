@@ -342,7 +342,7 @@ def run_publication_validation(
         "figure_system": {
             "publication_width_cm": 17,
             "panel_labels": "A/B/C/D",
-            "font_family": "Times New Roman with Times/Liberation Serif fallback",
+            "font_family": "SimSun with Arial fallback (auto-detected)",
             "vector_formats": [fmt for fmt in formats if fmt in {"pdf", "svg", "eps"}],
             "raster_formats": [fmt for fmt in formats if fmt in {"png", "tif", "tiff", "jpg", "jpeg"}],
             "raster_dpi": raster_dpi,

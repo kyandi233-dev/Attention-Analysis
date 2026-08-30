@@ -16,7 +16,8 @@ from attention_pipeline.nir_behavior.discovery import resolve_repo_path
 
 PIPELINE_VERSION = "nir-pipeline-validation-v1.1"
 SCHEMA_VERSION = 2
-VALIDATION_LABEL = "CANDIDATE ENDPOINTS NOT FROZEN — SCIENTIFIC REVIEW PENDING"
+# 端点已冻结，旧"未冻结"水印语义过时；空串表示不再在图内绘制验证水印。
+VALIDATION_LABEL = ""
 
 
 @dataclass(frozen=True)

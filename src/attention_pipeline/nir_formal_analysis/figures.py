@@ -8,8 +8,8 @@ from typing import Any, Iterable
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib import font_manager
 from attention_pipeline.formal_analysis.publication_style import (
-    FONT_FAMILY,
     configure_publication_style,
     finalize_publication_figure,
 )
@@ -19,6 +19,21 @@ from attention_pipeline.nir_analysis_ready.candidate_metrics import PUPIL_CANDID
 from .pupil_tables import selected_sessions
 
 configure_publication_style()
+
+# 中文出图字体：SimSun 优先，依次回退 Microsoft YaHei / SimHei；
+# 数字与西文使用 Arial。检测块写法与 Behavior/mmWave 定稿基准脚本一致。
+def _detect_cjk_font() -> str:
+    """检测本机可用的中文字体，返回字体族名。"""
+    for name in ("SimSun", "Microsoft YaHei", "SimHei"):
+        if any(f.name == name for f in font_manager.fontManager.ttflist):
+            return name
+    return "SimSun"
+
+
+FIGURE_FONT = _detect_cjk_font()
+plt.rcParams["font.family"] = "sans-serif"
+plt.rcParams["font.sans-serif"] = [FIGURE_FONT, "Arial"]
+plt.rcParams["axes.unicode_minus"] = False
 
 FIGURE_PIPELINE_VERSION = "nir-formal-figures-v1"
 
@@ -59,45 +74,45 @@ EVENT_FEATURES = (
 )
 
 PUPIL_LABELS_ZH = {
-    "pupil_geom_mean_diameter": "Pupil geometric-mean diameter",
-    "pupil_equivalent_diameter": "Pupil equivalent diameter",
-    "pupil_axis_a": "Pupil ellipse axis A",
-    "pupil_axis_b": "Pupil ellipse axis B",
-    "pupil_contour_area": "Pupil contour area",
-    "pupil_ellipse_area": "Pupil ellipse area",
-    "hard_pupil_fraction": "Hard pupil-area fraction",
-    "soft_pupil_fraction": "Soft pupil-area fraction",
+    "pupil_geom_mean_diameter": "Pupil 几何平均直径",
+    "pupil_equivalent_diameter": "Pupil 等效直径",
+    "pupil_axis_a": "Pupil 椭圆轴 A",
+    "pupil_axis_b": "Pupil 椭圆轴 B",
+    "pupil_contour_area": "Pupil 轮廓面积",
+    "pupil_ellipse_area": "Pupil 椭圆面积",
+    "hard_pupil_fraction": "硬 pupil 面积占比",
+    "soft_pupil_fraction": "软 pupil 面积占比",
 }
 FEATURE_LABELS_ZH = {
-    "pupil_median": "Pupil median",
-    "pupil_mean": "Pupil mean",
+    "pupil_median": "Pupil 中位数",
+    "pupil_mean": "Pupil 均值",
     "pupil_mad": "Pupil MAD",
     "pupil_iqr": "Pupil IQR",
     "pupil_sd": "Pupil SD",
     "pupil_p10": "Pupil P10",
     "pupil_p90": "Pupil P90",
-    "pupil_slope_per_sec": "Robust pupil slope (/s)",
-    "pupil_diff_mad": "Pupil first-difference MAD",
-    "pupil_diff_rate_mad_per_sec": "Pupil change-rate MAD (/s)",
-    "pupil_peak_to_trough": "Pupil peak-to-trough amplitude",
-    "pupil_dilation_velocity_median_per_sec": "Median pupil dilation velocity (/s)",
-    "pupil_constriction_velocity_median_per_sec": "Median pupil constriction velocity (/s)",
-    "pupil_valid_fraction": "Valid pupil fraction",
-    "internal_coverage_fraction": "Within-window coverage fraction",
-    "available_duration_fraction": "Available-duration fraction",
-    "max_temporal_gap_sec": "Maximum temporal gap (s)",
-    "baseline_median": "Pre-event reference median",
-    "baseline_mad": "Pre-event reference MAD",
-    "dilation_peak_amplitude": "Dilation peak amplitude",
-    "dilation_peak_latency_ms": "Dilation peak latency (ms)",
-    "constriction_peak_amplitude": "Constriction peak amplitude",
-    "constriction_peak_latency_ms": "Constriction peak latency (ms)",
-    "dominant_peak_amplitude_abs": "Absolute dominant-peak amplitude",
-    "dominant_peak_latency_ms": "Dominant-peak latency (ms)",
-    "recovery_tolerance": "Recovery tolerance",
-    "recovery_time_after_onset_ms": "Post-onset recovery time (ms)",
-    "late_recovery_residual": "Late recovery residual",
-    "late_recovery_abs_residual": "Absolute late recovery residual",
+    "pupil_slope_per_sec": "Pupil 稳健斜率（/s）",
+    "pupil_diff_mad": "Pupil 一阶差分 MAD",
+    "pupil_diff_rate_mad_per_sec": "Pupil 变化率 MAD（/s）",
+    "pupil_peak_to_trough": "Pupil 峰谷幅值",
+    "pupil_dilation_velocity_median_per_sec": "Pupil 扩张速度中位数（/s）",
+    "pupil_constriction_velocity_median_per_sec": "Pupil 收缩速度中位数（/s）",
+    "pupil_valid_fraction": "有效 pupil 占比",
+    "internal_coverage_fraction": "窗内覆盖占比",
+    "available_duration_fraction": "可用时长占比",
+    "max_temporal_gap_sec": "最大时间间隔（s）",
+    "baseline_median": "事件前参考中位数",
+    "baseline_mad": "事件前参考 MAD",
+    "dilation_peak_amplitude": "扩张峰值幅值",
+    "dilation_peak_latency_ms": "扩张峰值潜伏期（ms）",
+    "constriction_peak_amplitude": "收缩峰值幅值",
+    "constriction_peak_latency_ms": "收缩峰值潜伏期（ms）",
+    "dominant_peak_amplitude_abs": "主峰绝对幅值",
+    "dominant_peak_latency_ms": "主峰潜伏期（ms）",
+    "recovery_tolerance": "恢复容差",
+    "recovery_time_after_onset_ms": "起始后恢复时间（ms）",
+    "late_recovery_residual": "晚期恢复残差",
+    "late_recovery_abs_residual": "晚期恢复绝对残差",
 }
 
 
@@ -174,8 +189,8 @@ def _row(
         "caption_zh": caption,
         "internal_title_allowed": False,
         "caption_is_external": True,
-        "in_image_language": "English",
-        "font_family": FONT_FAMILY,
+        "in_image_language": "zh_CN_primary",
+        "font_family": FIGURE_FONT,
         "legend_frame": False,
         "participant_group_n": p,
         "session_n": s,
@@ -194,7 +209,7 @@ def _histogram(
     bins = min(24, max(5, int(np.sqrt(len(values)))))
     ax.hist(values.to_numpy(dtype=float), bins=bins)
     ax.set_xlabel(xlabel)
-    ax.set_ylabel("Observations")
+    ax.set_ylabel("观测数")
     return _save(fig, path), caption
 
 
@@ -247,9 +262,9 @@ def generate_nir_figure_pack(
                     fig, ax = plt.subplots(figsize=(6.3, 4.2))
                     for r in wide.itertuples(index=False):
                         ax.plot([1, 2], [float(r[0]), float(r[1])], marker="o", alpha=0.25, linewidth=0.8)
-                    ax.plot([1, 2], [float(wide[1].mean()), float(wide[2].mean())], marker="o", linewidth=2.0, label="Session-pair mean")
+                    ax.plot([1, 2], [float(wide[1].mean()), float(wide[2].mean())], marker="o", linewidth=2.0, label="场次配对均值")
                     ax.set_xticks([1, 2]); ax.set_xticklabels(["B1", "B2"])
-                    ax.set_xlabel("Block"); ax.set_ylabel(f"{label} ({spec['unit']})"); ax.legend(frameon=False)
+                    ax.set_xlabel("区块"); ax.set_ylabel(f"{label} ({spec['unit']})"); ax.legend(frameon=False)
                     filename = f"NIR候选_{_safe(metric)}_B1B2配对.png"
                     path = _save(fig, output_dir / filename)
                     caption = f"{label}在同一场次 B1 与 B2 间的配对轨迹。"
@@ -261,7 +276,7 @@ def generate_nir_figure_pack(
                     ax.scatter(d["left_raw_median"], d["right_raw_median"], alpha=0.6)
                     low = float(np.nanmin(d.to_numpy(dtype=float))); high = float(np.nanmax(d.to_numpy(dtype=float)))
                     ax.plot([low, high], [low, high], linestyle="--", linewidth=1)
-                    ax.set_xlabel(f"Left eye: {label} ({spec['unit']})"); ax.set_ylabel(f"Right eye: {label} ({spec['unit']})")
+                    ax.set_xlabel(f"左眼：{label} ({spec['unit']})"); ax.set_ylabel(f"右眼：{label} ({spec['unit']})")
                     filename = f"NIR候选_{_safe(metric)}_左右眼一致性.png"
                     path = _save(fig, output_dir / filename)
                     caption = f"{label}的左右眼场次×区块中位数一致性；虚线为 y=x。"
@@ -294,7 +309,7 @@ def generate_nir_figure_pack(
                     raise ValueError("insufficient_finite_participant_values")
                 fig, ax = plt.subplots(figsize=(max(7.0, 0.75 * len(names)), 4.5))
                 ax.boxplot(data, tick_labels=names, showfliers=False)
-                ax.set_xlabel("Window"); ax.set_ylabel(label)
+                ax.set_xlabel("窗口"); ax.set_ylabel(label)
                 ax.tick_params(axis="x", rotation=35)
                 filename = f"NIR窗口_{_safe(feature)}_{scale}.png"
                 caption = f"{label}在不同{ '试次' if scale=='trial_window' else '探针前' }窗口中的参与者优先分布（主参考轨道 {primary_track}）。"
@@ -321,7 +336,7 @@ def generate_nir_figure_pack(
             for block, d in summary.groupby("block_num", sort=True):
                 d = d.sort_values("time_in_block_mid_sec")
                 ax.plot(d["time_in_block_mid_sec"], d[feature], label=f"B{int(block)}")
-            ax.set_xlabel("Time within block (s)"); ax.set_ylabel(label); ax.legend(title="Block", frameon=False)
+            ax.set_xlabel("区块内时间（s）"); ax.set_ylabel(label); ax.legend(title="区块", frameon=False)
             filename = f"NIR时间进程_{_safe(feature)}.png"
             caption = f"{label}随区块内任务时间的参与者优先描述性变化（主参考轨道 {primary_track}）。"
             path = _save(fig, output_dir / filename); files.append(path)
@@ -346,7 +361,7 @@ def generate_nir_figure_pack(
                 raise ValueError("insufficient_track_values")
             fig, ax = plt.subplots(figsize=(max(7.0, 0.9 * len(tracks)), 4.5))
             ax.boxplot(data, tick_labels=tracks, showfliers=False)
-            ax.set_xlabel("Pupil track"); ax.set_ylabel(FEATURE_LABELS_ZH.get(feature, feature)); ax.tick_params(axis="x", rotation=30)
+            ax.set_xlabel("Pupil 轨道"); ax.set_ylabel(FEATURE_LABELS_ZH.get(feature, feature)); ax.tick_params(axis="x", rotation=30)
             filename = f"NIR轨道敏感性_{_safe(feature)}_pre30s.png"
             caption = f"{FEATURE_LABELS_ZH.get(feature, feature)}在 pre-30s 状态窗中的左右眼、双眼与 strict 轨道敏感性比较。"
             path = _save(fig, output_dir / filename); files.append(path)
@@ -391,7 +406,7 @@ def generate_nir_figure_pack(
             fig, ax = plt.subplots(figsize=(7.2, max(3.8, 0.55 * len(d) + 1.5)))
             ax.errorbar(est, y, xerr=np.vstack([est-lo, hi-est]), fmt="o", capsize=3); ax.axvline(0, linestyle="--", linewidth=1)
             ax.set_yticks(y); ax.set_yticklabels(d["adjustment"].astype(str).tolist())
-            ax.set_xlabel("Effect estimate and 95% CI"); ax.set_ylabel("Adjustment model")
+            ax.set_xlabel("效应估计与 95% CI"); ax.set_ylabel("调整模型")
             filename = f"NIR模型_{_safe(outcome)}_调整前后.png"
             caption = f"{outcome} 的瞳孔效应在未调整与协变量调整模型中的比较；是否达到视觉调整标准以 adjustment audit 为准。"
             path = _save(fig, output_dir / filename); files.append(path)

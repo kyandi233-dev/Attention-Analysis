@@ -6,14 +6,26 @@ from typing import Iterable
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib import font_manager
 
 from .analysis import VALIDATION_LABEL
 from attention_pipeline.formal_analysis.publication_style import (
-    FONT_FALLBACKS,
     finalize_publication_figure,
 )
 
 CM_TO_INCH = 1.0 / 2.54
+
+# 中文出图字体：SimSun 优先，依次回退 Microsoft YaHei / SimHei；
+# 数字与西文使用 Arial。检测块写法与 Behavior/mmWave 定稿基准脚本一致。
+def _detect_cjk_font() -> str:
+    """检测本机可用的中文字体，返回字体族名。"""
+    for name in ("SimSun", "Microsoft YaHei", "SimHei"):
+        if any(f.name == name for f in font_manager.fontManager.ttflist):
+            return name
+    return "SimSun"
+
+
+FIGURE_FONT = _detect_cjk_font()
 
 # Journal-oriented widths following the project Figure specification:
 # single column ~8 cm, medium ~14 cm, full width ~17 cm.
@@ -56,8 +68,9 @@ def configure_publication_style() -> None:
     """Apply one centralized style to every manuscript-oriented NIR figure."""
     plt.rcParams.update(
         {
-            "font.family": "serif",
-            "font.serif": FONT_FALLBACKS,
+            "font.family": "sans-serif",
+            "font.sans-serif": [FIGURE_FONT, "Arial"],
+            "axes.unicode_minus": False,
             "mathtext.fontset": "stix",
             "font.size": 8.0,
             "axes.titlesize": 9.0,
@@ -147,6 +160,9 @@ def panel_label(ax: plt.Axes, label: str) -> None:
 
 
 def validation_banner(fig: plt.Figure) -> None:
+    # 端点已冻结，验证水印语义过时；VALIDATION_LABEL 为空时不再绘制。
+    if not VALIDATION_LABEL:
+        return
     fig.text(
         0.5,
         0.006,
@@ -169,7 +185,7 @@ def finalize_layout(
     hspace: float = 0.36,
     banner: bool = True,
 ) -> None:
-    if banner:
+    if banner and VALIDATION_LABEL:
         validation_banner(fig)
         bottom = max(bottom, 0.12)
     fig.subplots_adjust(

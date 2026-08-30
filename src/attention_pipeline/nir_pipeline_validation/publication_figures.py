@@ -31,6 +31,27 @@ def _numeric(series: pd.Series) -> pd.Series:
     return pd.to_numeric(series, errors="coerce")
 
 
+# 图例/刻度条件标签：数据取值保持英文标识（不改变统计口径），仅显示层翻译为中文。
+CONDITION_LABELS_ZH = {
+    "go_correct": "Go 正确",
+    "go_omission_program": "Go 程序遗漏",
+    "nogo_correct": "No-Go 正确",
+    "nogo_commission": "No-Go 误按",
+    "correct_inhibition": "正确抑制",
+    "commission": "误按",
+    "clean_omission": "无歧义遗漏",
+    "prestimulus_associated_omission": "前刺激关联遗漏",
+    "carryover_associated_omission": "携带关联遗漏",
+    "prestimulus_and_carryover_associated_omission": "前刺激+携带关联遗漏",
+    "omission": "遗漏",
+}
+
+
+def _label_zh(value) -> str:
+    """条件取值映射为中文图例标签；未覆盖的取值原样保留英文。"""
+    return CONDITION_LABELS_ZH.get(str(value), str(value))
+
+
 def _add_zero(ax: plt.Axes, *, vertical: bool = False) -> None:
     if vertical:
         ax.axvline(0, color="#777777", linewidth=0.65, linestyle=":", zorder=0)
@@ -49,7 +70,7 @@ def _heatmap(
     annotate: bool = False,
 ) -> None:
     if matrix.empty:
-        _empty(ax, "No data")
+        _empty(ax, "无数据")
         return
     image = ax.imshow(matrix.to_numpy(dtype=float), aspect="auto", vmin=vmin, vmax=vmax, cmap=cmap)
     x_labels = [str(x) for x in matrix.columns]
@@ -80,7 +101,7 @@ def _subject_block_box(
     tick_rotation: float = 22,
 ) -> None:
     if frame.empty or value_col not in frame.columns:
-        _empty(ax, "No condition rows")
+        _empty(ax, "无条件行")
         return
     subject = (
         frame.assign(**{value_col: _numeric(frame[value_col])})
@@ -121,7 +142,7 @@ def _subject_block_box(
             ax.scatter(x, values, s=7, alpha=0.48, color=color, linewidths=0, zorder=3)
         handle = plt.Line2D([0], [0], color=color, linewidth=2)
         legend_handles.append(handle)
-        legend_labels.append(f"Block {block_num}")
+        legend_labels.append(f"B{block_num}")
     labels = tick_labels if tick_labels is not None else order
     ax.set_xticks(
         np.arange(1, len(order) + 1),
@@ -144,16 +165,16 @@ def _trajectory_by_condition(
     value_col: str = "pupil_median",
     block_num: int | None = None,
     title: str = "",
-    ylabel: str = "Centered PIR",
+    ylabel: str = "中心化 PIR",
 ) -> None:
     if frame.empty or value_col not in frame.columns:
-        _empty(ax, "No continuous trajectory")
+        _empty(ax, "无连续轨迹")
         return
     df = frame.copy()
     if block_num is not None:
         df = df[_numeric(df["block_num"]).eq(block_num)]
     if df.empty:
-        _empty(ax, f"No Block {block_num} trajectory")
+        _empty(ax, f"无 B{block_num} 轨迹")
         return
     for idx, (condition, current) in enumerate(df.groupby(condition_col, sort=True)):
         subject = current.groupby(["subject", "time_bin_mid_sec"], as_index=False)[value_col].median()
@@ -164,11 +185,11 @@ def _trajectory_by_condition(
         ).sort_index()
         color = PALETTE.get(str(condition), plt.get_cmap("tab10")(idx % 10))
         style = LINESTYLES.get(str(condition), "-")
-        ax.plot(summary.index, summary["median"], color=color, linestyle=style, label=str(condition))
+        ax.plot(summary.index, summary["median"], color=color, linestyle=style, label=_label_zh(condition))
         ax.fill_between(summary.index, summary["q25"], summary["q75"], color=color, alpha=0.10, linewidth=0)
     _add_zero(ax, vertical=True)
     _add_zero(ax)
-    ax.set_xlabel("Time relative to event (s)")
+    ax.set_xlabel("相对事件时间（s）")
     ax.set_ylabel(ylabel)
     if title:
         ax.set_title(title)
@@ -189,7 +210,7 @@ def figure01_global_landscape(
     fig, axes = make_figure(width="full", height_cm=15.5, nrows=2, ncols=2)
     ax = axes[0, 0]
     if global_detail.empty:
-        _empty(ax, "No global trajectory")
+        _empty(ax, "无全局轨迹")
     else:
         for _, subject in global_detail.groupby("subject", sort=True):
             ax.plot(subject["global_time_sec"] / 60.0, subject["pupil_median"], color="#BDBDBD", linewidth=0.35, alpha=0.22)
@@ -198,23 +219,23 @@ def figure01_global_landscape(
             if current.empty:
                 continue
             color = PALETTE[f"block{block_num}"]
-            ax.plot(current["global_bin_sec"] / 60.0, current["median"], color=color, linewidth=1.7, label=f"Block {block_num}")
+            ax.plot(current["global_bin_sec"] / 60.0, current["median"], color=color, linewidth=1.7, label=f"B{block_num}")
             ax.fill_between(current["global_bin_sec"] / 60.0, current["q25"], current["q75"], color=color, alpha=0.14, linewidth=0)
         b1_end = float(global_detail["block1_display_end_sec"].median()) / 60.0
         b2_start = float(global_detail["block2_display_start_sec"].median()) / 60.0
         ax.axvspan(b1_end, b2_start, color="#E6E6E6", alpha=0.75, linewidth=0)
-        ax.text((b1_end + b2_start) / 2.0, ax.get_ylim()[1], "between-block interval", ha="center", va="top", fontsize=6)
-        ax.set_xlabel("Global experimental time (min)")
-        ax.set_ylabel("Centered PIR")
+        ax.text((b1_end + b2_start) / 2.0, ax.get_ylim()[1], "区块间间隔", ha="center", va="top", fontsize=6)
+        ax.set_xlabel("实验全局时间（min）")
+        ax.set_ylabel("中心化 PIR")
         ax.legend(loc="best", ncol=2)
         _add_zero(ax)
         clean_axis(ax, grid_y=True)
-    ax.set_title("Whole-experiment PIR landscape")
+    ax.set_title("全实验 PIR 全景")
     panel_label(ax, "A")
 
     ax = axes[0, 1]
     if global_detail.empty:
-        _empty(ax, "No aligned Block trajectory")
+        _empty(ax, "无对齐区块轨迹")
     else:
         work = global_detail.copy()
         work["aligned_bin"] = np.floor(_numeric(work["time_in_block_sec"]) / 30.0) * 30.0 + 15.0
@@ -227,19 +248,19 @@ def figure01_global_landscape(
                 q75=lambda x: x.quantile(0.75),
             ).sort_index()
             color = PALETTE[f"block{block_num}"]
-            ax.plot(summary.index / 60.0, summary["median"], color=color, linestyle=LINESTYLES[f"block{block_num}"], label=f"Block {block_num}")
+            ax.plot(summary.index / 60.0, summary["median"], color=color, linestyle=LINESTYLES[f"block{block_num}"], label=f"B{block_num}")
             ax.fill_between(summary.index / 60.0, summary["q25"], summary["q75"], color=color, alpha=0.12, linewidth=0)
-        ax.set_xlabel("Time within Block (min)")
-        ax.set_ylabel("Centered PIR")
+        ax.set_xlabel("区块内时间（min）")
+        ax.set_ylabel("中心化 PIR")
         ax.legend(loc="best")
         _add_zero(ax)
         clean_axis(ax, grid_y=True)
-    ax.set_title("Block-aligned time-on-task")
+    ax.set_title("按区块对齐的时间效应")
     panel_label(ax, "B")
 
     ax = axes[1, 0]
     if distribution.empty:
-        _empty(ax, "No Block distribution")
+        _empty(ax, "无区块分布")
     else:
         groups = [distribution.loc[_numeric(distribution["block_num"]).eq(block), "pupil_median"].dropna().to_numpy(dtype=float) for block in (1, 2)]
         vp = ax.violinplot(groups, positions=[1, 2], showmedians=True, showextrema=False, widths=0.72)
@@ -250,18 +271,18 @@ def figure01_global_landscape(
         for _, row in distribution.pivot(index="subject", columns="block_num", values="pupil_median").iterrows():
             if 1 in row.index and 2 in row.index and pd.notna(row[1]) and pd.notna(row[2]):
                 ax.plot([1, 2], [row[1], row[2]], color="#9B9B9B", linewidth=0.45, alpha=0.45)
-        ax.set_xticks([1, 2], ["Block 1", "Block 2"])
-        ax.set_ylabel("Subject-median centered PIR")
+        ax.set_xticks([1, 2], ["B1", "B2"])
+        ax.set_ylabel("被试中位数中心化 PIR")
         _add_zero(ax)
         clean_axis(ax, grid_y=True)
-    ax.set_title("Global Block distributions")
+    ax.set_title("全局区块分布")
     panel_label(ax, "C")
 
     ax = axes[1, 1]
     if transition.empty:
-        _empty(ax, "No Block transition trajectory")
+        _empty(ax, "无区块转换轨迹")
     else:
-        for block_num, label in ((1, "Block 1 end"), (2, "Block 2 start")):
+        for block_num, label in ((1, "B1 结束"), (2, "B2 开始")):
             current = transition[_numeric(transition["block_num"]).eq(block_num)].copy()
             current["bin"] = np.floor(_numeric(current["transition_time_sec"]) / 10.0) * 10.0 + 5.0
             subject = current.groupby(["subject", "bin"], as_index=False)["pupil_median"].median()
@@ -273,11 +294,11 @@ def figure01_global_landscape(
             ax.fill_between(summary.index, summary["q25"], summary["q75"], color=color, alpha=0.12, linewidth=0)
         _add_zero(ax, vertical=True)
         _add_zero(ax)
-        ax.set_xlabel("Time relative to Block boundary (s)")
-        ax.set_ylabel("Centered PIR")
+        ax.set_xlabel("相对区块边界时间（s）")
+        ax.set_ylabel("中心化 PIR")
         ax.legend(loc="best")
         clean_axis(ax, grid_y=True)
-    ax.set_title("End-of-Block / start-of-Block recovery")
+    ax.set_title("区块结束/开始恢复")
     panel_label(ax, "D")
 
     finalize_layout(fig, wspace=0.28, hspace=0.42)
@@ -297,26 +318,26 @@ def figure02_block_time_on_task(
     fig, axes = make_figure(width="full", height_cm=14.5, nrows=2, ncols=2)
     ax = axes[0, 0]
     if block_summary.empty:
-        _empty(ax, "No paired Block summary")
+        _empty(ax, "无配对区块汇总")
     else:
         pivot = block_summary.pivot(index="subject", columns="block_num", values="pupil_median")
         for _, row in pivot.iterrows():
             if 1 in row.index and 2 in row.index and pd.notna(row[1]) and pd.notna(row[2]):
                 ax.plot([1, 2], [row[1], row[2]], marker="o", markersize=2.6, color="#8E8E8E", linewidth=0.55, alpha=0.55)
         med = block_summary.groupby("block_num")["pupil_median"].median()
-        ax.plot(med.index, med.values, marker="o", markersize=4.5, color="black", linewidth=1.8, label="Cohort median")
-        ax.set_xticks([1, 2], ["Block 1", "Block 2"])
-        ax.set_ylabel("Median centered PIR")
+        ax.plot(med.index, med.values, marker="o", markersize=4.5, color="black", linewidth=1.8, label="队列中位数")
+        ax.set_xticks([1, 2], ["B1", "B2"])
+        ax.set_ylabel("中心化 PIR 中位数")
         ax.legend(loc="best")
         _add_zero(ax)
         clean_axis(ax, grid_y=True)
-    ax.set_title("Within-subject Block change")
+    ax.set_title("被试内区块变化")
     panel_label(ax, "A")
 
     ax = axes[0, 1]
     slope_cols = [col for col in ("block1_time_slope_per_sec", "block2_time_slope_per_sec") if col in heterogeneity.columns]
     if heterogeneity.empty or len(slope_cols) < 2:
-        _empty(ax, "No subject time-on-task slopes")
+        _empty(ax, "无被试时间效应斜率")
     else:
         x = _numeric(heterogeneity[slope_cols[0]])
         y = _numeric(heterogeneity[slope_cols[1]])
@@ -327,28 +348,28 @@ def figure02_block_time_on_task(
         ax.plot([-lim, lim], [-lim, lim], color="#999999", linestyle=":", linewidth=0.7)
         ax.axhline(0, color="#BBBBBB", linewidth=0.6)
         ax.axvline(0, color="#BBBBBB", linewidth=0.6)
-        ax.set_xlabel("Block 1 PIR slope / s")
-        ax.set_ylabel("Block 2 PIR slope / s")
+        ax.set_xlabel("B1 PIR 斜率（/s）")
+        ax.set_ylabel("B2 PIR 斜率（/s）")
         clean_axis(ax, grid_y=False)
-    ax.set_title("Individual time-on-task slopes")
+    ax.set_title("个体时间效应斜率")
     panel_label(ax, "B")
 
     ax = axes[1, 0]
     if recovery_summary.empty or "recovery_delta_block2_minus_block1" not in recovery_summary.columns:
-        _empty(ax, "No recovery delta")
+        _empty(ax, "无恢复差值")
     else:
         values = _numeric(recovery_summary["recovery_delta_block2_minus_block1"]).dropna().sort_values().to_numpy(dtype=float)
         ax.axhline(0, color="#777777", linestyle=":", linewidth=0.7)
         ax.scatter(np.arange(1, len(values) + 1), values, s=12, color=PALETTE["block2"], alpha=0.75, linewidths=0)
-        ax.set_xlabel("Subjects sorted by recovery delta")
-        ax.set_ylabel("B2 first 60 s − B1 last 60 s")
+        ax.set_xlabel("按恢复差值排序的被试")
+        ax.set_ylabel("B2 前 60 s - B1 末 60 s")
         clean_axis(ax, grid_y=True)
-    ax.set_title("Block transition recovery heterogeneity")
+    ax.set_title("区块转换恢复异质性")
     panel_label(ax, "C")
 
     ax = axes[1, 1]
     if global_detail.empty:
-        _empty(ax, "No early/late comparison")
+        _empty(ax, "无前后半段对比")
     else:
         work = global_detail.copy()
         work["half"] = work.groupby(["subject", "block_num"])["time_in_block_sec"].transform(
@@ -366,11 +387,11 @@ def figure02_block_time_on_task(
                 bp["boxes"][0].set_edgecolor(PALETTE[f"block{block_num}"])
                 rng = np.random.default_rng(230 + block_num)
                 ax.scatter(pos + rng.normal(0, 0.035, len(delta)), delta, s=8, color=PALETTE[f"block{block_num}"], alpha=0.55, linewidths=0)
-        ax.set_xticks([1, 2], ["Block 1", "Block 2"])
-        ax.set_ylabel("Second-half − first-half PIR")
+        ax.set_xticks([1, 2], ["B1", "B2"])
+        ax.set_ylabel("后半段 - 前半段 PIR")
         _add_zero(ax)
         clean_axis(ax, grid_y=True)
-    ax.set_title("Within-Block deterioration contrast")
+    ax.set_title("区块内衰减对比")
     panel_label(ax, "D")
 
     finalize_layout(fig, wspace=0.30, hspace=0.42)
@@ -388,9 +409,11 @@ def figure03_trial_states(
     fig, axes = make_figure(width="full", height_cm=15.0, nrows=2, ncols=2)
     order = ["go_correct", "go_omission_program", "nogo_correct", "nogo_commission"]
     _subject_block_box(
-        axes[0, 0], trial_conditions, category_col="outcome", value_col="pupil_median", order=order, ylabel="Pre-trial centered PIR"
+        axes[0, 0], trial_conditions, category_col="outcome", value_col="pupil_median", order=order,
+        ylabel="试次前中心化 PIR",
+        tick_labels=["Go 正确", "Go 程序遗漏", "No-Go 正确", "No-Go 误按"],
     )
-    axes[0, 0].set_title("Program-scored outcome × Block")
+    axes[0, 0].set_title("程序评分结果 × 区块")
     panel_label(axes[0, 0], "A")
 
     omission_order = [
@@ -402,22 +425,22 @@ def figure03_trial_states(
     omission = trial_conditions[trial_conditions.get("omission_qc_type", pd.Series(index=trial_conditions.index, dtype=str)).astype(str).isin(omission_order)].copy()
     _subject_block_box(
         axes[0, 1], omission, category_col="omission_qc_type", value_col="pupil_median", order=omission_order,
-        ylabel="Pre-trial centered PIR",
+        ylabel="试次前中心化 PIR",
         tick_labels=[
-            "clean",
-            "pre",
-            "carry",
-            "pre+carry",
+            "无歧义",
+            "前刺激",
+            "携带",
+            "前+携带",
         ],
         tick_rotation=0,
     )
     axes[0, 1].set_xlim(0.5, 4.7)
-    axes[0, 1].set_title("Omission motor-timing subtypes × Block")
+    axes[0, 1].set_title("遗漏动作时序亚型 × 区块")
     panel_label(axes[0, 1], "B")
 
     ax = axes[1, 0]
     if trial_conditions.empty or "rt" not in trial_conditions.columns:
-        _empty(ax, "No Go RT/PIR rows")
+        _empty(ax, "无 Go RT/PIR 行")
     else:
         df = trial_conditions[trial_conditions["outcome"].astype(str).eq("go_correct")].copy()
         for block_num in (1, 2):
@@ -431,31 +454,32 @@ def figure03_trial_states(
             bins = pd.qcut(current["pupil_median"], q=min(8, max(2, current["pupil_median"].nunique())), duplicates="drop")
             current["pupil_bin"] = bins
             summary = current.groupby("pupil_bin", observed=True).agg(pupil=("pupil_median", "median"), rt=("rt", "median")).sort_values("pupil")
-            ax.plot(summary["pupil"], summary["rt"], marker="o", color=PALETTE[f"block{block_num}"], linestyle=LINESTYLES[f"block{block_num}"], label=f"Block {block_num}")
-        ax.set_xlabel("Binned pre-trial PIR")
-        ax.set_ylabel("Correct-Go RT (ms)")
+            ax.plot(summary["pupil"], summary["rt"], marker="o", color=PALETTE[f"block{block_num}"], linestyle=LINESTYLES[f"block{block_num}"], label=f"B{block_num}")
+        ax.set_xlabel("分箱试次前 PIR")
+        ax.set_ylabel("正确 Go RT（ms）")
         ax.legend(loc="best")
         clean_axis(ax, grid_y=True)
-    ax.set_title("Correct-Go behavior across PIR state")
+    ax.set_title("PIR 状态下的正确 Go 行为")
     panel_label(ax, "C")
 
     ax = axes[1, 1]
     metrics = [col for col in ("commission_rate", "program_omission_rate", "clean_omission_rate", "ambiguous_omission_rate") if col in advanced_behavior.columns]
     if advanced_behavior.empty or not metrics:
-        _empty(ax, "No error-rate summary")
+        _empty(ax, "无错误率汇总")
     else:
         x = np.arange(len(metrics))
         width = 0.34
         for block_num, offset in ((1, -width / 2), (2, width / 2)):
             frame = advanced_behavior[_numeric(advanced_behavior["block_num"]).eq(block_num)]
             means = [float(_numeric(frame[m]).median()) for m in metrics]
-            ax.bar(x + offset, means, width=width, color=PALETTE[f"block{block_num}"], alpha=0.65, label=f"Block {block_num}")
-        ax.set_xticks(x, [m.replace("_rate", "") for m in metrics], rotation=25, ha="right")
-        ax.set_ylabel("Subject-median rate")
+            ax.bar(x + offset, means, width=width, color=PALETTE[f"block{block_num}"], alpha=0.65, label=f"B{block_num}")
+        rate_tick_zh = {"commission": "误按", "program_omission": "程序遗漏", "clean_omission": "无歧义遗漏", "ambiguous_omission": "歧义遗漏"}
+        ax.set_xticks(x, [rate_tick_zh.get(m.replace("_rate", ""), m.replace("_rate", "")) for m in metrics], rotation=25, ha="right")
+        ax.set_ylabel("被试中位数比率")
         ax.set_ylim(bottom=0)
         ax.legend(loc="best")
         clean_axis(ax, grid_y=True)
-    ax.set_title("Behavioral error/QC profiles")
+    ax.set_title("行为错误/QC 概况")
     panel_label(ax, "D")
 
     finalize_layout(fig, wspace=0.34, hspace=0.46)
@@ -472,29 +496,29 @@ def figure04_error_precursors(
     raster_dpi: int,
 ) -> list[str]:
     fig, axes = make_figure(width="full", height_cm=15.0, nrows=2, ncols=2)
-    _trajectory_by_condition(axes[0, 0], nogo_continuous, block_num=1, title="No-Go precursor — Block 1")
+    _trajectory_by_condition(axes[0, 0], nogo_continuous, block_num=1, title="No-Go 前兆 — B1")
     panel_label(axes[0, 0], "A")
-    _trajectory_by_condition(axes[0, 1], nogo_continuous, block_num=2, title="No-Go precursor — Block 2")
+    _trajectory_by_condition(axes[0, 1], nogo_continuous, block_num=2, title="No-Go 前兆 — B2")
     panel_label(axes[0, 1], "B")
-    _trajectory_by_condition(axes[1, 0], omission_continuous, title="Go omission precursor — both Blocks")
+    _trajectory_by_condition(axes[1, 0], omission_continuous, title="Go 遗漏前兆 — 两区块")
     panel_label(axes[1, 0], "C")
 
     ax = axes[1, 1]
     if nogo_trial_lag.empty:
-        _empty(ax, "No trial-lag precursor")
+        _empty(ax, "无试次滞后前兆")
     else:
         for condition, current in nogo_trial_lag.groupby("event_outcome", sort=True):
             subject = current.groupby(["subject", "lag"], as_index=False).agg(rt=("go_rt_ms", "median"), pir=("pupil_median", "median"))
             rt = subject.groupby("lag")["rt"].median().sort_index()
             color = PALETTE.get(str(condition), "#555555")
             style = LINESTYLES.get(str(condition), "-")
-            ax.plot(rt.index, rt.values, marker="o", color=color, linestyle=style, label=str(condition))
+            ax.plot(rt.index, rt.values, marker="o", color=color, linestyle=style, label=_label_zh(condition))
         ax.axvline(0, color="#777777", linestyle=":", linewidth=0.65)
-        ax.set_xlabel("Correct-Go trial lag before No-Go")
-        ax.set_ylabel("Correct-Go RT (ms)")
+        ax.set_xlabel("No-Go 前正确 Go 试次滞后")
+        ax.set_ylabel("正确 Go RT（ms）")
         ax.legend(loc="best")
         clean_axis(ax, grid_y=True)
-    ax.set_title("Discrete trial-lag behavioral precursor")
+    ax.set_title("离散试次滞后行为前兆")
     panel_label(ax, "D")
 
     finalize_layout(fig, wspace=0.30, hspace=0.42)
@@ -513,7 +537,7 @@ def figure05_probe_states(
     fig, axes = make_figure(width="full", height_cm=15.0, nrows=2, ncols=2)
     ax = axes[0, 0]
     if probe_events.empty or "probe_response" not in probe_events.columns:
-        _empty(ax, "No probe_response")
+        _empty(ax, "无 probe_response")
     else:
         counts = probe_events.groupby(["block_num", "probe_response"]).size().rename("n").reset_index()
         totals = counts.groupby("block_num")["n"].transform("sum")
@@ -524,46 +548,46 @@ def figure05_probe_states(
         for block_num, offset in ((1, -width / 2), (2, width / 2)):
             current = counts[_numeric(counts["block_num"]).eq(block_num)].set_index("probe_response")
             vals = [current["fraction"].get(opt, 0.0) for opt in options]
-            ax.bar(x + offset, vals, width=width, color=PALETTE[f"block{block_num}"], alpha=0.68, label=f"Block {block_num}")
+            ax.bar(x + offset, vals, width=width, color=PALETTE[f"block{block_num}"], alpha=0.68, label=f"B{block_num}")
         ax.set_xticks(x, [str(int(v)) if float(v).is_integer() else str(v) for v in options])
-        ax.set_xlabel("probe_response raw code")
-        ax.set_ylabel("Fraction of probes")
+        ax.set_xlabel("probe_response 原始编码")
+        ax.set_ylabel("探针占比")
         ax.legend(loc="best")
         clean_axis(ax, grid_y=True)
-    ax.set_title("Probe response distribution × Block")
+    ax.set_title("探针作答分布 × 区块")
     panel_label(ax, "A")
 
     ax = axes[0, 1]
     if probe_events.empty or not {"probe_response", "probe_vigilance"}.issubset(probe_events.columns):
-        _empty(ax, "No response × vigilance")
+        _empty(ax, "无作答 × 警觉")
     else:
         df = probe_events.copy()
         df["probe_vigilance"] = _numeric(df["probe_vigilance"])
         for block_num in (1, 2):
             current = df[_numeric(df["block_num"]).eq(block_num)]
             summary = current.groupby("probe_response")["probe_vigilance"].median().sort_index()
-            ax.plot(summary.index, summary.values, marker="o", color=PALETTE[f"block{block_num}"], linestyle=LINESTYLES[f"block{block_num}"], label=f"Block {block_num}")
-        ax.set_xlabel("probe_response raw code")
-        ax.set_ylabel("Median probe_vigilance")
+            ax.plot(summary.index, summary.values, marker="o", color=PALETTE[f"block{block_num}"], linestyle=LINESTYLES[f"block{block_num}"], label=f"B{block_num}")
+        ax.set_xlabel("probe_response 原始编码")
+        ax.set_ylabel("probe_vigilance 中位数")
         ax.legend(loc="best")
         clean_axis(ax, grid_y=True)
-    ax.set_title("Probe response × vigilance structure")
+    ax.set_title("探针作答 × 警觉结构")
     panel_label(ax, "B")
 
-    _trajectory_by_condition(axes[1, 0], probe_continuous, title="Continuous PIR trajectory before Probe")
+    _trajectory_by_condition(axes[1, 0], probe_continuous, title="探针前连续 PIR 轨迹")
     panel_label(axes[1, 0], "C")
 
     ax = axes[1, 1]
     if probe_transitions.empty or "response_transition" not in probe_transitions.columns:
-        _empty(ax, "No sequential Probe transitions")
+        _empty(ax, "无探针序列转换")
     else:
         counts = probe_transitions.groupby("response_transition").size().rename("n").sort_values(ascending=False)
         top = counts.head(12).sort_values()
         ax.barh(np.arange(len(top)), top.values, color="#777777", alpha=0.72)
         ax.set_yticks(np.arange(len(top)), top.index)
-        ax.set_xlabel("Transition count")
+        ax.set_xlabel("转换计数")
         clean_axis(ax, grid_y=False)
-    ax.set_title("Sequential probe-state transitions")
+    ax.set_title("探针状态序列转换")
     panel_label(ax, "D")
 
     finalize_layout(fig, wspace=0.32, hspace=0.44)
@@ -579,7 +603,7 @@ def _binned_scatter(
     legend_loc: str = "best",
 ) -> None:
     if frame.empty or x_col not in frame.columns or "pupil_median" not in frame.columns:
-        _empty(ax, "Visual covariate unavailable")
+        _empty(ax, "视觉协变量不可用")
         return
     for block_num in (1, 2):
         current = frame[_numeric(frame["block_num"]).eq(block_num)].copy()
@@ -591,9 +615,9 @@ def _binned_scatter(
         q = min(8, max(2, current[x_col].nunique()))
         current["bin"] = pd.qcut(current[x_col], q=q, duplicates="drop")
         summary = current.groupby("bin", observed=True).agg(x=(x_col, "median"), y=("pupil_median", "median")).sort_values("x")
-        ax.plot(summary["x"], summary["y"], marker="o", color=PALETTE[f"block{block_num}"], linestyle=LINESTYLES[f"block{block_num}"], label=f"Block {block_num}")
+        ax.plot(summary["x"], summary["y"], marker="o", color=PALETTE[f"block{block_num}"], linestyle=LINESTYLES[f"block{block_num}"], label=f"B{block_num}")
     ax.set_xlabel(x_col.replace("current_", ""))
-    ax.set_ylabel("Pre-trial centered PIR")
+    ax.set_ylabel("试次前中心化 PIR")
     ax.set_title(title)
     ax.legend(loc=legend_loc, fontsize=6.5)
     _add_zero(ax)
@@ -612,7 +636,7 @@ def figure06_visual_controls(
     fig, axes = make_figure(width="full", height_cm=15.0, nrows=2, ncols=2)
     ax = axes[0, 0]
     if stimulus_summary.empty or not {"stimulus_size", "pupil_median"}.issubset(stimulus_summary.columns):
-        _empty(ax, "No stimulus-size summary")
+        _empty(ax, "无刺激大小汇总")
     else:
         for block_num in (1, 2):
             for is_nogo, marker in ((0, "o"), (1, "s")):
@@ -631,28 +655,28 @@ def figure06_visual_controls(
                     linestyle="-" if is_nogo == 0 else ":",
                     label=f"B{block_num} {'No-Go' if is_nogo else 'Go'}",
                 )
-        ax.set_xlabel("Stimulus size (%)")
-        ax.set_ylabel("Pre-trial centered PIR")
+        ax.set_xlabel("刺激大小（%）")
+        ax.set_ylabel("试次前中心化 PIR")
         ax.legend(loc="best", ncol=2)
         _add_zero(ax)
         clean_axis(ax, grid_y=True)
-    ax.set_title("Stimulus size / task type control")
+    ax.set_title("刺激大小/任务类型控制")
     panel_label(ax, "A")
 
-    _binned_scatter(axes[0, 1], visual_trial, "current_central_rel_lum_mean", title="Current-stimulus luminance")
+    _binned_scatter(axes[0, 1], visual_trial, "current_central_rel_lum_mean", title="当前刺激亮度")
     panel_label(axes[0, 1], "B")
     _binned_scatter(
         axes[1, 0],
         visual_trial,
         "current_central_rms_contrast",
-        title="Current-stimulus contrast",
+        title="当前刺激对比度",
         legend_loc="upper left",
     )
     panel_label(axes[1, 0], "C")
 
     ax = axes[1, 1]
     if visual_correlations.empty:
-        _empty(ax, "No visual-covariate correlations")
+        _empty(ax, "无视觉协变量相关")
     else:
         df = visual_correlations.sort_values("spearman_rho_with_pir")
         ax.barh(np.arange(len(df)), df["spearman_rho_with_pir"], color="#777777", alpha=0.72)
@@ -660,18 +684,18 @@ def figure06_visual_controls(
             np.arange(len(df)),
             [
                 (
-                    ("cur" if str(x).startswith("current_") else "prev")
+                    ("当前" if str(x).startswith("current_") else "先前")
                     + ": "
-                    + ("fruit" if "fruit_" in str(x) else "central")
+                    + ("水果" if "fruit_" in str(x) else "中央")
                     + "\n"
                     + (
-                        "visible area"
+                        "可见面积"
                         if "visible_area" in str(x)
-                        else "contrast"
+                        else "对比度"
                         if "rms_contrast" in str(x)
-                        else "delta luminance"
+                        else "亮度变化"
                         if "delta_" in str(x) and "rel_lum" in str(x)
-                        else "luminance"
+                        else "亮度"
                     )
                 )
                 for x in df["covariate"]
@@ -679,9 +703,9 @@ def figure06_visual_controls(
         )
         ax.tick_params(axis="y", labelsize=5.5)
         ax.axvline(0, color="#777777", linestyle=":", linewidth=0.65)
-        ax.set_xlabel("Spearman ρ with PIR (validation only)")
+        ax.set_xlabel("与 PIR 的 Spearman ρ（仅验证）")
         clean_axis(ax, grid_y=False)
-    ax.set_title("Current vs previous visual covariates")
+    ax.set_title("当前与先前视觉协变量")
     panel_label(ax, "D")
 
     finalize_layout(fig, left=0.16, wspace=0.42, hspace=0.44)
@@ -699,7 +723,7 @@ def figure07_individual_differences(
     fig, axes = make_figure(width="full", height_cm=14.5, nrows=2, ncols=2)
     ax = axes[0, 0]
     if heterogeneity.empty or not {"block1_time_slope_per_sec", "block2_time_slope_per_sec"}.issubset(heterogeneity.columns):
-        _empty(ax, "No subject slope data")
+        _empty(ax, "无被试斜率数据")
     else:
         x = _numeric(heterogeneity["block1_time_slope_per_sec"])
         y = _numeric(heterogeneity["block2_time_slope_per_sec"])
@@ -709,41 +733,41 @@ def figure07_individual_differences(
             ax.annotate(str(subject).replace("sub-", ""), (xv, yv), xytext=(2, 2), textcoords="offset points", fontsize=5.2, color="#666666")
         ax.axhline(0, color="#BBBBBB", linewidth=0.6)
         ax.axvline(0, color="#BBBBBB", linewidth=0.6)
-        ax.set_xlabel("Block 1 slope / s")
-        ax.set_ylabel("Block 2 slope / s")
+        ax.set_xlabel("B1 斜率（/s）")
+        ax.set_ylabel("B2 斜率（/s）")
         clean_axis(ax)
-    ax.set_title("Time-on-task slope heterogeneity")
+    ax.set_title("时间效应斜率异质性")
     panel_label(ax, "A")
 
     ax = axes[0, 1]
     if raw_pir.empty or "raw_pupil_subject_median" not in raw_pir.columns:
-        _empty(ax, "No raw between-person pupil")
+        _empty(ax, "无个体间原始 pupil 数据")
     else:
         df = raw_pir.sort_values("raw_pupil_subject_median")
         ax.scatter(np.arange(1, len(df) + 1), df["raw_pupil_subject_median"], s=15, color="#555555", alpha=0.78, linewidths=0)
-        ax.set_xlabel("Subjects sorted by raw pupil baseline")
-        ax.set_ylabel("Raw binocular pupil median")
+        ax.set_xlabel("按原始 pupil 基线排序的被试")
+        ax.set_ylabel("原始双眼 pupil 中位数")
         clean_axis(ax, grid_y=True)
-    ax.set_title("Between-person raw pupil characteristics")
+    ax.set_title("个体间原始 pupil 特征")
     panel_label(ax, "B")
 
     ax = axes[1, 0]
     if heterogeneity.empty or "recovery_delta_block2_minus_block1" not in heterogeneity.columns:
-        _empty(ax, "No recovery heterogeneity")
+        _empty(ax, "无恢复异质性")
     else:
         df = heterogeneity[["subject", "recovery_delta_block2_minus_block1"]].dropna().sort_values("recovery_delta_block2_minus_block1")
         ax.bar(np.arange(len(df)), df["recovery_delta_block2_minus_block1"], color=np.where(df["recovery_delta_block2_minus_block1"].ge(0), PALETTE["block2"], PALETTE["block1"]), alpha=0.70)
         ax.axhline(0, color="#777777", linewidth=0.65)
-        ax.set_xlabel("Subjects sorted by Block-transition change")
-        ax.set_ylabel("Recovery delta")
+        ax.set_xlabel("按区块转换变化排序的被试")
+        ax.set_ylabel("恢复差值")
         clean_axis(ax, grid_y=True)
-    ax.set_title("Block-transition heterogeneity")
+    ax.set_title("区块转换异质性")
     panel_label(ax, "C")
 
     ax = axes[1, 1]
     effect_cols = [col for col in heterogeneity.columns if col.startswith("median_effect__")]
     if heterogeneity.empty or not effect_cols:
-        _empty(ax, "No subject event-effect heterogeneity")
+        _empty(ax, "无被试事件效应异质性")
     else:
         long = heterogeneity[["subject", *effect_cols]].melt(id_vars="subject", var_name="effect", value_name="value")
         long["effect"] = long["effect"].str.replace("median_effect__", "", regex=False)
@@ -757,17 +781,17 @@ def figure07_individual_differences(
                 ax.scatter(pos + rng.normal(0, 0.035, len(values)), values, s=8, color="#666666", alpha=0.55, linewidths=0)
         short_effects = [
             textwrap.fill(
-                effect.replace("_minus_", " − ").replace("_", " "),
+                effect.replace("_minus_", " - ").replace("_", " "),
                 width=20,
                 break_long_words=False,
             )
             for effect in effects
         ]
         ax.set_xticks(np.arange(1, len(effects) + 1), short_effects, rotation=0, ha="center")
-        ax.set_ylabel("Subject-level median contrast")
+        ax.set_ylabel("被试级中位数对比")
         _add_zero(ax)
         clean_axis(ax, grid_y=True)
-    ax.set_title("Event-association heterogeneity")
+    ax.set_title("事件关联异质性")
     panel_label(ax, "D")
 
     finalize_layout(fig, wspace=0.32, hspace=0.44)
@@ -790,23 +814,23 @@ def figure08_feature_structure(
 ) -> list[str]:
     fig, axes = make_figure(width="full", height_cm=17.0, nrows=2, ncols=2)
     matrix = _corr_matrix(feature_within, "feature_a", "feature_b", "r")
-    _heatmap(axes[0, 0], matrix, vmin=-1, vmax=1, cmap="coolwarm", cbar_label="within-person r")
-    axes[0, 0].set_title("PIR feature redundancy")
+    _heatmap(axes[0, 0], matrix, vmin=-1, vmax=1, cmap="coolwarm", cbar_label="个体内 r")
+    axes[0, 0].set_title("PIR 特征冗余")
     panel_label(axes[0, 0], "A")
 
     matrix = _corr_matrix(within_metrics, "metric_a", "metric_b", "r")
-    _heatmap(axes[0, 1], matrix, vmin=-1, vmax=1, cmap="coolwarm", cbar_label="within-person r", annotate=True)
-    axes[0, 1].set_title("Within-person NIR–behavior structure")
+    _heatmap(axes[0, 1], matrix, vmin=-1, vmax=1, cmap="coolwarm", cbar_label="个体内 r", annotate=True)
+    axes[0, 1].set_title("个体内 NIR–行为结构")
     panel_label(axes[0, 1], "B")
 
     matrix = _corr_matrix(between_metrics, "metric_a", "metric_b", "r")
-    _heatmap(axes[1, 0], matrix, vmin=-1, vmax=1, cmap="coolwarm", cbar_label="between-person r")
-    axes[1, 0].set_title("Between-person raw-PIR structure")
+    _heatmap(axes[1, 0], matrix, vmin=-1, vmax=1, cmap="coolwarm", cbar_label="个体间 r")
+    axes[1, 0].set_title("个体间原始 PIR 结构")
     panel_label(axes[1, 0], "C")
 
     ax = axes[1, 1]
     if window_stability.empty:
-        _empty(ax, "No multiscale stability summary")
+        _empty(ax, "无多尺度稳定性汇总")
     else:
         for idx, (contrast, current) in enumerate(window_stability.groupby("contrast", sort=True)):
             current = current.sort_values("window_sec")
@@ -815,12 +839,12 @@ def figure08_feature_structure(
             ax.fill_between(current["window_sec"], current["q25"], current["q75"], color=color, alpha=0.12, linewidth=0)
         ax.set_xscale("log")
         ax.set_xticks([1, 3, 5, 10, 20, 30, 60], ["1", "3", "5", "10", "20", "30", "60"])
-        ax.set_xlabel("Pre-event window (s; log scale)")
-        ax.set_ylabel("Subject-level effect/contrast")
+        ax.set_xlabel("事件前窗口（s；对数轴）")
+        ax.set_ylabel("被试级效应/对比")
         ax.legend(loc="best")
         _add_zero(ax)
         clean_axis(ax, grid_y=True)
-    ax.set_title("Effect stability across prespecified windows")
+    ax.set_title("预设窗口间效应稳定性")
     panel_label(ax, "D")
 
     finalize_layout(fig, left=0.20, bottom=0.15, wspace=0.50, hspace=0.50)
@@ -902,20 +926,30 @@ def figure09_quality_control(
     raster_dpi: int,
 ) -> list[str]:
     coverage = _normalize_coverage_wide(coverage)
+    coverage_metric_zh = {
+        "pupil_valid_fraction_median": "有效 pupil 占比中位数",
+        "available_duration_fraction_median": "可用时长占比中位数",
+        "internal_coverage_fraction_median": "窗内覆盖占比中位数",
+        "boundary_truncated_fraction": "边界截断占比",
+    }
     fig, axes = make_figure(width="full", height_cm=16.5, nrows=2, ncols=2)
     trial_matrix = _coverage_fraction_matrix(coverage, level="trial", track=track)
-    _heatmap(axes[0, 0], trial_matrix, vmin=0, vmax=1, cmap="viridis", cbar_label="fraction")
-    axes[0, 0].set_title("Trial-window coverage dimensions")
+    if not trial_matrix.empty:
+        trial_matrix.index = [coverage_metric_zh.get(str(name), str(name)) for name in trial_matrix.index]
+    _heatmap(axes[0, 0], trial_matrix, vmin=0, vmax=1, cmap="viridis", cbar_label="占比")
+    axes[0, 0].set_title("试次窗口覆盖维度")
     panel_label(axes[0, 0], "A")
 
     probe_matrix = _coverage_fraction_matrix(coverage, level="probe", track=track)
-    _heatmap(axes[0, 1], probe_matrix, vmin=0, vmax=1, cmap="viridis", cbar_label="fraction")
-    axes[0, 1].set_title("Probe-window coverage dimensions")
+    if not probe_matrix.empty:
+        probe_matrix.index = [coverage_metric_zh.get(str(name), str(name)) for name in probe_matrix.index]
+    _heatmap(axes[0, 1], probe_matrix, vmin=0, vmax=1, cmap="viridis", cbar_label="占比")
+    axes[0, 1].set_title("探针窗口覆盖维度")
     panel_label(axes[0, 1], "B")
 
     ax = axes[1, 0]
     if source_mode.empty:
-        _empty(ax, "No binocular source-mode QC")
+        _empty(ax, "无双眼来源模式 QC")
     else:
         df = source_mode[source_mode["track"].astype(str).eq(track)].copy() if "track" in source_mode.columns else source_mode.copy()
         cols = [col for col in ("source_mode_binocular_fraction", "source_mode_left_only_fraction", "source_mode_right_only_fraction", "source_mode_missing_fraction") if col in df.columns]
@@ -923,28 +957,30 @@ def figure09_quality_control(
         x = np.arange(len(summary.index))
         bottom = np.zeros(len(x))
         colors = ["#4C78A8", "#59A14F", "#F28E2B", "#B8B8B8"]
+        source_zh = {"binocular": "双眼", "left_only": "仅左眼", "right_only": "仅右眼", "missing": "缺失"}
         for col, color in zip(cols, colors):
             values = summary[col].to_numpy(dtype=float)
-            ax.bar(x, values, bottom=bottom, color=color, alpha=0.78, label=col.replace("source_mode_", "").replace("_fraction", ""))
+            base_name = col.replace("source_mode_", "").replace("_fraction", "")
+            ax.bar(x, values, bottom=bottom, color=color, alpha=0.78, label=source_zh.get(base_name, base_name))
             bottom += np.nan_to_num(values)
-        ax.set_xticks(x, [f"Block {int(v)}" for v in summary.index])
+        ax.set_xticks(x, [f"B{int(v)}" for v in summary.index])
         ax.set_ylim(0, 1)
-        ax.set_ylabel("Mean window fraction")
+        ax.set_ylabel("平均窗口占比")
         ax.legend(loc="best", ncol=2)
         clean_axis(ax, grid_y=True)
-    ax.set_title("Binocular / single-eye / missing composition")
+    ax.set_title("双眼/单眼/缺失构成")
     panel_label(ax, "C")
 
     ax = axes[1, 1]
     if coverage.empty:
-        _empty(ax, "No temporal-gap QC")
+        _empty(ax, "无时间间隔 QC")
     else:
         df = coverage[
             coverage["track"].astype(str).eq(track)
             & coverage["coverage_metric"].astype(str).eq("max_temporal_gap_sec_p95")
         ].copy()
         if df.empty:
-            _empty(ax, "No max-gap metric")
+            _empty(ax, "无最大间隔指标")
         else:
             df["coverage_value"] = _numeric(df["coverage_value"])
             for idx, level in enumerate(("trial", "probe"), start=1):
@@ -953,10 +989,10 @@ def figure09_quality_control(
                     ax.boxplot([values], positions=[idx], widths=0.48, showfliers=False, manage_ticks=False)
                     rng = np.random.default_rng(900 + idx)
                     ax.scatter(idx + rng.normal(0, 0.035, len(values)), values, s=7, color="#666666", alpha=0.45, linewidths=0)
-            ax.set_xticks([1, 2], ["Trial", "Probe"])
-            ax.set_ylabel("95th percentile max temporal gap (s)")
+            ax.set_xticks([1, 2], ["试次", "探针"])
+            ax.set_ylabel("最大时间间隔 P95（s）")
             clean_axis(ax, grid_y=True)
-    ax.set_title("Temporal discontinuity QC")
+    ax.set_title("时间不连续 QC")
     panel_label(ax, "D")
 
     finalize_layout(fig, left=0.20, wspace=0.44, hspace=0.48)
@@ -975,38 +1011,38 @@ def figure10_robustness(
     fig, axes = make_figure(width="full", height_cm=15.5, nrows=2, ncols=2)
     matrix = _corr_matrix(track_correlations, "track_a", "track_b", "correlation")
     _heatmap(axes[0, 0], matrix, vmin=-1, vmax=1, cmap="coolwarm", cbar_label="Pearson r", annotate=True)
-    axes[0, 0].set_title("Six-track agreement")
+    axes[0, 0].set_title("六轨道一致性")
     panel_label(axes[0, 0], "A")
 
     ax = axes[0, 1]
     if track_agreement.empty:
-        _empty(ax, "No track agreement summary")
+        _empty(ax, "无轨道一致性汇总")
     else:
         df = track_agreement.sort_values("pearson_r")
         ax.barh(np.arange(len(df)), df["pearson_r"], color="#777777", alpha=0.72)
         ax.set_yticks(np.arange(len(df)), df["comparison_track"])
         ax.set_xlim(-1, 1)
         ax.axvline(0, color="#777777", linewidth=0.65)
-        ax.set_xlabel("Correlation with main track")
+        ax.set_xlabel("与主轨道的相关")
         clean_axis(ax)
-    ax.set_title("Agreement with binocular-primary")
+    ax.set_title("与双眼主轨道一致性")
     panel_label(ax, "B")
 
     ax = axes[1, 0]
     if track_agreement.empty:
-        _empty(ax, "No absolute-difference summary")
+        _empty(ax, "无绝对差值汇总")
     else:
         df = track_agreement.sort_values("median_absolute_difference")
         ax.barh(np.arange(len(df)), df["median_absolute_difference"], color="#999999", alpha=0.72)
         ax.set_yticks(np.arange(len(df)), df["comparison_track"])
-        ax.set_xlabel("Median absolute PIR difference")
+        ax.set_xlabel("PIR 绝对差值中位数")
         clean_axis(ax)
-    ax.set_title("Magnitude of track disagreement")
+    ax.set_title("轨道分歧程度")
     panel_label(ax, "C")
 
     ax = axes[1, 1]
     if model_results.empty:
-        _empty(ax, "No smoke-model coefficients")
+        _empty(ax, "无烟雾模型系数")
     else:
         df = model_results.copy()
         df["estimate"] = _numeric(df["estimate"])
@@ -1014,20 +1050,20 @@ def figure10_robustness(
         df = df.dropna(subset=["estimate", "se"])
         df = df[~df["term"].astype(str).str.contains("Intercept|Group Var", regex=True, na=False)].head(12)
         if df.empty:
-            _empty(ax, "No non-intercept coefficients")
+            _empty(ax, "无非截距系数")
         else:
             model_labels = {
-                "lmm_time_on_task_pir": "time-on-task LMM",
+                "lmm_time_on_task_pir": "时间效应 LMM",
                 "lmm_go_rt_pir_within_between": "Go-RT LMM",
-                "gee_nogo_commission_pir": "commission GEE",
-                "gee_go_program_omission_pir": "program omission GEE",
-                "gee_go_clean_omission_sensitivity": "clean omission GEE",
+                "gee_nogo_commission_pir": "误按 GEE",
+                "gee_go_program_omission_pir": "程序遗漏 GEE",
+                "gee_go_clean_omission_sensitivity": "无歧义遗漏 GEE",
             }
             term_labels = {
-                "C(block_num)[T.2]": "Block 2",
-                "pupil_median_within": "PIR within",
-                "pupil_median_between": "PIR between",
-                "time_z": "time",
+                "C(block_num)[T.2]": "B2",
+                "pupil_median_within": "PIR 个体内",
+                "pupil_median_between": "PIR 个体间",
+                "time_z": "时间",
                 "pupil_median": "PIR",
             }
             labels = [
@@ -1054,13 +1090,13 @@ def figure10_robustness(
             # confidence intervals. Keep them visible while using a sparse,
             # deterministic set of readable symlog ticks.
             smoke_ticks = np.array([-1e10, -1e6, -1e2, 0.0, 1e2, 1e6, 1e10])
-            smoke_tick_labels = ["−10¹⁰", "−10⁶", "−10²", "0", "10²", "10⁶", "10¹⁰"]
+            smoke_tick_labels = ["-10¹⁰", "-10⁶", "-10²", "0", "10²", "10⁶", "10¹⁰"]
             ax.set_xticks(smoke_ticks)
             ax.set_xticklabels(smoke_tick_labels, fontsize=5.5)
             ax.xaxis.get_offset_text().set_visible(False)
-            ax.set_xlabel("Validation-only coefficient ± 95% CI (symlog)", fontsize=7, labelpad=5)
+            ax.set_xlabel("仅验证系数 ± 95% CI（symlog）", fontsize=7, labelpad=5)
             clean_axis(ax)
-    ax.set_title("Model-interface smoke test")
+    ax.set_title("模型接口烟雾测试")
     panel_label(ax, "D")
 
     finalize_layout(fig, left=0.28, bottom=0.15, wspace=0.50, hspace=0.46)
