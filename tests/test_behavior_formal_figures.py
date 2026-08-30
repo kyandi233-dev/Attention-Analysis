@@ -2,13 +2,13 @@ import pandas as pd
 
 from attention_pipeline.behavior_formal.science_v3_figures import (
     BEHAVIOR_FIGURE_CONTRACT,
-    formal_figure_contract_is_chinese,
+    formal_figure_contract_is_english,
 )
 from attention_pipeline.behavior_formal.science_v3_figures_formal import _participant_first
 
 
-def test_behavior_formal_figure_contract_is_chinese():
-    assert formal_figure_contract_is_chinese()
+def test_behavior_formal_figure_contract_is_english():
+    assert formal_figure_contract_is_english()
     assert len(BEHAVIOR_FIGURE_CONTRACT) >= 10
     assert "行为图07_候选指标覆盖.png" in BEHAVIOR_FIGURE_CONTRACT
     assert "行为图08_候选指标冗余.png" in BEHAVIOR_FIGURE_CONTRACT

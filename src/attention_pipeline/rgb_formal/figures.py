@@ -13,6 +13,13 @@ from typing import Any
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from attention_pipeline.formal_analysis.publication_style import (
+    FONT_FAMILY,
+    configure_publication_style,
+    finalize_publication_figure,
+)
+
+configure_publication_style()
 
 
 VIEW_SPECS = (
@@ -30,29 +37,30 @@ def _safe_name(value: str) -> str:
 
 def _ylabel(metric: str) -> str:
     mapping = {
-        "ear_mean": "平均眼睑纵横比（EAR）",
-        "ear_left": "左眼眼睑纵横比（EAR）",
-        "ear_right": "右眼眼睑纵横比（EAR）",
-        "eye_openness_norm": "相对眼睑开放度",
-        "closure_fraction": "眼睑闭合比例",
-        "global_motion_energy": "全局运动能量",
-        "global_motion_energy_per_sec": "单位时间全局运动能量",
-        "changed_pixel_ratio": "变化像素比例",
-        "gray_mean": "画面平均灰度",
-        "gray_mean_delta": "画面平均灰度变化",
-        "pose_visibility_mean": "姿态关键点平均可见度",
-        "shoulder_line_angle_rad": "肩线角度（弧度）",
+        "ear_mean": "Mean eye aspect ratio (EAR)",
+        "ear_left": "Left-eye aspect ratio (EAR)",
+        "ear_right": "Right-eye aspect ratio (EAR)",
+        "eye_openness_norm": "Relative eye openness",
+        "closure_fraction": "Eye-closure fraction",
+        "global_motion_energy": "Global motion energy",
+        "global_motion_energy_per_sec": "Global motion energy per second",
+        "changed_pixel_ratio": "Changed-pixel ratio",
+        "gray_mean": "Mean frame intensity",
+        "gray_mean_delta": "Change in mean frame intensity",
+        "pose_visibility_mean": "Mean pose-keypoint visibility",
+        "shoulder_line_angle_rad": "Shoulder-line angle (rad)",
     }
     if metric in mapping:
         return mapping[metric]
     if "speed_per_sec" in metric:
-        return f"运动速度（{metric}）"
+        return f"Motion speed ({metric})"
     if str(metric).lower().startswith("au") or "__AU" in metric:
-        return f"动作单元强度（{metric}）"
-    return f"指标值（{metric}）"
+        return f"Action-unit intensity ({metric})"
+    return f"Metric value ({metric})"
 
 
 def _save(fig: plt.Figure, path: Path) -> None:
+    finalize_publication_figure(fig)
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
     fig.savefig(path, dpi=180, bbox_inches="tight")
@@ -67,7 +75,7 @@ def _session_distribution(summary: pd.DataFrame, metric: str, path: Path) -> tup
     fig, ax = plt.subplots(figsize=(6.2, 4.2))
     ax.hist(values, bins=min(12, max(4, int(np.sqrt(len(values))))), edgecolor="black")
     ax.set_xlabel(_ylabel(metric))
-    ax.set_ylabel("场次数")
+    ax.set_ylabel("Sessions")
     ax.grid(axis="y", alpha=.2)
     _save(fig, path)
     return True, ""
@@ -88,9 +96,9 @@ def _block_pair(summary: pd.DataFrame, metric: str, path: Path) -> tuple[bool, s
     fig, ax = plt.subplots(figsize=(5.2, 4.4))
     for row in paired.itertuples(index=False):
         ax.plot([1, 2], [row[0], row[1]], marker="o", linewidth=.8, alpha=.45)
-    ax.plot([1, 2], paired.mean(axis=0).to_numpy(float), marker="o", linewidth=2.2, label="场次均值")
-    ax.set_xticks([1, 2], ["区块1", "区块2"])
-    ax.set_xlabel("区块")
+    ax.plot([1, 2], paired.mean(axis=0).to_numpy(float), marker="o", linewidth=2.2, label="Session-pair mean")
+    ax.set_xticks([1, 2], ["B1", "B2"])
+    ax.set_xlabel("Block")
     ax.set_ylabel(_ylabel(metric))
     ax.legend(frameon=False)
     ax.grid(axis="y", alpha=.2)
@@ -109,8 +117,8 @@ def _time_plot(time_bins: pd.DataFrame, metric: str, path: Path) -> tuple[bool, 
     if len(grouped) < 3:
         return False, "fewer than 3 populated time bins"
     fig, ax = plt.subplots(figsize=(6.4, 4.2))
-    ax.plot(grouped["time_sec"] / 60.0, grouped["median"], marker="o", linewidth=1.4, label="跨场次中位数")
-    ax.set_xlabel("任务进行时间（分钟）")
+    ax.plot(grouped["time_sec"] / 60.0, grouped["median"], marker="o", linewidth=1.4, label="Across-session median")
+    ax.set_xlabel("Time on task (min)")
     ax.set_ylabel(_ylabel(metric))
     ax.legend(frameon=False)
     ax.grid(alpha=.2)
@@ -165,8 +173,8 @@ def generate_rgb_figure_pack(
             ("session_distribution", _session_distribution, (summary, metric, fig_root / f"{stem}__session_distribution.png"), "场次分布"),
             ("block_b1_b2", _block_pair, (summary, metric, fig_root / f"{stem}__block_b1_b2.png"), "区块1与区块2配对比较"),
             ("time_on_task", _time_plot, (time_bins, metric, fig_root / f"{stem}__time_on_task.png"), "随任务进行时间的变化"),
-            ("probe_q1_nominal", _probe_category, (probe_summary, metric, "q1_nominal_4class", "Q1 类别（名义四分类）", fig_root / f"{stem}__probe_q1_nominal.png"), "探针Q1名义四分类下的分布"),
-            ("probe_q2_ordinal", _probe_category, (probe_summary, metric, "q2_ordinal_4level", "Q2 等级（有序四级）", fig_root / f"{stem}__probe_q2_ordinal.png"), "探针Q2有序四级下的分布"),
+            ("probe_q1_nominal", _probe_category, (probe_summary, metric, "q1_nominal_4class", "Q1 category (nominal; 1-4)", fig_root / f"{stem}__probe_q1_nominal.png"), "探针Q1名义四分类下的分布"),
+            ("probe_q2_ordinal", _probe_category, (probe_summary, metric, "q2_ordinal_4level", "Q2 level (ordinal; 1-4)", fig_root / f"{stem}__probe_q2_ordinal.png"), "探针Q2有序四级下的分布"),
         ]
         for view, fn, args, caption_tail in specs:
             path = args[-1]
@@ -178,6 +186,7 @@ def generate_rgb_figure_pack(
                 "metric": metric, "view": view, "status": "generated" if generated else "not_estimable",
                 "reason": reason, "internal_title_present": False,
                 "caption_external": True, "file": str(path.relative_to(output_root)) if generated else "",
+                "in_image_language": "English", "font_family": FONT_FAMILY, "legend_frame": False,
             })
             if generated:
                 manifest_rows.append({

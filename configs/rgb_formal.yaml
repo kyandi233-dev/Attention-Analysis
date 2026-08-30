@@ -134,7 +134,9 @@ figures:
   status: disabled_deferred
   internal_title_allowed: false
   caption_is_external: true
-  chinese_axes_legends_required: true
+  in_image_language: English
+  font_family: Times New Roman
+  legend_frame: false
   metric_scale_coverage_audit_required: true
   required_views:
     - session_distribution

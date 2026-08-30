@@ -55,7 +55,9 @@ resting_observability:
 figures:
   internal_title_allowed: false
   caption_is_external: true
-  require_chinese_axes_legends: true
+  in_image_language: English
+  font_family: Times New Roman
+  legend_frame: false
   require_metric_scale_coverage_audit: true
   require_all_pupil_candidates: true
   require_window_feature_families: true

@@ -20,16 +20,14 @@ import numpy as np
 import pandas as pd
 
 from .science_v3_metric_figures import ALL_FIGURE_METRICS
+from attention_pipeline.formal_analysis.publication_style import (
+    FONT_FAMILY,
+    configure_publication_style,
+    finalize_publication_figure,
+)
 
-mpl.rcParams.update({
-    "font.family": "sans-serif",
-    "font.sans-serif": ["Arial", "Helvetica", "DejaVu Sans"],
-    "pdf.fonttype": 42,
-    "ps.fonttype": 42,
-    "axes.grid": False,
-    "figure.dpi": 120,
-    "savefig.dpi": 300,
-})
+configure_publication_style()
+mpl.rcParams.update({"figure.dpi": 120, "savefig.dpi": 300})
 
 LABELS = {
     "go_correct_rt_mean_ms": "Correct Go RT mean (ms)",
@@ -103,11 +101,7 @@ def _participant_summary(frame: pd.DataFrame, group_cols: list[str], metric: str
 
 
 def _save(fig: plt.Figure, stem: Path) -> tuple[str, str]:
-    for ax in fig.axes:
-        ax.set_title("")
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-        ax.tick_params(direction="out")
+    finalize_publication_figure(fig)
     fig.tight_layout()
     png = stem.with_suffix(".png")
     svg = stem.with_suffix(".svg")
@@ -133,6 +127,8 @@ def _figure_row(metric: str, view: str, status: str, reason: str, **extra: Any) 
         "reason": reason,
         "internal_title": False,
         "in_image_language": "English",
+        "font_family": FONT_FAMILY,
+        "legend_frame": False,
         "caption_location": "external_manifest_and_report",
         **extra,
     }

@@ -7,8 +7,14 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from attention_pipeline.formal_analysis.publication_style import (
+    configure_publication_style,
+    finalize_publication_figure,
+)
 
 from attention_pipeline.config import load_config
+
+configure_publication_style()
 
 
 def _resolve(config, key: str) -> Path:
@@ -22,8 +28,7 @@ def _resolve(config, key: str) -> Path:
 
 
 def _save(fig: plt.Figure, path: Path) -> str:
-    for ax in fig.axes:
-        ax.set_title("")
+    finalize_publication_figure(fig)
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=220, bbox_inches="tight")
     plt.close(fig)
@@ -83,8 +88,8 @@ def run_adjustment_figures(config_path: str | Path) -> dict[str, Any]:
         lows: list[float] = []
         highs: list[float] = []
         for r in current.itertuples(index=False):
-            term_zh = "参与者内" if str(r.pupil_term) == "pupil_within" else "参与者间"
-            labels.extend([f"{term_zh}·未调整", f"{term_zh}·调整后"])
+            term = "Within-participant" if str(r.pupil_term) == "pupil_within" else "Between-participant"
+            labels.extend([f"{term}: unadjusted", f"{term}: adjusted"])
             estimates.extend([float(r.unadjusted_estimate), float(r.adjusted_estimate)])
             lows.extend([float(r.unadjusted_ci_low), float(r.adjusted_ci_low)])
             highs.extend([float(r.unadjusted_ci_high), float(r.adjusted_ci_high)])
@@ -94,7 +99,7 @@ def run_adjustment_figures(config_path: str | Path) -> dict[str, Any]:
         ax.errorbar(est, y, xerr=np.vstack([est - lo, hi - est]), fmt="o", capsize=3)
         ax.axvline(0, linestyle="--", linewidth=1)
         ax.set_yticks(y); ax.set_yticklabels(labels)
-        ax.set_xlabel("效应估计及 95% 置信区间"); ax.set_ylabel("瞳孔效应与调整状态")
+        ax.set_xlabel("Effect estimate and 95% CI"); ax.set_ylabel("Pupil effect and adjustment status")
         filename = f"NIR模型_{outcome}_调整前后审计.png"
         path = _save(fig, figure_root / filename)
         generated.append(path)

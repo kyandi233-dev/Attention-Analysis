@@ -14,15 +14,14 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from attention_pipeline.formal_analysis.publication_style import (
+    FONT_FAMILY,
+    configure_publication_style,
+    finalize_publication_figure,
+)
 
-mpl.rcParams.update({
-    "font.family": "sans-serif",
-    "font.sans-serif": ["Arial", "Helvetica", "DejaVu Sans"],
-    "pdf.fonttype": 42,
-    "ps.fonttype": 42,
-    "axes.grid": False,
-    "savefig.dpi": 300,
-})
+configure_publication_style()
+mpl.rcParams.update({"savefig.dpi": 300})
 
 
 def _read(path: Path) -> pd.DataFrame:
@@ -30,10 +29,7 @@ def _read(path: Path) -> pd.DataFrame:
 
 
 def _save(fig: plt.Figure, stem: Path) -> tuple[str, str]:
-    for ax in fig.axes:
-        ax.set_title("")
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
+    finalize_publication_figure(fig)
     fig.tight_layout()
     stem.parent.mkdir(parents=True, exist_ok=True)
     png = stem.with_suffix(".png"); svg = stem.with_suffix(".svg")
@@ -71,7 +67,7 @@ def build_rgb_report(output_root: Path, analysis_ready_root: Path) -> dict[str, 
         counts.plot(kind="bar", ax=ax)
         ax.set_xlabel("RGB component"); ax.set_ylabel("Sessions"); ax.legend(title="Status", frameon=False)
         png, svg = _save(fig, fig_root / "rgb_component_status")
-        figure_rows.append({"figure":"rgb_component_status","png":Path(png).name,"svg":Path(svg).name,"caption_zh":"各 RGB 正式组件在 governed sessions 中的可生成/不可估计状态计数。","caption_en":"Session counts by RGB component and generation status.","role":"QC/availability"})
+        figure_rows.append({"figure":"rgb_component_status","png":Path(png).name,"svg":Path(svg).name,"caption_zh":"各 RGB 正式组件在 governed sessions 中的可生成/不可估计状态计数。","caption_en":"Session counts by RGB component and generation status.","role":"QC/availability","font_family":FONT_FAMILY,"legend_frame":False})
 
     if not session_qc.empty and "rgb_source_present" in session_qc:
         present = int(pd.to_numeric(session_qc["rgb_source_present"], errors="coerce").fillna(0).eq(1).sum())

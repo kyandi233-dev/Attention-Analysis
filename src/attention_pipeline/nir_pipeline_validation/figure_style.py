@@ -8,6 +8,10 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from .analysis import VALIDATION_LABEL
+from attention_pipeline.formal_analysis.publication_style import (
+    FONT_FALLBACKS,
+    finalize_publication_figure,
+)
 
 CM_TO_INCH = 1.0 / 2.54
 
@@ -52,8 +56,9 @@ def configure_publication_style() -> None:
     """Apply one centralized style to every manuscript-oriented NIR figure."""
     plt.rcParams.update(
         {
-            "font.family": "sans-serif",
-            "font.sans-serif": ["Arial", "DejaVu Sans"],
+            "font.family": "serif",
+            "font.serif": FONT_FALLBACKS,
+            "mathtext.fontset": "stix",
             "font.size": 8.0,
             "axes.titlesize": 9.0,
             "axes.labelsize": 8.0,
@@ -189,6 +194,7 @@ def save_figure(
     Vector outputs (PDF/SVG/EPS) preserve line/text geometry. Raster outputs use
     the configured high DPI; TIFF uses LZW compression when supported.
     """
+    finalize_publication_figure(fig)
     base.parent.mkdir(parents=True, exist_ok=True)
     outputs: list[str] = []
     for raw_fmt in formats:

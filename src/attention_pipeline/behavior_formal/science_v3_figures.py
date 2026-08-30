@@ -10,7 +10,7 @@ from matplotlib.axes import Axes
 from .omission_candidate_validation import validate_omission_candidates
 from .science_v3_figures_formal import (
     BEHAVIOR_FIGURE_CONTRACT,
-    formal_figure_contract_is_chinese,
+    formal_figure_contract_is_english,
     generate_behavior_figures as _generate_behavior_figures,
 )
 from .science_v3_metric_figures import generate_complete_metric_figure_pack
@@ -42,7 +42,9 @@ def publication_figure_contract() -> dict[str, object]:
     return {
         "internal_title_allowed": False,
         "caption_is_external": True,
-        "chinese_axes_and_legends_required": True,
+        "in_image_language": "English",
+        "font_family": "Times New Roman",
+        "legend_frame": False,
         "metric_scale_coverage_audit_required": True,
     }
 
@@ -134,7 +136,7 @@ def generate_behavior_figures(
 
 __all__ = [
     "BEHAVIOR_FIGURE_CONTRACT",
-    "formal_figure_contract_is_chinese",
+    "formal_figure_contract_is_english",
     "publication_figure_contract",
     "generate_behavior_figures",
 ]

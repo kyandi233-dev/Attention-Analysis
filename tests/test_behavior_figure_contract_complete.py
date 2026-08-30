@@ -29,6 +29,9 @@ def test_legacy_overview_title_calls_are_suppressed(monkeypatch, tmp_path) -> No
     wrapper.generate_behavior_figures(pd.DataFrame(), pd.DataFrame(), tmp_path / "figures")
     assert observed == [""]
     assert wrapper.publication_figure_contract()["internal_title_allowed"] is False
+    assert wrapper.publication_figure_contract()["in_image_language"] == "English"
+    assert wrapper.publication_figure_contract()["font_family"] == "Times New Roman"
+    assert wrapper.publication_figure_contract()["legend_frame"] is False
 
 
 def test_every_requested_metric_has_every_required_figure_family_in_coverage_audit(tmp_path) -> None:

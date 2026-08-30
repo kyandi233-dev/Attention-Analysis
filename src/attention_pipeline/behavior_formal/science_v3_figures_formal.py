@@ -1,4 +1,4 @@
-"""Chinese publication-facing figures for behavior science v3.
+"""English in-image publication figures for behavior science v3.
 
 Formal inference is never reconstructed from pseudo-independent probe/trial
 rows in this module.  Descriptive uncertainty is participant-first, while the
@@ -13,48 +13,54 @@ import re
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+from attention_pipeline.formal_analysis.publication_style import (
+    configure_publication_style,
+    finalize_publication_figure,
+)
 
+configure_publication_style()
 
 METRIC_LABELS = {
-    "go_correct_rt_mean_ms": "正确 Go RT 均值（ms）",
-    "go_correct_rt_median_ms": "正确 Go RT 中位数（ms）",
-    "go_correct_rt_sd_ms": "正确 Go RT SD（ms）",
-    "go_correct_rt_mad_ms": "正确 Go RT MAD（ms）",
-    "go_correct_rt_iqr_ms": "正确 Go RT IQR（ms）",
-    "go_correct_rt_cv": "正确 Go RT 变异系数",
-    "go_correct_rt_theilsen_slope_ms_per_s": "正确 Go RT 斜率（ms/s）",
-    "omission_rate": "Go 遗漏率",
-    "commission_rate": "No-Go 误按率",
+    "go_correct_rt_mean_ms": "Correct Go RT mean (ms)",
+    "go_correct_rt_median_ms": "Correct Go RT median (ms)",
+    "go_correct_rt_sd_ms": "Correct Go RT SD (ms)",
+    "go_correct_rt_mad_ms": "Correct Go RT MAD (ms)",
+    "go_correct_rt_iqr_ms": "Correct Go RT IQR (ms)",
+    "go_correct_rt_cv": "Correct Go RT coefficient of variation",
+    "go_correct_rt_theilsen_slope_ms_per_s": "Correct Go RT slope (ms/s)",
+    "omission_rate": "Go omission rate",
+    "commission_rate": "No-Go commission rate",
     "dprime_loglinear": "d′",
-    "criterion_c": "判别标准 c",
+    "criterion_c": "Criterion c",
     "beta": "β",
 }
 
 BEHAVIOR_FIGURE_CONTRACT = {
-    "行为图01_B1B2配对轨迹.png": ("B1–B2 场次内配对轨迹", "区块", "正确 Go RT 中位数（ms）"),
-    "行为图02_B1B2聚类效应.png": ("B1–B2 参与者聚类效应", "B2−B1 效应", "候选行为指标"),
-    "行为图03_遗漏与误按.png": ("Go 遗漏与 No-Go 误按", "区块", "错误率（比例）"),
-    "行为图04_Q1主探针.png": ("Q1 与探针前行为（30 秒主窗）", "Q1 类别（名义四分类）", "正确 Go RT 中位数（ms）"),
-    "行为图05_Q2主探针.png": ("Q2 与探针前行为（30 秒主窗）", "Q2 警觉程度（有序 1–4）", "正确 Go RT 中位数（ms）"),
-    "行为图06_错误事件轨迹.png": ("错误事件前后局部行为轨迹", "相对错误事件的试次位置", "被试内中心化正确 Go RT（ms）"),
-    "行为图07_候选指标覆盖.png": ("候选行为指标的可计算覆盖", "分析尺度", "候选行为指标"),
-    "行为图08_候选指标冗余.png": ("场次级候选行为指标冗余", "候选行为指标", "候选行为指标"),
-    "行为图09_Q1Q2类别覆盖.png": ("主观探针类别覆盖", "类别", "参与者组数量"),
-    "行为图10_任务时间进程.png": ("区块内任务时间进程", "cycle 序号", "正确 Go RT 中位数（ms）"),
-    "行为图11_场次级核心指标分布.png": ("场次级核心行为指标原始分布", "指标取值", "场次数量"),
+    "行为图01_B1B2配对轨迹.png": ("Within-session B1-B2 paired trajectories", "Block", "Correct Go RT median (ms)"),
+    "行为图02_B1B2聚类效应.png": ("Participant-clustered B1-B2 effects", "B2-B1 effect", "Candidate behavior metric"),
+    "行为图03_遗漏与误按.png": ("Go omissions and No-Go commissions", "Block", "Error rate (proportion)"),
+    "行为图04_Q1主探针.png": ("Q1 and pre-probe behavior (30-s window)", "Q1 category (nominal; 1-4)", "Correct Go RT median (ms)"),
+    "行为图05_Q2主探针.png": ("Q2 and pre-probe behavior (30-s window)", "Q2 vigilance level (ordinal; 1-4)", "Correct Go RT median (ms)"),
+    "行为图06_错误事件轨迹.png": ("Local behavioral trajectories around errors", "Trial position relative to error", "Participant-centered correct Go RT (ms)"),
+    "行为图07_候选指标覆盖.png": ("Computable coverage of candidate metrics", "Analysis scale", "Candidate behavior metric"),
+    "行为图08_候选指标冗余.png": ("Session-level candidate metric redundancy", "Candidate behavior metric", "Candidate behavior metric"),
+    "行为图09_Q1Q2类别覆盖.png": ("Probe response category coverage", "Category", "Participant groups"),
+    "行为图10_任务时间进程.png": ("Time-on-task within block", "Cycle within block", "Correct Go RT median (ms)"),
+    "行为图11_场次级核心指标分布.png": ("Session-level core behavior distributions", "Metric value", "Sessions"),
 }
 
 
-def formal_figure_contract_is_chinese() -> bool:
-    """Machine-readable guard for publication-facing Chinese labels."""
+def formal_figure_contract_is_english() -> bool:
+    """Machine-readable guard for publication-facing English labels."""
     return all(
-        re.search(r"[\u4e00-\u9fff]", text)
+        not re.search(r"[\u4e00-\u9fff]", text)
         for triple in BEHAVIOR_FIGURE_CONTRACT.values()
         for text in triple
     )
 
 
 def _save(fig: plt.Figure, path: Path) -> str:
+    finalize_publication_figure(fig)
     path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(path, dpi=220, bbox_inches="tight")
     plt.close(fig)
@@ -108,7 +114,7 @@ def _counts_text(frame: pd.DataFrame) -> str:
         int(frame["session_id"].dropna().astype(str).nunique())
         if "session_id" in frame else 0
     )
-    return f"观察单位按图中说明；参与者组 N={participant_n}，session N={session_n}"
+    return f"Observation unit as specified; participant groups N={participant_n}; sessions N={session_n}"
 
 
 def _metric_label(name: object) -> str:
@@ -127,7 +133,7 @@ def generate_behavior_figures(
     candidate_validation: pd.DataFrame | None = None,
     metric_redundancy: pd.DataFrame | None = None,
 ) -> list[str]:
-    """Generate Chinese formal/support figures with explicit observation units."""
+    """Generate formal/support figures with English in-image text."""
     output_dir.mkdir(parents=True, exist_ok=True)
     files: list[str] = []
 
@@ -145,17 +151,17 @@ def generate_behavior_figures(
             for _, row in wide.iterrows():
                 ax.plot([1, 2], [row["B1"], row["B2"]], marker="o", alpha=0.25, linewidth=0.8)
             means = [float(wide["B1"].mean()), float(wide["B2"].mean())]
-            ax.plot([1, 2], means, marker="o", linewidth=2.5, label="session 配对均值")
+            ax.plot([1, 2], means, marker="o", linewidth=2.5, label="Session-pair mean")
             title, xlabel, ylabel = BEHAVIOR_FIGURE_CONTRACT["行为图01_B1B2配对轨迹.png"]
             ax.set_title(title)
             ax.set_xlabel(xlabel)
             ax.set_ylabel(ylabel)
             ax.set_xticks([1, 2])
             ax.set_xticklabels(["B1", "B2"])
-            ax.legend(title="描述性汇总")
+            ax.legend(frameon=False)
             ax.text(
                 0.01, 0.01,
-                f"每条细线=一个 session；session N={len(wide)}；参与者组 N={wide.index.get_level_values(0).nunique()}。正式效应见图02。",
+                f"Thin lines are sessions; sessions N={len(wide)}; participant groups N={wide.index.get_level_values(0).nunique()}.",
                 transform=ax.transAxes, fontsize=8,
             )
             files.append(_save(fig, output_dir / "行为图01_B1B2配对轨迹.png"))
@@ -177,11 +183,11 @@ def generate_behavior_figures(
             ax.set_yticklabels([_metric_label(x) for x in d["metric"]])
             title, xlabel, ylabel = BEHAVIOR_FIGURE_CONTRACT["行为图02_B1B2聚类效应.png"]
             ax.set_title(title)
-            ax.set_xlabel(f"{xlabel}（95% 参与者聚类 bootstrap CI）")
+            ax.set_xlabel(f"{xlabel} (95% participant-cluster bootstrap CI)")
             ax.set_ylabel(ylabel)
             ax.text(
                 0.01, 0.01,
-                f"推断单位=参与者组；参与者组 N 范围 {int(d['participant_group_n'].min())}–{int(d['participant_group_n'].max())}；session 配对 N 范围 {int(d['session_pair_n'].min())}–{int(d['session_pair_n'].max())}。",
+                f"Inference unit: participant group; group N range {int(d['participant_group_n'].min())}-{int(d['participant_group_n'].max())}; session-pair N range {int(d['session_pair_n'].min())}-{int(d['session_pair_n'].max())}.",
                 transform=ax.transAxes, fontsize=8,
             )
             files.append(_save(fig, output_dir / "行为图02_B1B2聚类效应.png"))
@@ -211,8 +217,8 @@ def generate_behavior_figures(
             ax.set_ylabel(ylabel)
             ax.set_xticks(x)
             ax.set_xticklabels(blocks)
-            ax.legend(title="错误类型")
-            ax.text(0.01, 0.01, _counts_text(block) + "；误差线=参与者先汇总后的描述性 SEM。", transform=ax.transAxes, fontsize=8)
+            ax.legend(title="Error type", frameon=False)
+            ax.text(0.01, 0.01, _counts_text(block) + "; error bars: participant-first descriptive SEM.", transform=ax.transAxes, fontsize=8)
             files.append(_save(fig, output_dir / "行为图03_遗漏与误按.png"))
 
     # 04/05: participant-first probe summaries. Q1 is never connected as ordered.
@@ -243,7 +249,7 @@ def generate_behavior_figures(
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
         ax.set_xticks([1, 2, 3, 4])
-        ax.text(0.01, 0.01, _counts_text(primary_probe) + "；误差线=参与者先汇总后的描述性 SEM。", transform=ax.transAxes, fontsize=8)
+        ax.text(0.01, 0.01, _counts_text(primary_probe) + "; error bars: participant-first descriptive SEM.", transform=ax.transAxes, fontsize=8)
         files.append(_save(fig, output_dir / filename))
 
     # 06: error trajectories are already participant-first in the upstream summary.
@@ -251,7 +257,7 @@ def generate_behavior_figures(
         needed = {"error_type", "relative_trial", "participant_centered_rt_mean_ms", "participant_centered_rt_sem_ms"}
         if needed.issubset(error_summary.columns):
             fig, ax = plt.subplots(figsize=(7.0, 4.5))
-            names = {"go_omission": "Go 遗漏", "nogo_commission": "No-Go 误按"}
+            names = {"go_omission": "Go omission", "nogo_commission": "No-Go commission"}
             for error_type, current in error_summary.groupby("error_type", sort=True):
                 current = current.sort_values("relative_trial")
                 ax.errorbar(
@@ -263,13 +269,13 @@ def generate_behavior_figures(
             ax.axhline(0, linestyle=":", linewidth=1)
             title, xlabel, ylabel = BEHAVIOR_FIGURE_CONTRACT["行为图06_错误事件轨迹.png"]
             ax.set_title(title)
-            ax.set_xlabel(f"{xlabel}（0=错误事件）")
+            ax.set_xlabel(f"{xlabel} (0 = error event)")
             ax.set_ylabel(ylabel)
-            ax.legend(title="错误类型")
+            ax.legend(title="Error type", frameon=False)
             if {"participant_group_n", "session_n", "error_event_n"}.issubset(error_summary.columns):
                 ax.text(
                     0.01, 0.01,
-                    f"汇总单位=参与者组；参与者组 N 最大={int(error_summary['participant_group_n'].max())}；session N 最大={int(error_summary['session_n'].max())}；错误事件 N 总计={int(error_summary['error_event_n'].max())}（各相对位置覆盖不同）。",
+                    f"Aggregation unit: participant group; maximum group N={int(error_summary['participant_group_n'].max())}; maximum session N={int(error_summary['session_n'].max())}; error events N={int(error_summary['error_event_n'].max())}.",
                     transform=ax.transAxes, fontsize=8,
                 )
             files.append(_save(fig, output_dir / "行为图06_错误事件轨迹.png"))
@@ -293,7 +299,7 @@ def generate_behavior_figures(
             ax.set_title(title)
             ax.set_xlabel(xlabel)
             ax.set_ylabel(ylabel)
-            fig.colorbar(image, ax=ax, label="可计算比例")
+            fig.colorbar(image, ax=ax, label="Computable fraction")
             files.append(_save(fig, output_dir / "行为图07_候选指标覆盖.png"))
 
     # 08: session-scale redundancy, descriptive Spearman matrix.
@@ -319,7 +325,7 @@ def generate_behavior_figures(
             ax.set_title(title)
             ax.set_xlabel(xlabel)
             ax.set_ylabel(ylabel)
-            fig.colorbar(image, ax=ax, label="Spearman 相关系数")
+            fig.colorbar(image, ax=ax, label="Spearman correlation")
             files.append(_save(fig, output_dir / "行为图08_候选指标冗余.png"))
 
     # 09: category coverage is counts, not a psychometric score.
@@ -351,7 +357,7 @@ def generate_behavior_figures(
                     if category in cur.index and pd.notna(cur.loc[category, "probe_n"]):
                         ax.text(
                             bar.get_x() + bar.get_width()/2, bar.get_height(),
-                            f"探针{int(cur.loc[category, 'probe_n'])}\nsession{int(cur.loc[category, 'session_n'])}",
+                            f"Probes {int(cur.loc[category, 'probe_n'])}\nSessions {int(cur.loc[category, 'session_n'])}",
                             ha="center", va="bottom", fontsize=7,
                         )
             title, xlabel, ylabel = BEHAVIOR_FIGURE_CONTRACT["行为图09_Q1Q2类别覆盖.png"]
@@ -360,7 +366,7 @@ def generate_behavior_figures(
             ax.set_ylabel(ylabel)
             ax.set_xticks(x)
             ax.set_xticklabels(["1", "2", "3", "4"])
-            ax.legend(title="探针问题")
+            ax.legend(title="Probe question", frameon=False)
             files.append(_save(fig, output_dir / "行为图09_Q1Q2类别覆盖.png"))
 
     # 10: participant-first time-on-task trajectories.
@@ -378,8 +384,8 @@ def generate_behavior_figures(
             ax.set_title(title)
             ax.set_xlabel(xlabel)
             ax.set_ylabel(ylabel)
-            ax.legend(title="区块")
-            ax.text(0.01, 0.01, _counts_text(cycle) + "；误差线=参与者先汇总后的描述性 SEM；正式趋势推断见 block×cycle GEE 表。", transform=ax.transAxes, fontsize=8)
+            ax.legend(title="Block", frameon=False)
+            ax.text(0.01, 0.01, _counts_text(cycle) + "; error bars: participant-first descriptive SEM; inference is reported in the block-by-cycle GEE table.", transform=ax.transAxes, fontsize=8)
             files.append(_save(fig, output_dir / "行为图10_任务时间进程.png"))
 
     # 11: raw session-level distributions for core candidates.
@@ -392,12 +398,12 @@ def generate_behavior_figures(
                 values = pd.to_numeric(session[metric], errors="coerce").dropna()
                 ax.hist(values, bins=min(12, max(4, int(np.sqrt(max(1, len(values)))))))
                 ax.set_title(_metric_label(metric))
-                ax.set_xlabel("指标取值")
-                ax.set_ylabel("场次数量")
+                ax.set_xlabel("Metric value")
+                ax.set_ylabel("Sessions")
             for ax in flat[len(metrics):]:
                 ax.axis("off")
             fig.suptitle(BEHAVIOR_FIGURE_CONTRACT["行为图11_场次级核心指标分布.png"][0])
-            fig.text(0.02, 0.01, _counts_text(session) + "；本图仅描述原始分布，不作为显著性筛选依据。", fontsize=8)
+            fig.text(0.02, 0.01, _counts_text(session) + "; descriptive distributions only, not significance screening.", fontsize=8)
             files.append(_save(fig, output_dir / "行为图11_场次级核心指标分布.png"))
 
     return files
