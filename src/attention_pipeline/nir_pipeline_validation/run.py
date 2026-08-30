@@ -186,7 +186,7 @@ def run_validation(
         tables["trial_level"],
         tables["trial_windows"],
         track=track,
-        feature="pir_median",
+        feature="pupil_median",
     )
     nogo_precursor = nogo_precursor_trajectory(
         tables["trial_level"],
@@ -422,7 +422,7 @@ def run_validation(
     )
     figure_outputs["trial_multiscale_trajectory"] = plot_trial_multiscale_trajectory(
         trial_trajectory,
-        feature="pir_median",
+        feature="pupil_median",
         base=figure_dir / "fig08_trial_multiscale_pir_trajectory",
         formats=formats,
         dpi=dpi,

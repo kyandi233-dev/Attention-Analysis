@@ -93,8 +93,8 @@ def probe_response_window_table(probe_windows: pd.DataFrame, *, track: str) -> p
         return pd.DataFrame()
     df["probe_response_code"] = canonical_probe_response(df.get("probe_response", pd.Series(index=df.index, dtype=object)))
     numeric_cols = (
-        "pir_median",
-        "pir_valid_fraction",
+        "pupil_median",
+        "pupil_valid_fraction",
         "internal_coverage_fraction",
         "go_rt_median_ms",
         "go_rt_mad_ms",
@@ -136,8 +136,8 @@ def probe_response_window_table(probe_windows: pd.DataFrame, *, track: str) -> p
     df = df.dropna(subset=["probe_response_code"])
     aggregation: dict[str, tuple[str, str]] = {}
     for column, reducer in (
-        ("pir_median", "median"),
-        ("pir_valid_fraction", "mean"),
+        ("pupil_median", "median"),
+        ("pupil_valid_fraction", "mean"),
         ("internal_coverage_fraction", "mean"),
         ("probe_vigilance", "median"),
         ("go_rt_median_ms", "median"),
@@ -204,7 +204,7 @@ def fit_probe_option_smoke_models(
         & probe_windows["window_name"].astype(str).eq(window_name)
     ].copy()
     df["probe_response_code"] = canonical_probe_response(df.get("probe_response", pd.Series(index=df.index, dtype=object)))
-    for column in ("pir_median", "probe_vigilance", "go_rt_median_ms"):
+    for column in ("pupil_median", "probe_vigilance", "go_rt_median_ms"):
         if column in df.columns:
             df[column] = pd.to_numeric(df[column], errors="coerce")
 
@@ -234,11 +234,11 @@ def fit_probe_option_smoke_models(
                 }
             )
 
-    pir = df.dropna(subset=["subject", "block_num", "probe_response_code", "pir_median"])
+    pir = df.dropna(subset=["subject", "block_num", "probe_response_code", "pupil_median"])
     record(
         "lmm_probe_response_option_pir",
         pir,
-        "pir_median ~ C(probe_response_code) + C(block_num)",
+        "pupil_median ~ C(probe_response_code) + C(block_num)",
     )
 
     if "probe_vigilance" in df.columns:

@@ -141,7 +141,7 @@ def _trajectory_by_condition(
     frame: pd.DataFrame,
     *,
     condition_col: str = "event_condition",
-    value_col: str = "pir_median",
+    value_col: str = "pupil_median",
     block_num: int | None = None,
     title: str = "",
     ylabel: str = "Centered PIR",
@@ -192,7 +192,7 @@ def figure01_global_landscape(
         _empty(ax, "No global trajectory")
     else:
         for _, subject in global_detail.groupby("subject", sort=True):
-            ax.plot(subject["global_time_sec"] / 60.0, subject["pir_median"], color="#BDBDBD", linewidth=0.35, alpha=0.22)
+            ax.plot(subject["global_time_sec"] / 60.0, subject["pupil_median"], color="#BDBDBD", linewidth=0.35, alpha=0.22)
         for block_num in (1, 2):
             current = global_summary[_numeric(global_summary["block_num"]).eq(block_num)]
             if current.empty:
@@ -220,8 +220,8 @@ def figure01_global_landscape(
         work["aligned_bin"] = np.floor(_numeric(work["time_in_block_sec"]) / 30.0) * 30.0 + 15.0
         for block_num in (1, 2):
             current = work[_numeric(work["block_num"]).eq(block_num)]
-            subject = current.groupby(["subject", "aligned_bin"], as_index=False)["pir_median"].median()
-            summary = subject.groupby("aligned_bin")["pir_median"].agg(
+            subject = current.groupby(["subject", "aligned_bin"], as_index=False)["pupil_median"].median()
+            summary = subject.groupby("aligned_bin")["pupil_median"].agg(
                 median="median",
                 q25=lambda x: x.quantile(0.25),
                 q75=lambda x: x.quantile(0.75),
@@ -241,13 +241,13 @@ def figure01_global_landscape(
     if distribution.empty:
         _empty(ax, "No Block distribution")
     else:
-        groups = [distribution.loc[_numeric(distribution["block_num"]).eq(block), "pir_median"].dropna().to_numpy(dtype=float) for block in (1, 2)]
+        groups = [distribution.loc[_numeric(distribution["block_num"]).eq(block), "pupil_median"].dropna().to_numpy(dtype=float) for block in (1, 2)]
         vp = ax.violinplot(groups, positions=[1, 2], showmedians=True, showextrema=False, widths=0.72)
         for idx, body in enumerate(vp["bodies"], start=1):
             body.set_facecolor(PALETTE[f"block{idx}"])
             body.set_edgecolor(PALETTE[f"block{idx}"])
             body.set_alpha(0.28)
-        for _, row in distribution.pivot(index="subject", columns="block_num", values="pir_median").iterrows():
+        for _, row in distribution.pivot(index="subject", columns="block_num", values="pupil_median").iterrows():
             if 1 in row.index and 2 in row.index and pd.notna(row[1]) and pd.notna(row[2]):
                 ax.plot([1, 2], [row[1], row[2]], color="#9B9B9B", linewidth=0.45, alpha=0.45)
         ax.set_xticks([1, 2], ["Block 1", "Block 2"])
@@ -264,8 +264,8 @@ def figure01_global_landscape(
         for block_num, label in ((1, "Block 1 end"), (2, "Block 2 start")):
             current = transition[_numeric(transition["block_num"]).eq(block_num)].copy()
             current["bin"] = np.floor(_numeric(current["transition_time_sec"]) / 10.0) * 10.0 + 5.0
-            subject = current.groupby(["subject", "bin"], as_index=False)["pir_median"].median()
-            summary = subject.groupby("bin")["pir_median"].agg(
+            subject = current.groupby(["subject", "bin"], as_index=False)["pupil_median"].median()
+            summary = subject.groupby("bin")["pupil_median"].agg(
                 median="median", q25=lambda x: x.quantile(0.25), q75=lambda x: x.quantile(0.75)
             ).sort_index()
             color = PALETTE[f"block{block_num}"]
@@ -299,11 +299,11 @@ def figure02_block_time_on_task(
     if block_summary.empty:
         _empty(ax, "No paired Block summary")
     else:
-        pivot = block_summary.pivot(index="subject", columns="block_num", values="pir_median")
+        pivot = block_summary.pivot(index="subject", columns="block_num", values="pupil_median")
         for _, row in pivot.iterrows():
             if 1 in row.index and 2 in row.index and pd.notna(row[1]) and pd.notna(row[2]):
                 ax.plot([1, 2], [row[1], row[2]], marker="o", markersize=2.6, color="#8E8E8E", linewidth=0.55, alpha=0.55)
-        med = block_summary.groupby("block_num")["pir_median"].median()
+        med = block_summary.groupby("block_num")["pupil_median"].median()
         ax.plot(med.index, med.values, marker="o", markersize=4.5, color="black", linewidth=1.8, label="Cohort median")
         ax.set_xticks([1, 2], ["Block 1", "Block 2"])
         ax.set_ylabel("Median centered PIR")
@@ -354,9 +354,9 @@ def figure02_block_time_on_task(
         work["half"] = work.groupby(["subject", "block_num"])["time_in_block_sec"].transform(
             lambda x: np.where(x <= x.median(), "first half", "second half")
         )
-        subject = work.groupby(["subject", "block_num", "half"], as_index=False)["pir_median"].median()
+        subject = work.groupby(["subject", "block_num", "half"], as_index=False)["pupil_median"].median()
         for block_num in (1, 2):
-            pivot = subject[_numeric(subject["block_num"]).eq(block_num)].pivot(index="subject", columns="half", values="pir_median")
+            pivot = subject[_numeric(subject["block_num"]).eq(block_num)].pivot(index="subject", columns="half", values="pupil_median")
             if {"first half", "second half"}.issubset(pivot.columns):
                 delta = (pivot["second half"] - pivot["first half"]).dropna()
                 pos = block_num
@@ -388,7 +388,7 @@ def figure03_trial_states(
     fig, axes = make_figure(width="full", height_cm=15.0, nrows=2, ncols=2)
     order = ["go_correct", "go_omission_program", "nogo_correct", "nogo_commission"]
     _subject_block_box(
-        axes[0, 0], trial_conditions, category_col="outcome", value_col="pir_median", order=order, ylabel="Pre-trial centered PIR"
+        axes[0, 0], trial_conditions, category_col="outcome", value_col="pupil_median", order=order, ylabel="Pre-trial centered PIR"
     )
     axes[0, 0].set_title("Program-scored outcome × Block")
     panel_label(axes[0, 0], "A")
@@ -401,7 +401,7 @@ def figure03_trial_states(
     ]
     omission = trial_conditions[trial_conditions.get("omission_qc_type", pd.Series(index=trial_conditions.index, dtype=str)).astype(str).isin(omission_order)].copy()
     _subject_block_box(
-        axes[0, 1], omission, category_col="omission_qc_type", value_col="pir_median", order=omission_order,
+        axes[0, 1], omission, category_col="omission_qc_type", value_col="pupil_median", order=omission_order,
         ylabel="Pre-trial centered PIR",
         tick_labels=[
             "clean",
@@ -423,15 +423,15 @@ def figure03_trial_states(
         for block_num in (1, 2):
             current = df[_numeric(df["block_num"]).eq(block_num)].copy()
             current["rt"] = _numeric(current["rt"])
-            current["pir_median"] = _numeric(current["pir_median"])
-            ok = current["rt"].notna() & current["pir_median"].notna()
+            current["pupil_median"] = _numeric(current["pupil_median"])
+            ok = current["rt"].notna() & current["pupil_median"].notna()
             current = current.loc[ok]
             if current.empty:
                 continue
-            bins = pd.qcut(current["pir_median"], q=min(8, max(2, current["pir_median"].nunique())), duplicates="drop")
-            current["pir_bin"] = bins
-            summary = current.groupby("pir_bin", observed=True).agg(pir=("pir_median", "median"), rt=("rt", "median")).sort_values("pir")
-            ax.plot(summary["pir"], summary["rt"], marker="o", color=PALETTE[f"block{block_num}"], linestyle=LINESTYLES[f"block{block_num}"], label=f"Block {block_num}")
+            bins = pd.qcut(current["pupil_median"], q=min(8, max(2, current["pupil_median"].nunique())), duplicates="drop")
+            current["pupil_bin"] = bins
+            summary = current.groupby("pupil_bin", observed=True).agg(pupil=("pupil_median", "median"), rt=("rt", "median")).sort_values("pupil")
+            ax.plot(summary["pupil"], summary["rt"], marker="o", color=PALETTE[f"block{block_num}"], linestyle=LINESTYLES[f"block{block_num}"], label=f"Block {block_num}")
         ax.set_xlabel("Binned pre-trial PIR")
         ax.set_ylabel("Correct-Go RT (ms)")
         ax.legend(loc="best")
@@ -484,7 +484,7 @@ def figure04_error_precursors(
         _empty(ax, "No trial-lag precursor")
     else:
         for condition, current in nogo_trial_lag.groupby("event_outcome", sort=True):
-            subject = current.groupby(["subject", "lag"], as_index=False).agg(rt=("go_rt_ms", "median"), pir=("pir_median", "median"))
+            subject = current.groupby(["subject", "lag"], as_index=False).agg(rt=("go_rt_ms", "median"), pir=("pupil_median", "median"))
             rt = subject.groupby("lag")["rt"].median().sort_index()
             color = PALETTE.get(str(condition), "#555555")
             style = LINESTYLES.get(str(condition), "-")
@@ -578,19 +578,19 @@ def _binned_scatter(
     title: str,
     legend_loc: str = "best",
 ) -> None:
-    if frame.empty or x_col not in frame.columns or "pir_median" not in frame.columns:
+    if frame.empty or x_col not in frame.columns or "pupil_median" not in frame.columns:
         _empty(ax, "Visual covariate unavailable")
         return
     for block_num in (1, 2):
         current = frame[_numeric(frame["block_num"]).eq(block_num)].copy()
         current[x_col] = _numeric(current[x_col])
-        current["pir_median"] = _numeric(current["pir_median"])
-        current = current.dropna(subset=[x_col, "pir_median"])
+        current["pupil_median"] = _numeric(current["pupil_median"])
+        current = current.dropna(subset=[x_col, "pupil_median"])
         if current.empty:
             continue
         q = min(8, max(2, current[x_col].nunique()))
         current["bin"] = pd.qcut(current[x_col], q=q, duplicates="drop")
-        summary = current.groupby("bin", observed=True).agg(x=(x_col, "median"), y=("pir_median", "median")).sort_values("x")
+        summary = current.groupby("bin", observed=True).agg(x=(x_col, "median"), y=("pupil_median", "median")).sort_values("x")
         ax.plot(summary["x"], summary["y"], marker="o", color=PALETTE[f"block{block_num}"], linestyle=LINESTYLES[f"block{block_num}"], label=f"Block {block_num}")
     ax.set_xlabel(x_col.replace("current_", ""))
     ax.set_ylabel("Pre-trial centered PIR")
@@ -611,7 +611,7 @@ def figure06_visual_controls(
 ) -> list[str]:
     fig, axes = make_figure(width="full", height_cm=15.0, nrows=2, ncols=2)
     ax = axes[0, 0]
-    if stimulus_summary.empty or not {"stimulus_size", "pir_median"}.issubset(stimulus_summary.columns):
+    if stimulus_summary.empty or not {"stimulus_size", "pupil_median"}.issubset(stimulus_summary.columns):
         _empty(ax, "No stimulus-size summary")
     else:
         for block_num in (1, 2):
@@ -620,7 +620,7 @@ def figure06_visual_controls(
                     _numeric(stimulus_summary["block_num"]).eq(block_num)
                     & _numeric(stimulus_summary["is_no_go"]).eq(is_nogo)
                 ]
-                summary = current.groupby("stimulus_size")["pir_median"].median().sort_index()
+                summary = current.groupby("stimulus_size")["pupil_median"].median().sort_index()
                 if summary.empty:
                     continue
                 ax.plot(
@@ -716,15 +716,15 @@ def figure07_individual_differences(
     panel_label(ax, "A")
 
     ax = axes[0, 1]
-    if raw_pir.empty or "raw_PIR_subject_median" not in raw_pir.columns:
-        _empty(ax, "No raw between-person PIR")
+    if raw_pir.empty or "raw_pupil_subject_median" not in raw_pir.columns:
+        _empty(ax, "No raw between-person pupil")
     else:
-        df = raw_pir.sort_values("raw_PIR_subject_median")
-        ax.scatter(np.arange(1, len(df) + 1), df["raw_PIR_subject_median"], s=15, color="#555555", alpha=0.78, linewidths=0)
-        ax.set_xlabel("Subjects sorted by raw PIR baseline")
-        ax.set_ylabel("Raw binocular PIR median")
+        df = raw_pir.sort_values("raw_pupil_subject_median")
+        ax.scatter(np.arange(1, len(df) + 1), df["raw_pupil_subject_median"], s=15, color="#555555", alpha=0.78, linewidths=0)
+        ax.set_xlabel("Subjects sorted by raw pupil baseline")
+        ax.set_ylabel("Raw binocular pupil median")
         clean_axis(ax, grid_y=True)
-    ax.set_title("Between-person raw PIR characteristics")
+    ax.set_title("Between-person raw pupil characteristics")
     panel_label(ax, "B")
 
     ax = axes[1, 0]
@@ -827,6 +827,46 @@ def figure08_feature_structure(
     return save_figure(fig, base, formats, raster_dpi=raster_dpi)
 
 
+def _normalize_coverage_wide(coverage: pd.DataFrame) -> pd.DataFrame:
+    """Adapt new wide coverage tables to the legacy long contract.
+
+    11_analysis_tables publishes one median column per coverage dimension;
+    the figure suite expects a long table with coverage_metric and
+    coverage_value. A table that is already long passes through unchanged.
+    """
+    if coverage.empty or "coverage_metric" in coverage.columns:
+        return coverage
+    value_cols = [
+        col
+        for col in (
+            "pupil_valid_fraction_median",
+            "available_duration_fraction_median",
+            "internal_coverage_fraction_median",
+            "boundary_truncated_fraction",
+            "max_temporal_gap_sec_p95",
+        )
+        if col in coverage.columns
+    ]
+    id_vars = [
+        col
+        for col in ("session_id", "analysis_group_token", "block_num", "track", "level")
+        if col in coverage.columns
+    ]
+    if not value_cols:
+        return coverage
+    long = coverage.melt(
+        id_vars=id_vars,
+        value_vars=value_cols,
+        var_name="coverage_metric",
+        value_name="coverage_value",
+    )
+    if "session_id" in long.columns:
+        long["subject"] = long["session_id"].astype(str)
+    if "level" in long.columns:
+        long["analysis_level"] = long["level"].astype(str)
+    return long
+
+
 def _coverage_fraction_matrix(
     coverage: pd.DataFrame,
     *,
@@ -836,7 +876,7 @@ def _coverage_fraction_matrix(
     if coverage.empty:
         return pd.DataFrame()
     fraction_metrics = [
-        "pir_valid_fraction_median",
+        "pupil_valid_fraction_median",
         "available_duration_fraction_median",
         "internal_coverage_fraction_median",
         "boundary_truncated_fraction",
@@ -861,6 +901,7 @@ def figure09_quality_control(
     formats: Iterable[str],
     raster_dpi: int,
 ) -> list[str]:
+    coverage = _normalize_coverage_wide(coverage)
     fig, axes = make_figure(width="full", height_cm=16.5, nrows=2, ncols=2)
     trial_matrix = _coverage_fraction_matrix(coverage, level="trial", track=track)
     _heatmap(axes[0, 0], trial_matrix, vmin=0, vmax=1, cmap="viridis", cbar_label="fraction")
@@ -984,10 +1025,10 @@ def figure10_robustness(
             }
             term_labels = {
                 "C(block_num)[T.2]": "Block 2",
-                "pir_median_within": "PIR within",
-                "pir_median_between": "PIR between",
+                "pupil_median_within": "PIR within",
+                "pupil_median_between": "PIR between",
                 "time_z": "time",
-                "pir_median": "PIR",
+                "pupil_median": "PIR",
             }
             labels = [
                 f"{model_labels.get(str(model), str(model).replace('_', ' '))}: "

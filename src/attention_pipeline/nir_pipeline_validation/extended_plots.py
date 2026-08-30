@@ -160,7 +160,7 @@ def plot_nogo_precursor_pir(
 ) -> list[str]:
     return _plot_nogo_precursor(
         precursor,
-        value_col="pir_median",
+        value_col="pupil_median",
         ylabel="Preceding-trial PIR median",
         title="PIR precursor trajectory before No-Go events",
         base=base,
@@ -374,11 +374,11 @@ def plot_visual_covariate_association(
     dpi: int,
 ) -> list[str]:
     fig, ax = plt.subplots(figsize=(7.8, 5.2))
-    if visual_trial.empty or x_col not in visual_trial.columns or "pir_median" not in visual_trial.columns:
+    if visual_trial.empty or x_col not in visual_trial.columns or "pupil_median" not in visual_trial.columns:
         ax.text(0.5, 0.5, "Visual covariate table unavailable", ha="center", va="center", transform=ax.transAxes)
     else:
         x = pd.to_numeric(visual_trial[x_col], errors="coerce")
-        y = pd.to_numeric(visual_trial["pir_median"], errors="coerce")
+        y = pd.to_numeric(visual_trial["pupil_median"], errors="coerce")
         ok = x.notna() & y.notna()
         ax.scatter(x[ok], y[ok], s=13, alpha=0.22)
         if int(ok.sum()) >= 3:

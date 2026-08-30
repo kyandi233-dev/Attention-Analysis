@@ -53,11 +53,11 @@ def supplementary01_error_dynamics(
     raster_dpi: int,
 ) -> list[str]:
     fig, axes = make_figure(width="full", height_cm=15.0, nrows=2, ncols=2)
-    _condition_trajectory(axes[0, 0], nogo_continuous, "pir_sd", "Within-bin PIR SD")
+    _condition_trajectory(axes[0, 0], nogo_continuous, "pupil_sd", "Within-bin PIR SD")
     axes[0, 0].set_title("No-Go precursor PIR variability")
     panel_label(axes[0, 0], "A")
 
-    _condition_trajectory(axes[0, 1], omission_continuous, "pir_sd", "Within-bin PIR SD")
+    _condition_trajectory(axes[0, 1], omission_continuous, "pupil_sd", "Within-bin PIR SD")
     axes[0, 1].set_title("Omission precursor PIR variability")
     panel_label(axes[0, 1], "B")
 
@@ -80,12 +80,12 @@ def supplementary01_error_dynamics(
     panel_label(ax, "C")
 
     ax = axes[1, 1]
-    if nogo_trial_lag.empty or "pir_mad" not in nogo_trial_lag.columns:
+    if nogo_trial_lag.empty or "pupil_mad" not in nogo_trial_lag.columns:
         _empty(ax, "No trial-lag PIR variability")
     else:
         for condition, current in nogo_trial_lag.groupby("event_outcome", sort=True):
-            subject = current.groupby(["subject", "lag"], as_index=False)["pir_mad"].median()
-            summary = subject.groupby("lag")["pir_mad"].median().sort_index()
+            subject = current.groupby(["subject", "lag"], as_index=False)["pupil_mad"].median()
+            summary = subject.groupby("lag")["pupil_mad"].median().sort_index()
             color = PALETTE.get(str(condition), "#666666")
             ax.plot(summary.index, summary.values, marker="o", color=color, label=str(condition))
         ax.axvline(0, color="#777777", linestyle=":", linewidth=0.65)
@@ -225,7 +225,7 @@ def supplementary04_stimulus_identity_size(
     raster_dpi: int,
 ) -> list[str]:
     fig, axes = make_figure(width="full", height_cm=17.0, nrows=2, ncols=2)
-    _stimulus_heatmap(axes[0, 0], visual_trial, "pir_median", "Pre-trial PIR by stimulus identity/size")
+    _stimulus_heatmap(axes[0, 0], visual_trial, "pupil_median", "Pre-trial PIR by stimulus identity/size")
     panel_label(axes[0, 0], "A")
     _stimulus_heatmap(axes[0, 1], visual_trial, "current_central_rel_lum_mean", "Central relative luminance")
     panel_label(axes[0, 1], "B")

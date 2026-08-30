@@ -99,11 +99,11 @@ def plot_time_on_task(
         for _, frame in block.groupby("subject"):
             ax.plot(
                 frame["coarse_bin_start_sec"],
-                frame["pir_median"],
+                frame["pupil_median"],
                 alpha=0.2,
                 linewidth=0.8,
             )
-        summary = block.groupby("coarse_bin_start_sec")["pir_median"].agg(
+        summary = block.groupby("coarse_bin_start_sec")["pupil_median"].agg(
             median="median",
             q25=lambda x: x.quantile(0.25),
             q75=lambda x: x.quantile(0.75),
@@ -136,7 +136,7 @@ def plot_block_pairs(
     formats: list[str],
     dpi: int,
 ) -> list[str]:
-    pivot = block_summary.pivot(index="subject", columns="block_num", values="pir_median")
+    pivot = block_summary.pivot(index="subject", columns="block_num", values="pupil_median")
     fig, ax = plt.subplots(figsize=(6.6, 5.3))
     for _, row in pivot.iterrows():
         xs: list[int] = []
@@ -147,7 +147,7 @@ def plot_block_pairs(
                 ys.append(float(row[block]))
         if ys:
             ax.plot(xs, ys, marker="o", alpha=0.45, linewidth=1.0)
-    medians = block_summary.groupby("block_num")["pir_median"].median()
+    medians = block_summary.groupby("block_num")["pupil_median"].median()
     ax.plot(medians.index, medians.values, marker="o", linewidth=3.0, label="Cohort median")
     ax.axhline(0, linewidth=0.8)
     ax.set_xticks([1, 2], ["Block 1", "Block 2"])
@@ -168,13 +168,13 @@ def plot_trial_outcomes(
     order = ["go_correct", "go_omission_program", "nogo_correct", "nogo_commission"]
     subject = (
         trial_table.assign(
-            pir_median=pd.to_numeric(trial_table["pir_median"], errors="coerce")
+            pupil_median=pd.to_numeric(trial_table["pupil_median"], errors="coerce")
         )
-        .groupby(["subject", "outcome"], as_index=False)["pir_median"]
+        .groupby(["subject", "outcome"], as_index=False)["pupil_median"]
         .median()
     )
     groups = [
-        subject.loc[subject["outcome"].eq(name), "pir_median"].dropna().to_numpy()
+        subject.loc[subject["outcome"].eq(name), "pupil_median"].dropna().to_numpy()
         for name in order
     ]
 
@@ -219,14 +219,14 @@ def plot_omission_subtypes(
     omission = trial_table[
         trial_table["omission_qc_type"].astype(str).isin(order)
     ].copy()
-    omission["pir_median"] = pd.to_numeric(omission["pir_median"], errors="coerce")
+    omission["pupil_median"] = pd.to_numeric(omission["pupil_median"], errors="coerce")
     subject = (
-        omission.groupby(["subject", "omission_qc_type"], as_index=False)["pir_median"]
+        omission.groupby(["subject", "omission_qc_type"], as_index=False)["pupil_median"]
         .median()
     )
     groups = [
         subject.loc[
-            subject["omission_qc_type"].astype(str).eq(name), "pir_median"
+            subject["omission_qc_type"].astype(str).eq(name), "pupil_median"
         ].dropna().to_numpy()
         for name in order
     ]
@@ -271,7 +271,7 @@ def plot_probe_windows(
     dpi: int,
 ) -> list[str]:
     df = probe_windows[probe_windows["track"].astype(str).eq(track)].copy()
-    df["pir_median"] = pd.to_numeric(df["pir_median"], errors="coerce")
+    df["pupil_median"] = pd.to_numeric(df["pupil_median"], errors="coerce")
     if "probe_vigilance" in df.columns:
         df["probe_vigilance_numeric"] = pd.to_numeric(
             df["probe_vigilance"], errors="coerce"
@@ -279,7 +279,7 @@ def plot_probe_windows(
     else:
         df["probe_vigilance_numeric"] = np.nan
 
-    df = df.dropna(subset=["pir_median", "probe_vigilance_numeric"])
+    df = df.dropna(subset=["pupil_median", "probe_vigilance_numeric"])
     fig, ax = plt.subplots(figsize=(8.8, 5.4))
     if df.empty:
         ax.text(
@@ -295,12 +295,12 @@ def plot_probe_windows(
             df.groupby(
                 ["subject", "window_name", "probe_vigilance_numeric"],
                 as_index=False,
-            )["pir_median"]
+            )["pupil_median"]
             .median()
         )
         for window_name in list(dict.fromkeys(subject["window_name"].astype(str))):
             frame = subject[subject["window_name"].astype(str).eq(window_name)]
-            summary = frame.groupby("probe_vigilance_numeric")["pir_median"].agg(
+            summary = frame.groupby("probe_vigilance_numeric")["pupil_median"].agg(
                 mean="mean",
                 se=lambda x: x.std(ddof=1) / np.sqrt(max(1, x.count())),
             )
@@ -341,10 +341,10 @@ def plot_coverage_heatmap(
             + pd.to_numeric(df["block_num"], errors="coerce").astype("Int64").astype(str)
         )
         matrix = (
-            df[["key", "pir_valid_fraction_median"]]
+            df[["key", "pupil_valid_fraction_median"]]
             .assign(
-                pir_valid_fraction_median=lambda x: pd.to_numeric(
-                    x["pir_valid_fraction_median"], errors="coerce"
+                pupil_valid_fraction_median=lambda x: pd.to_numeric(
+                    x["pupil_valid_fraction_median"], errors="coerce"
                 )
             )
             .set_index("key")

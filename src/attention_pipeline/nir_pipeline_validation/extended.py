@@ -13,20 +13,20 @@ from attention_pipeline.nir_behavior.contract import normalize_subject
 from attention_pipeline.nir_behavior.discovery import resolve_repo_path
 from attention_pipeline.behavior_formal.metrics import fit_exgaussian
 
-from .analysis import omission_qc_type, trial_outcome_label
+from .analysis import analysis_tables_root, omission_qc_type, trial_outcome_label
 
 
 DYNAMIC_PIR_FEATURES = (
-    "pir_median",
-    "pir_mean",
-    "pir_mad",
-    "pir_iqr",
-    "pir_sd",
-    "pir_p10",
-    "pir_p90",
-    "pir_slope_per_sec",
-    "pir_diff_mad",
-    "pir_diff_rate_mad_per_sec",
+    "pupil_median",
+    "pupil_mean",
+    "pupil_mad",
+    "pupil_iqr",
+    "pupil_sd",
+    "pupil_p10",
+    "pupil_p90",
+    "pupil_slope_per_sec",
+    "pupil_diff_mad",
+    "pupil_diff_rate_mad_per_sec",
 )
 
 SOURCE_MODE_COLUMNS = (
@@ -37,7 +37,7 @@ SOURCE_MODE_COLUMNS = (
 )
 
 COVERAGE_COLUMNS = (
-    "pir_valid_fraction_median",
+    "pupil_valid_fraction_median",
     "available_duration_fraction_median",
     "internal_coverage_fraction_median",
     "boundary_truncated_fraction",
@@ -301,7 +301,7 @@ def trial_multiscale_trajectory(
     trial_windows: pd.DataFrame,
     *,
     track: str,
-    feature: str = "pir_median",
+    feature: str = "pupil_median",
 ) -> pd.DataFrame:
     if feature not in trial_windows.columns:
         return pd.DataFrame()
@@ -336,7 +336,7 @@ def nogo_precursor_trajectory(
         for col in ("subject", "block_num", "trial_num", "global_trial_index")
         if col in pir.columns and col in trial_level.columns
     ]
-    pir = pir[keys + [col for col in ("pir_median", "pir_slope_per_sec", "pir_mad") if col in pir.columns]]
+    pir = pir[keys + [col for col in ("pupil_median", "pupil_slope_per_sec", "pupil_mad") if col in pir.columns]]
     df = trial_level.merge(pir, on=keys, how="left", validate="one_to_one")
     for col in ("is_no_go", "correct", "commission", "rt"):
         if col in df.columns:
@@ -364,9 +364,9 @@ def nogo_precursor_trajectory(
                         "lag": int(lag),
                         "source_trial_num": int(row["trial_num"]),
                         "go_rt_ms": row.get("rt"),
-                        "pir_median": row.get("pir_median"),
-                        "pir_slope_per_sec": row.get("pir_slope_per_sec"),
-                        "pir_mad": row.get("pir_mad"),
+                        "pupil_median": row.get("pupil_median"),
+                        "pupil_slope_per_sec": row.get("pupil_slope_per_sec"),
+                        "pupil_mad": row.get("pupil_mad"),
                     }
                 )
             rows.append(
@@ -378,9 +378,9 @@ def nogo_precursor_trajectory(
                     "lag": 0,
                     "source_trial_num": int(event["trial_num"]),
                     "go_rt_ms": np.nan,
-                    "pir_median": event.get("pir_median"),
-                    "pir_slope_per_sec": event.get("pir_slope_per_sec"),
-                    "pir_mad": event.get("pir_mad"),
+                    "pupil_median": event.get("pupil_median"),
+                    "pupil_slope_per_sec": event.get("pupil_slope_per_sec"),
+                    "pupil_mad": event.get("pupil_mad"),
                 }
             )
     return pd.DataFrame(rows)
@@ -462,15 +462,15 @@ def track_robustness(
         trial_windows["window_name"].astype(str).eq(window_name)
         & trial_windows["track"].astype(str).isin(wanted)
     ].copy()
-    if df.empty or "pir_median" not in df.columns:
+    if df.empty or "pupil_median" not in df.columns:
         return pd.DataFrame(), pd.DataFrame()
     keys = [
         col
         for col in ("subject", "block_num", "trial_num", "global_trial_index")
         if col in df.columns
     ]
-    df["pir_median"] = _numeric(df["pir_median"])
-    wide = df.pivot_table(index=keys, columns="track", values="pir_median", aggfunc="first")
+    df["pupil_median"] = _numeric(df["pupil_median"])
+    wide = df.pivot_table(index=keys, columns="track", values="pupil_median", aggfunc="first")
     corr = wide.corr(min_periods=3)
     # ``stack(dropna=False)`` is rejected by the new pandas stack
     # implementation.  Melt the complete correlation matrix instead so NaN
@@ -521,6 +521,8 @@ def multidimensional_coverage(
             continue
         current = frame.copy()
         current["analysis_level"] = level
+        if "session_id" in current.columns and "subject" not in current.columns:
+            current["subject"] = current["session_id"].astype(str)
         frames.append(current)
     if not frames:
         return pd.DataFrame()
@@ -625,11 +627,11 @@ def attach_visual_covariates(
 
 
 def visual_covariate_correlation_table(frame: pd.DataFrame) -> pd.DataFrame:
-    if frame.empty or "pir_median" not in frame.columns:
+    if frame.empty or "pupil_median" not in frame.columns:
         return pd.DataFrame()
     candidates = [col for col in frame.columns if col.startswith("current_") or col.startswith("previous_")]
     rows: list[dict[str, Any]] = []
-    y = _numeric(frame["pir_median"])
+    y = _numeric(frame["pupil_median"])
     for col in candidates:
         x = _numeric(frame[col])
         ok = x.notna() & y.notna()
@@ -651,52 +653,55 @@ def raw_between_person_summary(
     config: Config,
     subjects: Iterable[str],
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
-    root = _resolve_optional_path(config, "analysis_ready_root")
-    if root is None:
-        return pd.DataFrame(), {"status": "unavailable", "reason": "analysis_ready_root_not_configured"}
+    """Subject-level raw pupil baseline from 11_analysis_tables candidate metrics.
+
+    The staged source contract forbids reading 10_analysis_ready directly, so
+    the raw between-person reference is built from the session x block raw
+    medians that 11_analysis_tables already publishes for the geometric-mean
+    diameter candidate.
+    """
+    root = analysis_tables_root(config)
+    path = root / "candidate_validation" / "nir_candidate_session_block_metrics.csv"
+    if not path.is_file():
+        return pd.DataFrame(), {"status": "unavailable", "reason": "candidate_session_block_metrics_missing", "path": str(path)}
+
+    metrics = pd.read_csv(path, encoding="utf-8-sig", low_memory=False)
+    metric_col = "metric" if "metric" in metrics.columns else None
+    if metric_col is None:
+        return pd.DataFrame(), {"status": "unavailable", "reason": "candidate_metrics_missing_metric_column"}
+    frame = metrics[metrics[metric_col].astype(str).eq("pupil_geom_mean_diameter")].copy()
+    if frame.empty:
+        return pd.DataFrame(), {"status": "unavailable", "reason": "pupil_geom_mean_diameter_not_in_candidate_metrics"}
+    frame["subject"] = frame["session_id"].astype(str).map(normalize_subject)
+    if subjects is not None:
+        wanted = {normalize_subject(str(s)) for s in subjects}
+        frame = frame[frame["subject"].isin(wanted)]
 
     rows: list[dict[str, Any]] = []
-    missing_subjects: list[str] = []
-    for subject_raw in subjects:
-        subject = normalize_subject(subject_raw)
-        path = root / "frame_level" / subject / f"{subject}_nir_analysis_ready.csv"
-        if not path.is_file():
-            missing_subjects.append(subject)
-            continue
-        header = pd.read_csv(path, nrows=0, encoding="utf-8-sig")
-        required = {"subject", "block", "left_raw_PIR", "right_raw_PIR", "left_valid_primary", "right_valid_primary"}
-        if not required.issubset(header.columns):
-            missing_subjects.append(subject)
-            continue
-        df = pd.read_csv(path, usecols=sorted(required), encoding="utf-8-sig", low_memory=False)
-        left = _numeric(df["left_raw_PIR"])
-        right = _numeric(df["right_raw_PIR"])
-        l_ok = _bool_flag(df, "left_valid_primary") & left.notna()
-        r_ok = _bool_flag(df, "right_valid_primary") & right.notna()
-        raw_binocular = np.select(
-            [l_ok & r_ok, l_ok & ~r_ok, ~l_ok & r_ok],
-            [(left + right) / 2.0, left, right],
-            default=np.nan,
-        )
-        df["raw_binocular_PIR"] = raw_binocular
+    for subject, group in frame.groupby("subject", sort=True):
+        raw = _numeric(group["binocular_raw_median"]).dropna()
+        left = _numeric(group["left_raw_median"]).dropna()
+        right = _numeric(group["right_raw_median"]).dropna()
+        valid = _numeric(group["eye_valid_fraction_mean"]).dropna()
         record: dict[str, Any] = {
             "subject": subject,
-            "raw_PIR_subject_median": float(np.nanmedian(raw_binocular)) if np.isfinite(raw_binocular).any() else np.nan,
-            "raw_left_PIR_subject_median": float(left[l_ok].median()) if bool(l_ok.any()) else np.nan,
-            "raw_right_PIR_subject_median": float(right[r_ok].median()) if bool(r_ok.any()) else np.nan,
-            "raw_PIR_valid_fraction": float(np.isfinite(raw_binocular).mean()),
+            "raw_pupil_subject_median": float(raw.median()) if not raw.empty else np.nan,
+            "raw_left_pupil_subject_median": float(left.median()) if not left.empty else np.nan,
+            "raw_right_pupil_subject_median": float(right.median()) if not right.empty else np.nan,
+            "raw_pupil_valid_fraction": float(valid.mean()) if not valid.empty else np.nan,
         }
-        for block_num in sorted(_numeric(df["block"]).dropna().astype(int).unique()):
-            values = df.loc[_numeric(df["block"]).eq(block_num), "raw_binocular_PIR"]
-            record[f"block{int(block_num)}_raw_PIR_median"] = float(values.median()) if values.notna().any() else np.nan
+        for block_num, block_frame in group.groupby("block_num"):
+            values = _numeric(block_frame["binocular_raw_median"]).dropna()
+            record[f"block{int(block_num)}_raw_pupil_median"] = (
+                float(values.median()) if not values.empty else np.nan
+            )
         rows.append(record)
 
     status = {
         "status": "available" if rows else "unavailable",
         "root": str(root),
         "n_subjects": len(rows),
-        "missing_or_schema_incompatible_subjects": missing_subjects,
-        "semantics": "between-person raw PIR baseline characteristics; do not derive between-person effects from already-centered PIR",
+        "semantics": "between-person raw pupil baseline characteristics from candidate session-block raw medians; do not derive between-person effects from already-centered pupil",
     }
     return pd.DataFrame(rows), status
 

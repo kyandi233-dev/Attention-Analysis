@@ -333,7 +333,9 @@ def run_publication_validation(
         "schema_version": PUBLICATION_SUITE_SCHEMA,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "validation_only": True,
-        "nir_values_known_invalid": True,
+        "nir_values_known_invalid": False,
+        "endpoint_freeze": "pending_real_data_scientific_review",
+        "scientific_inference_authorized": False,
         "subjects": selected,
         "n_subjects": len(selected),
         "main_track": track,
@@ -348,7 +350,7 @@ def run_publication_validation(
             "legacy_diagnostic_figures_are_not_manuscript_figures": True,
         },
         "continuous_trajectory_policy": {
-            "source": "read-only 10_analysis_ready",
+            "source": "read-only 11_analysis_tables time_on_task 1-s pupil summaries",
             "track": track,
             "start_sec": event_start_sec,
             "end_sec": event_end_sec,
@@ -363,9 +365,9 @@ def run_publication_validation(
         "figures": publication_figures,
         "scientific_boundaries": [
             "formal FocusWave condition is B; manuscript figures stratify Block, Go/No-Go, correctness/error, omission subtype, stimulus properties and Probe states rather than inventing A/B conditions",
-            "current NIR/PIR values are known invalid and all displayed directions/effects are validation artifacts",
+            "candidate pupil endpoints are not frozen; displayed directions/effects await real-data scientific review before inference",
             "multiscale windows remain prespecified; apparent current effects cannot select a preferred window",
-            "continuous trajectories read only 10_analysis_ready and never production",
+            "continuous trajectories read only 11_analysis_tables time_on_task summaries and never production or 10_analysis_ready",
             "primary/strict and eye tracks remain sensitivity analyses rather than significance-selected alternatives",
         ],
     }

@@ -78,16 +78,16 @@ def plot_probe_response_pir_windows(
     dpi: int,
 ) -> list[str]:
     fig, ax = plt.subplots(figsize=(9.0, 5.4))
-    if summary.empty or "pir_median" not in summary.columns:
+    if summary.empty or "pupil_median" not in summary.columns:
         ax.text(0.5, 0.5, "No probe-response PIR rows", ha="center", va="center", transform=ax.transAxes)
     else:
         df = summary.copy()
-        df["pir_median"] = pd.to_numeric(df["pir_median"], errors="coerce")
+        df["pupil_median"] = pd.to_numeric(df["pupil_median"], errors="coerce")
         codes = _sorted_codes(df["probe_response_code"])
         x_map = {code: idx for idx, code in enumerate(codes)}
         for window_name in list(dict.fromkeys(df["window_name"].astype(str))):
             frame = df[df["window_name"].astype(str).eq(window_name)].copy()
-            grouped = frame.groupby("probe_response_code")["pir_median"].agg(
+            grouped = frame.groupby("probe_response_code")["pupil_median"].agg(
                 median="median",
                 q25=lambda x: x.quantile(0.25),
                 q75=lambda x: x.quantile(0.75),

@@ -10,18 +10,8 @@ from attention_pipeline.config import Config
 from attention_pipeline.nir_behavior.contract import normalize_subject
 from attention_pipeline.nir_behavior.discovery import resolve_repo_path
 
-from .analysis import omission_qc_type, trial_outcome_label
+from .analysis import analysis_tables_root, omission_qc_type, trial_outcome_label
 from .extended import DYNAMIC_PIR_FEATURES, window_duration_sec
-
-
-TRACK_TO_CONTINUOUS_VALUE = {
-    "binocular_primary": "binocular_PIR",
-    "left_primary": "left_centered_PIR",
-    "right_primary": "right_centered_PIR",
-    "binocular_strict": "binocular_strict_PIR",
-    "left_strict": "left_strict_centered_PIR",
-    "right_strict": "right_strict_centered_PIR",
-}
 
 
 def _numeric(series: pd.Series) -> pd.Series:
@@ -42,53 +32,46 @@ def _stack_keep_nan(frame: pd.DataFrame) -> pd.Series | pd.DataFrame:
         return frame.stack(dropna=False)
 
 
-def _analysis_ready_root(config: Config) -> Path:
-    raw = config.section("paths").get("analysis_ready_root")
-    if raw in (None, ""):
-        raise KeyError("validation config missing paths.analysis_ready_root")
-    return resolve_repo_path(config, raw)
-
-
 def load_continuous_analysis_ready(
     config: Config,
     subjects: Iterable[str],
     *,
     track: str,
 ) -> tuple[pd.DataFrame, dict[str, Any]]:
-    """Read one centered PIR track from 10_analysis_ready without touching production."""
-    value_col = TRACK_TO_CONTINUOUS_VALUE.get(str(track))
-    if value_col is None:
-        return pd.DataFrame(), {
-            "status": "unavailable",
-            "reason": "unsupported_track",
-            "track": track,
-        }
+    """Read 1-s pupil summaries from 11_analysis_tables time_on_task.
 
-    root = _analysis_ready_root(config)
+    The staged source contract forbids reading 10_analysis_ready directly, so
+    continuous event alignment is built from the 1-s time-on-task summaries
+    that 11_analysis_tables already publishes.
+    """
+    root = analysis_tables_root(config)
     frames: list[pd.DataFrame] = []
     missing: list[str] = []
     for raw_subject in subjects:
         subject = normalize_subject(raw_subject)
-        path = root / "frame_level" / subject / f"{subject}_nir_analysis_ready.csv"
+        path = root / "sessions" / subject / f"{subject}_time_on_task_1s.csv"
         if not path.is_file():
             missing.append(subject)
             continue
         header = pd.read_csv(path, nrows=0, encoding="utf-8-sig")
-        required = {"subject", "block", "unix_ms", value_col}
+        required = {"subject", "block_num", "window_start_ms", "pupil_median", "track"}
         if not required.issubset(header.columns):
             missing.append(subject)
             continue
-        usecols = ["subject", "block", "unix_ms", value_col]
         frame = pd.read_csv(
             path,
-            usecols=usecols,
+            usecols=["subject", "block_num", "window_start_ms", "pupil_median", "track"],
             encoding="utf-8-sig",
             low_memory=False,
         )
+        frame = frame[frame["track"].astype(str).eq(str(track))]
+        if frame.empty:
+            missing.append(subject)
+            continue
         frame["subject"] = frame["subject"].map(normalize_subject)
-        frame["block_num"] = _numeric(frame["block"])
-        frame["unix_ms"] = _numeric(frame["unix_ms"])
-        frame["pir"] = _numeric(frame[value_col])
+        frame["block_num"] = _numeric(frame["block_num"])
+        frame["unix_ms"] = _numeric(frame["window_start_ms"])
+        frame["pir"] = _numeric(frame["pupil_median"])
         frame = frame[["subject", "block_num", "unix_ms", "pir"]]
         frame = frame.dropna(subset=["block_num", "unix_ms"]).sort_values(
             ["block_num", "unix_ms"], kind="stable"
@@ -99,11 +82,11 @@ def load_continuous_analysis_ready(
     status = {
         "status": "available" if frames else "unavailable",
         "track": track,
-        "value_column": value_col,
-        "analysis_ready_root": str(root),
+        "value_column": "pupil_median",
+        "analysis_tables_root": str(root),
         "n_subjects": len(frames),
         "missing_or_incompatible_subjects": missing,
-        "source_boundary": "read-only 10_analysis_ready; production is never read",
+        "source_boundary": "read-only 11_analysis_tables time_on_task; production and 10_analysis_ready are never read",
     }
     return result, status
 
@@ -121,7 +104,7 @@ def global_pir_trajectory(
         return pd.DataFrame(), pd.DataFrame()
     df["block_num"] = _numeric(df["block_num"])
     df["time_in_block_sec"] = _numeric(df["time_in_block_mid_sec"])
-    df["pir_median"] = _numeric(df["pir_median"])
+    df["pupil_median"] = _numeric(df["pupil_median"])
     rows: list[pd.DataFrame] = []
     for subject, frame in df.groupby("subject", sort=True):
         current = frame.copy()
@@ -142,7 +125,7 @@ def global_pir_trajectory(
     width = max(float(summary_bin_sec), 1.0)
     detail["global_bin_sec"] = np.floor(detail["global_time_sec"] / width) * width + width / 2.0
     summary = (
-        detail.groupby(["block_num", "global_bin_sec"], as_index=False)["pir_median"]
+        detail.groupby(["block_num", "global_bin_sec"], as_index=False)["pupil_median"]
         .agg(
             median="median",
             q25=lambda x: x.quantile(0.25),
@@ -158,15 +141,15 @@ def global_pir_distribution(time_on_task: pd.DataFrame, *, track: str) -> pd.Dat
     df = time_on_task[time_on_task["track"].astype(str).eq(track)].copy()
     if df.empty:
         return pd.DataFrame()
-    df["pir_median"] = _numeric(df["pir_median"])
+    df["pupil_median"] = _numeric(df["pupil_median"])
     return (
-        df.groupby(["subject", "block_num"], as_index=False)["pir_median"]
+        df.groupby(["subject", "block_num"], as_index=False)["pupil_median"]
         .agg(
-            pir_median="median",
-            pir_mean="mean",
-            pir_sd="std",
-            pir_q25=lambda x: x.quantile(0.25),
-            pir_q75=lambda x: x.quantile(0.75),
+            pupil_median="median",
+            pupil_mean="mean",
+            pupil_sd="std",
+            pupil_q25=lambda x: x.quantile(0.25),
+            pupil_q75=lambda x: x.quantile(0.75),
         )
     )
 
@@ -370,9 +353,9 @@ def continuous_event_trajectory(
                     "n_rows": int(mask.sum()),
                     "n_valid": int(finite.sum()),
                     "valid_fraction": float(finite.sum() / mask.sum()),
-                    "pir_median": float(np.nanmedian(vals[mask])) if np.isfinite(vals[mask]).any() else np.nan,
-                    "pir_mean": float(np.nanmean(vals[mask])) if np.isfinite(vals[mask]).any() else np.nan,
-                    "pir_sd": float(np.nanstd(vals[mask], ddof=1)) if np.isfinite(vals[mask]).sum() >= 2 else np.nan,
+                    "pupil_median": float(np.nanmedian(vals[mask])) if np.isfinite(vals[mask]).any() else np.nan,
+                    "pupil_mean": float(np.nanmean(vals[mask])) if np.isfinite(vals[mask]).any() else np.nan,
+                    "pupil_sd": float(np.nanstd(vals[mask], ddof=1)) if np.isfinite(vals[mask]).sum() >= 2 else np.nan,
                 }
                 for col in event_extra:
                     record[col] = getattr(event, col, None)
@@ -425,10 +408,10 @@ def within_between_correlation_tables(
         candidates = [
             col
             for col in (
-                "pir_median",
-                "pir_mad",
-                "pir_slope_per_sec",
-                "pir_diff_rate_mad_per_sec",
+                "pupil_median",
+                "pupil_mad",
+                "pupil_slope_per_sec",
+                "pupil_diff_rate_mad_per_sec",
                 "rt",
                 "commission",
                 "omission",
@@ -497,15 +480,15 @@ def window_effect_stability(
         merged = windows.merge(
             behavior[keys + ["outcome"]], on=keys, how="left", validate="many_to_one"
         )
-        merged["pir_median"] = _numeric(merged["pir_median"])
+        merged["pupil_median"] = _numeric(merged["pupil_median"])
         med = merged.groupby(
             ["subject", "block_num", "window_name", "window_sec", "outcome"], as_index=False
-        )["pir_median"].median()
+        )["pupil_median"].median()
         rows: list[dict[str, Any]] = []
         for (subject, block_num, window_name, window_sec), frame in med.groupby(
             ["subject", "block_num", "window_name", "window_sec"], sort=True
         ):
-            values = dict(zip(frame["outcome"].astype(str), frame["pir_median"]))
+            values = dict(zip(frame["outcome"].astype(str), frame["pupil_median"]))
             if "nogo_commission" in values and "nogo_correct" in values:
                 rows.append({
                     "subject": subject,
@@ -529,17 +512,17 @@ def window_effect_stability(
     probe = probe_windows[probe_windows["track"].astype(str).eq(track)].copy()
     if not probe.empty:
         probe["window_sec"] = probe["window_name"].map(window_duration_sec)
-        probe["pir_median"] = _numeric(probe["pir_median"])
+        probe["pupil_median"] = _numeric(probe["pupil_median"])
         probe["probe_vigilance_num"] = _numeric(probe["probe_vigilance"]) if "probe_vigilance" in probe.columns else np.nan
         probe_rows: list[dict[str, Any]] = []
         for (subject, block_num, window_name, window_sec), frame in probe.dropna(subset=["window_sec"]).groupby(
             ["subject", "block_num", "window_name", "window_sec"], sort=True
         ):
-            ok = frame["pir_median"].notna() & frame["probe_vigilance_num"].notna()
+            ok = frame["pupil_median"].notna() & frame["probe_vigilance_num"].notna()
             if int(ok.sum()) >= 3 and frame.loc[ok, "probe_vigilance_num"].nunique() >= 2:
                 slope = np.polyfit(
                     frame.loc[ok, "probe_vigilance_num"].to_numpy(dtype=float),
-                    frame.loc[ok, "pir_median"].to_numpy(dtype=float),
+                    frame.loc[ok, "pupil_median"].to_numpy(dtype=float),
                     1,
                 )[0]
                 probe_rows.append({
@@ -579,7 +562,7 @@ def block_transition_recovery(
     if df.empty:
         return pd.DataFrame(), pd.DataFrame()
     df["time"] = _numeric(df["time_in_block_mid_sec"])
-    df["pir_median"] = _numeric(df["pir_median"])
+    df["pupil_median"] = _numeric(df["pupil_median"])
     traj_rows: list[pd.DataFrame] = []
     summary_rows: list[dict[str, Any]] = []
     for subject, frame in df.groupby("subject", sort=True):
@@ -594,8 +577,8 @@ def block_transition_recovery(
         b1 = b1[b1["transition_time_sec"].ge(-float(transition_window_sec))]
         b2 = b2[b2["transition_time_sec"].le(float(transition_window_sec))]
         traj_rows.extend([b1, b2])
-        tail = b1[b1["transition_time_sec"].ge(-float(recovery_summary_sec))]["pir_median"]
-        head = b2[b2["transition_time_sec"].le(float(recovery_summary_sec))]["pir_median"]
+        tail = b1[b1["transition_time_sec"].ge(-float(recovery_summary_sec))]["pupil_median"]
+        head = b2[b2["transition_time_sec"].le(float(recovery_summary_sec))]["pupil_median"]
         summary_rows.append({
             "subject": subject,
             "block1_last_window_median": float(tail.median()) if tail.notna().any() else np.nan,
@@ -620,15 +603,15 @@ def probe_transition_table(
         return pd.DataFrame()
     sort_cols = [col for col in ("subject", "block_num", "probe_index_in_block", "probe_onset_ms") if col in df.columns]
     df = df.sort_values(sort_cols, kind="stable")
-    for col in ("probe_response", "probe_vigilance", "pir_median"):
+    for col in ("probe_response", "probe_vigilance", "pupil_median"):
         if col in df.columns:
             df[col] = _numeric(df[col])
     group = df.groupby(["subject", "block_num"], sort=False)
     df["previous_probe_response"] = group["probe_response"].shift(1) if "probe_response" in df.columns else np.nan
     df["previous_probe_vigilance"] = group["probe_vigilance"].shift(1) if "probe_vigilance" in df.columns else np.nan
-    df["previous_probe_pir"] = group["pir_median"].shift(1) if "pir_median" in df.columns else np.nan
+    df["previous_probe_pir"] = group["pupil_median"].shift(1) if "pupil_median" in df.columns else np.nan
     df["delta_probe_vigilance"] = df.get("probe_vigilance", np.nan) - df["previous_probe_vigilance"]
-    df["delta_probe_pir"] = df.get("pir_median", np.nan) - df["previous_probe_pir"]
+    df["delta_probe_pir"] = df.get("pupil_median", np.nan) - df["previous_probe_pir"]
     df["response_transition"] = (
         df["previous_probe_response"].astype("Int64").astype(str)
         + "→"
@@ -650,7 +633,7 @@ def individual_heterogeneity(
         record: dict[str, Any] = {"subject": subject}
         for block_num, block in frame.groupby("block_num", sort=True):
             x = _numeric(block["time_in_block_mid_sec"])
-            y = _numeric(block["pir_median"])
+            y = _numeric(block["pupil_median"])
             ok = x.notna() & y.notna()
             slope = np.polyfit(x[ok], y[ok], 1)[0] if int(ok.sum()) >= 3 and x[ok].nunique() >= 2 else np.nan
             record[f"block{int(block_num)}_time_slope_per_sec"] = float(slope) if np.isfinite(slope) else np.nan
@@ -674,14 +657,14 @@ def stimulus_condition_summary(visual_trial: pd.DataFrame) -> pd.DataFrame:
     if visual_trial.empty:
         return pd.DataFrame()
     df = visual_trial.copy()
-    for col in ("pir_median", "stimulus_size", "is_no_go"):
+    for col in ("pupil_median", "stimulus_size", "is_no_go"):
         if col in df.columns:
             df[col] = _numeric(df[col])
     ids = [col for col in ("subject", "block_num", "is_no_go", "stimulus_size") if col in df.columns]
     metrics = [
         col
         for col in (
-            "pir_median",
+            "pupil_median",
             "current_central_rel_lum_mean",
             "current_central_rms_contrast",
             "current_fruit_visible_area_fraction_central_roi",

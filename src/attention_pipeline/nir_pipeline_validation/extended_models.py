@@ -80,9 +80,9 @@ def fit_extended_smoke_models(
         dynamic["time_z"] = np.nan
 
     for feature, model_name in (
-        ("pir_mad", "lmm_trial_pir_variability_by_outcome"),
-        ("pir_slope_per_sec", "lmm_trial_pir_slope_by_outcome"),
-        ("pir_diff_rate_mad_per_sec", "lmm_trial_pir_shortterm_instability_by_outcome"),
+        ("pupil_mad", "lmm_trial_pir_variability_by_outcome"),
+        ("pupil_slope_per_sec", "lmm_trial_pir_slope_by_outcome"),
+        ("pupil_diff_rate_mad_per_sec", "lmm_trial_pir_shortterm_instability_by_outcome"),
     ):
         if feature not in dynamic.columns:
             status.append({"model": model_name, "status": "skipped", "reason": "feature_missing"})
@@ -106,7 +106,7 @@ def fit_extended_smoke_models(
         pre = precursor[precursor["lag"].lt(0)].copy()
         pre["lag_numeric"] = pd.to_numeric(pre["lag"], errors="coerce")
         pre["go_rt_ms"] = pd.to_numeric(pre["go_rt_ms"], errors="coerce")
-        pre["pir_median"] = pd.to_numeric(pre["pir_median"], errors="coerce")
+        pre["pupil_median"] = pd.to_numeric(pre["pupil_median"], errors="coerce")
 
         rt = pre.dropna(subset=["lag_numeric", "go_rt_ms", "event_outcome", "subject"])
         if rt["subject"].nunique() >= min_subjects and rt["event_outcome"].nunique() >= 2:
@@ -121,12 +121,12 @@ def fit_extended_smoke_models(
         else:
             status.append({"model": "lmm_nogo_precursor_go_rt", "status": "skipped", "reason": "insufficient_precursor_rows"})
 
-        pir = pre.dropna(subset=["lag_numeric", "pir_median", "event_outcome", "subject"])
+        pir = pre.dropna(subset=["lag_numeric", "pupil_median", "event_outcome", "subject"])
         if pir["subject"].nunique() >= min_subjects and pir["event_outcome"].nunique() >= 2:
             record(
                 "lmm_nogo_precursor_pir",
                 lambda: smf.mixedlm(
-                    "pir_median ~ lag_numeric * C(event_outcome) + C(block_num)",
+                    "pupil_median ~ lag_numeric * C(event_outcome) + C(block_num)",
                     data=pir,
                     groups=pir["subject"],
                 ).fit(reml=False, method="lbfgs", disp=False),
@@ -172,20 +172,20 @@ def fit_extended_smoke_models(
         required = {
             "subject",
             "block_num",
-            "pir_median",
+            "pupil_median",
             "current_central_rel_lum_mean",
             "previous_central_rel_lum_mean",
         }
         if required.issubset(visual_trial.columns):
             visual = visual_trial.copy()
-            for col in ("pir_median", "current_central_rel_lum_mean", "previous_central_rel_lum_mean"):
+            for col in ("pupil_median", "current_central_rel_lum_mean", "previous_central_rel_lum_mean"):
                 visual[col] = pd.to_numeric(visual[col], errors="coerce")
             visual = visual.dropna(subset=list(required))
             if visual["subject"].nunique() >= min_subjects:
                 record(
                     "lmm_pir_visual_covariates",
                     lambda: smf.mixedlm(
-                        "pir_median ~ current_central_rel_lum_mean + previous_central_rel_lum_mean + C(block_num)",
+                        "pupil_median ~ current_central_rel_lum_mean + previous_central_rel_lum_mean + C(block_num)",
                         data=visual,
                         groups=visual["subject"],
                     ).fit(reml=False, method="lbfgs", disp=False),
@@ -195,7 +195,7 @@ def fit_extended_smoke_models(
 
         go_required = required | {"is_no_go", "correct", "rt", "time_in_block_sec"}
         if go_required.issubset(visual_trial.columns):
-            visual_go = add_within_between(visual_trial, "pir_median")
+            visual_go = add_within_between(visual_trial, "pupil_median")
             visual_go["rt"] = pd.to_numeric(visual_go["rt"], errors="coerce")
             visual_go["time_z"] = _safe_z(visual_go["time_in_block_sec"])
             visual_go = visual_go[
@@ -204,8 +204,8 @@ def fit_extended_smoke_models(
             ].dropna(
                 subset=[
                     "rt",
-                    "pir_median_within",
-                    "pir_median_between",
+                    "pupil_median_within",
+                    "pupil_median_between",
                     "current_central_rel_lum_mean",
                     "previous_central_rel_lum_mean",
                     "time_z",
@@ -215,7 +215,7 @@ def fit_extended_smoke_models(
                 record(
                     "lmm_go_rt_pir_visual_controlled",
                     lambda: smf.mixedlm(
-                        "rt ~ pir_median_within + pir_median_between + current_central_rel_lum_mean + previous_central_rel_lum_mean + time_z + C(block_num)",
+                        "rt ~ pupil_median_within + pupil_median_between + current_central_rel_lum_mean + previous_central_rel_lum_mean + time_z + C(block_num)",
                         data=visual_go,
                         groups=visual_go["subject"],
                     ).fit(reml=False, method="lbfgs", disp=False),

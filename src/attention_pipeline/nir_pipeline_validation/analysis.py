@@ -16,7 +16,7 @@ from attention_pipeline.nir_behavior.discovery import resolve_repo_path
 
 PIPELINE_VERSION = "nir-pipeline-validation-v1.1"
 SCHEMA_VERSION = 2
-VALIDATION_LABEL = "PIPELINE VALIDATION ONLY — CURRENT NIR VALUES KNOWN INVALID"
+VALIDATION_LABEL = "CANDIDATE ENDPOINTS NOT FROZEN — SCIENTIFIC REVIEW PENDING"
 
 
 @dataclass(frozen=True)
@@ -48,12 +48,12 @@ def output_root(config: Config) -> Path:
 
 def subject_paths(config: Config, subject: str) -> SubjectTables:
     subject = normalize_subject(subject)
-    base = analysis_tables_root(config) / "subjects" / subject
+    base = analysis_tables_root(config) / "sessions" / subject
     return SubjectTables(
         subject=subject,
         trial_level=base / f"{subject}_trial_level.csv",
-        trial_windows=base / f"{subject}_trial_pir_windows.csv",
-        probe_windows=base / f"{subject}_probe_pir_windows.csv",
+        trial_windows=base / f"{subject}_trial_pupil_windows.csv",
+        probe_windows=base / f"{subject}_probe_pupil_windows.csv",
         time_on_task=base / f"{subject}_time_on_task_1s.csv",
         trial_coverage=base / f"{subject}_trial_window_coverage.csv",
         probe_coverage=base / f"{subject}_probe_window_coverage.csv",
@@ -82,7 +82,7 @@ def valid_completion(paths: SubjectTables) -> bool:
 
 
 def discover_subjects(config: Config) -> list[str]:
-    root = analysis_tables_root(config) / "subjects"
+    root = analysis_tables_root(config) / "sessions"
     if not root.is_dir():
         return []
     found: list[str] = []
@@ -101,7 +101,10 @@ def discover_subjects(config: Config) -> list[str]:
 def selected_subjects(config: Config, override: Iterable[str] | None = None) -> list[str]:
     if override:
         return parse_subject_list(list(override))
-    raw = config.section("subjects").get("include", [])
+    try:
+        raw = config.section("subjects").get("include", [])
+    except KeyError:
+        raw = []
     if raw:
         return parse_subject_list(raw)
     return discover_subjects(config)
@@ -304,15 +307,15 @@ def omission_subject_summary(trial_table: pd.DataFrame) -> pd.DataFrame:
 
 def block_pir_summary(time_on_task: pd.DataFrame, track: str) -> pd.DataFrame:
     df = time_on_task[time_on_task["track"].astype(str).eq(track)].copy()
-    df["pir_median"] = pd.to_numeric(df["pir_median"], errors="coerce")
-    df["pir_valid_fraction"] = pd.to_numeric(df["pir_valid_fraction"], errors="coerce")
+    df["pupil_median"] = pd.to_numeric(df["pupil_median"], errors="coerce")
+    df["pupil_valid_fraction"] = pd.to_numeric(df["pupil_valid_fraction"], errors="coerce")
     return (
         df.groupby(["subject", "block_num"], as_index=False)
         .agg(
-            pir_median=("pir_median", "median"),
-            pir_mean=("pir_median", "mean"),
-            pir_valid_fraction=("pir_valid_fraction", "mean"),
-            n_bins=("pir_median", "size"),
+            pupil_median=("pupil_median", "median"),
+            pupil_mean=("pupil_median", "mean"),
+            pupil_valid_fraction=("pupil_valid_fraction", "mean"),
+            n_bins=("pupil_median", "size"),
         )
     )
 
@@ -323,7 +326,7 @@ def coarse_time_on_task(
     if bin_sec <= 0:
         raise ValueError("bin_sec must be > 0")
     df = time_on_task[time_on_task["track"].astype(str).eq(track)].copy()
-    df["pir_median"] = pd.to_numeric(df["pir_median"], errors="coerce")
+    df["pupil_median"] = pd.to_numeric(df["pupil_median"], errors="coerce")
     time = pd.to_numeric(df["time_in_block_mid_sec"], errors="coerce")
     df["coarse_bin_start_sec"] = np.floor(time / bin_sec) * bin_sec
     return (
@@ -331,9 +334,9 @@ def coarse_time_on_task(
             ["subject", "block_num", "coarse_bin_start_sec"], as_index=False
         )
         .agg(
-            pir_median=("pir_median", "median"),
-            pir_valid_fraction=("pir_valid_fraction", "mean"),
-            n_1s_bins=("pir_median", "size"),
+            pupil_median=("pupil_median", "median"),
+            pupil_valid_fraction=("pupil_valid_fraction", "mean"),
+            n_1s_bins=("pupil_median", "size"),
         )
     )
 
@@ -354,9 +357,9 @@ def trial_analysis_table(
         "block_num",
         "trial_num",
         "global_trial_index",
-        "pir_median",
-        "pir_mean",
-        "pir_valid_fraction",
+        "pupil_median",
+        "pupil_mean",
+        "pupil_valid_fraction",
         "internal_coverage_fraction",
         "max_temporal_gap_sec",
     ]
@@ -419,8 +422,8 @@ def probe_analysis_table(
         & probe_windows["window_name"].astype(str).eq(window_name)
     ].copy()
     for column in (
-        "pir_median",
-        "pir_valid_fraction",
+        "pupil_median",
+        "pupil_valid_fraction",
         "probe_vigilance",
         "seconds_since_previous_probe",
     ):
@@ -429,7 +432,7 @@ def probe_analysis_table(
     return df
 
 
-def add_within_between(frame: pd.DataFrame, value_col: str = "pir_median") -> pd.DataFrame:
+def add_within_between(frame: pd.DataFrame, value_col: str = "pupil_median") -> pd.DataFrame:
     df = frame.copy()
     df[value_col] = pd.to_numeric(df[value_col], errors="coerce")
     subject_mean = df.groupby("subject")[value_col].transform("mean")
@@ -488,14 +491,14 @@ def fit_smoke_models(
             )
 
     tot = time_on_task[time_on_task["track"].astype(str).eq(track)].copy()
-    tot["pir_median"] = pd.to_numeric(tot["pir_median"], errors="coerce")
+    tot["pupil_median"] = pd.to_numeric(tot["pupil_median"], errors="coerce")
     tot["time_z"] = _safe_z(tot["time_in_block_mid_sec"])
-    tot = tot.dropna(subset=["pir_median", "time_z", "subject", "block_num"])
+    tot = tot.dropna(subset=["pupil_median", "time_z", "subject", "block_num"])
     if tot["subject"].nunique() >= min_subjects:
         record(
             "lmm_time_on_task_pir",
             lambda: smf.mixedlm(
-                "pir_median ~ time_z * C(block_num)",
+                "pupil_median ~ time_z * C(block_num)",
                 data=tot,
                 groups=tot["subject"],
             ).fit(reml=False, method="lbfgs", disp=False),
@@ -523,13 +526,13 @@ def fit_smoke_models(
         pd.to_numeric(trial["is_no_go"], errors="coerce").eq(0)
         & pd.to_numeric(trial["correct"], errors="coerce").eq(1)
     ].dropna(
-        subset=["rt", "pir_median_within", "pir_median_between", "time_z"]
+        subset=["rt", "pupil_median_within", "pupil_median_between", "time_z"]
     )
     if go_correct["subject"].nunique() >= min_subjects:
         record(
             "lmm_go_rt_pir_within_between",
             lambda: smf.mixedlm(
-                "rt ~ pir_median_within + pir_median_between + time_z + C(block_num)",
+                "rt ~ pupil_median_within + pupil_median_between + time_z + C(block_num)",
                 data=go_correct,
                 groups=go_correct["subject"],
             ).fit(reml=False, method="lbfgs", disp=False),
@@ -546,13 +549,13 @@ def fit_smoke_models(
     nogo = trial[pd.to_numeric(trial["is_no_go"], errors="coerce").eq(1)].copy()
     nogo["commission"] = pd.to_numeric(nogo["commission"], errors="coerce")
     nogo = nogo.dropna(
-        subset=["commission", "pir_median_within", "pir_median_between", "time_z"]
+        subset=["commission", "pupil_median_within", "pupil_median_between", "time_z"]
     )
     if nogo["subject"].nunique() >= min_subjects and nogo["commission"].nunique() == 2:
         record(
             "gee_nogo_commission_pir",
             lambda: smf.gee(
-                "commission ~ pir_median_within + pir_median_between + time_z + C(block_num)",
+                "commission ~ pupil_median_within + pupil_median_between + time_z + C(block_num)",
                 groups="subject",
                 data=nogo,
                 family=sm.families.Binomial(),
@@ -570,13 +573,13 @@ def fit_smoke_models(
     go = trial[pd.to_numeric(trial["is_no_go"], errors="coerce").eq(0)].copy()
     go["omission"] = pd.to_numeric(go["omission"], errors="coerce")
     go = go.dropna(
-        subset=["omission", "pir_median_within", "pir_median_between", "time_z"]
+        subset=["omission", "pupil_median_within", "pupil_median_between", "time_z"]
     )
     if go["subject"].nunique() >= min_subjects and go["omission"].nunique() == 2:
         record(
             "gee_go_program_omission_pir",
             lambda: smf.gee(
-                "omission ~ pir_median_within + pir_median_between + time_z + C(block_num)",
+                "omission ~ pupil_median_within + pupil_median_between + time_z + C(block_num)",
                 groups="subject",
                 data=go,
                 family=sm.families.Binomial(),
@@ -608,7 +611,7 @@ def fit_smoke_models(
         record(
             "gee_go_clean_omission_sensitivity",
             lambda: smf.gee(
-                "omission ~ pir_median_within + pir_median_between + time_z + C(block_num)",
+                "omission ~ pupil_median_within + pupil_median_between + time_z + C(block_num)",
                 groups="subject",
                 data=qc_go,
                 family=sm.families.Binomial(),
@@ -634,7 +637,7 @@ def fit_smoke_models(
             record(
                 "gee_go_anticipatory_candidate_pir",
                 lambda: smf.gee(
-                    "anticipatory_candidate ~ pir_median_within + pir_median_between + time_z + C(block_num)",
+                    "anticipatory_candidate ~ pupil_median_within + pupil_median_between + time_z + C(block_num)",
                     groups="subject",
                     data=go,
                     family=sm.families.Binomial(),
@@ -655,7 +658,7 @@ def fit_smoke_models(
             probe["probe_vigilance"], errors="coerce"
         )
         probe = probe.dropna(
-            subset=["probe_vigilance", "pir_median_within", "pir_median_between"]
+            subset=["probe_vigilance", "pupil_median_within", "pupil_median_between"]
         )
         if (
             probe["subject"].nunique() >= min_subjects
@@ -664,7 +667,7 @@ def fit_smoke_models(
             record(
                 "lmm_probe_vigilance_pir",
                 lambda: smf.mixedlm(
-                    "probe_vigilance ~ pir_median_within + pir_median_between + C(block_num)",
+                    "probe_vigilance ~ pupil_median_within + pupil_median_between + C(block_num)",
                     data=probe,
                     groups=probe["subject"],
                 ).fit(reml=False, method="lbfgs", disp=False),
