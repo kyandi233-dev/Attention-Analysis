@@ -317,8 +317,16 @@ def adapt_session_rows(
     # existing Behavior loader; it must not be interpreted as participant N.
     out["subject"] = identity.session_id
     out["analysis_group_token"] = identity.analysis_group_token
-    out["repeat_group_size"] = identity.repeat_group_size
-    out["is_repeat_session"] = identity.repeat_group_size > 1
+    # Pandas outer-merges upcast a plain integer side to float when that eye is
+    # absent at some timepoints.  Keeping repeat identity in nullable extension
+    # dtypes prevents semantically equal values such as 1 and 1.0 from becoming
+    # a false left/right identity mismatch downstream.
+    out["repeat_group_size"] = pd.Series(
+        identity.repeat_group_size, index=out.index, dtype="Int64"
+    )
+    out["is_repeat_session"] = pd.Series(
+        identity.repeat_group_size > 1, index=out.index, dtype="boolean"
+    )
     out["source_schema_version"] = identity.source_schema_version
     out["source_kind"] = identity.source_kind
     out["source_branch"] = identity.source_branch
