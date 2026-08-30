@@ -28,6 +28,20 @@ def _numeric(series: pd.Series) -> pd.Series:
     return pd.to_numeric(series, errors="coerce")
 
 
+def _stack_keep_nan(frame: pd.DataFrame) -> pd.Series | pd.DataFrame:
+    """Stack a wide frame to long form while keeping NaN cells.
+
+    Uses the non-deprecated ``future_stack`` implementation on pandas >= 2.1
+    and falls back to ``stack(dropna=False)`` on pandas 2.0.x, where the
+    ``future_stack`` keyword does not exist. Both paths keep NaN cells, so the
+    output is identical across supported pandas versions.
+    """
+    try:
+        return frame.stack(future_stack=True)
+    except TypeError:  # pandas < 2.1
+        return frame.stack(dropna=False)
+
+
 def _analysis_ready_root(config: Config) -> Path:
     raw = config.section("paths").get("analysis_ready_root")
     if raw in (None, ""):
@@ -387,10 +401,10 @@ def feature_redundancy(
     corr = values[within_cols].corr(min_periods=5)
     corr.index = features
     corr.columns = features
-    long = corr.rename_axis(index="feature_a", columns="feature_b").stack(dropna=False).rename("r").reset_index()
+    long = _stack_keep_nan(corr.rename_axis(index="feature_a", columns="feature_b")).rename("r").reset_index()
     subject_means = values.groupby("subject", as_index=False)[features].mean()
     between = subject_means[features].corr(min_periods=3)
-    between_long = between.rename_axis(index="feature_a", columns="feature_b").stack(dropna=False).rename("r").reset_index()
+    between_long = _stack_keep_nan(between.rename_axis(index="feature_a", columns="feature_b")).rename("r").reset_index()
     return long, between_long
 
 
@@ -432,7 +446,7 @@ def within_between_correlation_tables(
         labels = [col.replace("__within", "") for col in centered_cols]
         corr.index = labels
         corr.columns = labels
-        within_long = corr.rename_axis(index="metric_a", columns="metric_b").stack(dropna=False).rename("r").reset_index()
+        within_long = _stack_keep_nan(corr.rename_axis(index="metric_a", columns="metric_b")).rename("r").reset_index()
 
     if subject_summary.empty:
         between_long = pd.DataFrame()
@@ -454,7 +468,7 @@ def within_between_correlation_tables(
             if col in subject_summary.columns
         ]
         between = subject_summary[preferred].apply(pd.to_numeric, errors="coerce").corr(min_periods=3)
-        between_long = between.rename_axis(index="metric_a", columns="metric_b").stack(dropna=False).rename("r").reset_index()
+        between_long = _stack_keep_nan(between.rename_axis(index="metric_a", columns="metric_b")).rename("r").reset_index()
     return within_long, between_long
 
 
