@@ -26,7 +26,7 @@ DATA = Path(r"D:\Project\厚粲杯\11_数据\_FormalAnalysis\Behavior\formal_v3"
 OUT = DATA / "figures_publication"
 
 COLOR_B1 = "#4A7BA6"
-COLOR_B2 = "#C2543D"
+COLOR_B2 = "#0E7C7B"
 COLOR_OMISSION = "#C2543D"
 COLOR_COMMISSION = "#4A7BA6"
 COLOR_DIFF = "#5A6B7B"
@@ -43,17 +43,16 @@ def _num(series: pd.Series) -> pd.Series:
     return pd.to_numeric(series, errors="coerce")
 
 
-def panel_label(ax, label: str) -> None:
-    ax.text(-0.14, 1.06, label, transform=ax.transAxes, fontsize=12,
-            fontweight="bold", va="top", ha="left", color="#1F2D33")
+def panel_label(ax, label: str, title: str) -> None:
+    ax.set_title(f"{label} {title}", fontsize=10.5, loc="left",
+                 color="#1F2D33", pad=6)
 
 
 def _clean(ax) -> None:
-    for side in ("top", "right"):
-        ax.spines[side].set_visible(False)
-    ax.spines["left"].set_color("#4A5B66")
-    ax.spines["bottom"].set_color("#4A5B66")
-    ax.tick_params(colors="#2A3B45", labelsize=8)
+    for side in ("top", "bottom", "left", "right"):
+        ax.spines[side].set_color("#8A9AA5")
+        ax.spines[side].set_linewidth(0.7)
+    ax.tick_params(colors="#2A3B45", labelsize=8.5)
 
 
 def _forest(ax, labels, estimates, lows, highs, colors, xlabel) -> None:
@@ -105,7 +104,7 @@ def main() -> None:
     ax.set_xlim(-0.45, 1.45)
     ax.set_ylabel("RT-CV", fontsize=9)
     _clean(ax)
-    panel_label(ax, "A")
+    panel_label(ax, "A", "RT-CV 区块配对")
 
     # ---------- B: RT-CV cycle ----------
     ax = fig.add_subplot(gs[0, 1])
@@ -125,7 +124,7 @@ def main() -> None:
     ax.set_ylabel("RT-CV", fontsize=9)
     ax.legend(frameon=False, fontsize=8, loc="upper left")
     _clean(ax)
-    panel_label(ax, "B")
+    panel_label(ax, "B", "RT-CV 周期趋势")
 
     # ---------- C: 时序歧义遗漏率 B1/B2 ----------
     ax = fig.add_subplot(gs[1, 0])
@@ -148,7 +147,7 @@ def main() -> None:
     ax.set_xlim(-0.45, 1.45)
     ax.set_ylabel("时序歧义遗漏率（%）", fontsize=9)
     _clean(ax)
-    panel_label(ax, "C")
+    panel_label(ax, "C", "时序歧义遗漏率区块配对")
 
     # ---------- D: 错误事件轨迹 ----------
     ax = fig.add_subplot(gs[1, 1])
@@ -173,7 +172,7 @@ def main() -> None:
     ax.set_ylabel("RT 偏移（ms）", fontsize=9)
     ax.legend(frameon=False, fontsize=8, loc="upper right")
     _clean(ax)
-    panel_label(ax, "D")
+    panel_label(ax, "D", "错误事件前后 RT 偏移")
 
     # ---------- E: Q1 核心效应 ----------
     ax = fig.add_subplot(gs[2, 0])
@@ -191,7 +190,7 @@ def main() -> None:
     _forest(ax, labels, [r[1] for r in rows], [r[2] for r in rows],
             [r[3] for r in rows], [r[4] for r in rows],
             "标准化系数（95% CI）")
-    panel_label(ax, "E")
+    panel_label(ax, "E", "Q1 核心行为效应")
 
     # ---------- F: Q2 四项森林图 ----------
     ax = fig.add_subplot(gs[2, 1])
@@ -213,7 +212,7 @@ def main() -> None:
         highs.append(float(row["ci_high"]))
         colors.append(COLOR_DIFF)
     _forest(ax, labels, ests, lows, highs, colors, "标准化系数（95% CI）")
-    panel_label(ax, "F")
+    panel_label(ax, "F", "Q2 行为效应")
 
     OUT.mkdir(parents=True, exist_ok=True)
     for ext in ("png", "svg"):
