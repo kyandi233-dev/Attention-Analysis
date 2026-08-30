@@ -479,7 +479,7 @@ def report_admission(
     probe_windows: pd.DataFrame,
     model_failures: pd.DataFrame,
     failure_tables_written: bool,
-    topology: Mapping[str, int],
+    topology: Mapping[str, Any],
 ) -> dict[str, Any]:
     figures = set(map(str, figure_names))
     required_figures = {f"Figure{index:02d}" for index in range(1, 11)}
@@ -501,11 +501,13 @@ def report_admission(
     )
     eyes_ok = {"left_primary", "right_primary"}.issubset(track_values)
     model_ok = model_failures.empty or not model_failures["status"].astype(str).eq("published_as_complete").any()
-    topology_ok = topology == {
-        "n_sessions": 44,
-        "n_analysis_groups": 38,
-        "n_double_session_repeat_groups": 6,
-    }
+    topology_ok = (
+        int(topology.get("n_sessions", 0)) > 0
+        and 0 < int(topology.get("n_analysis_groups", 0)) <= int(topology.get("n_sessions", 0))
+        and 0 <= int(topology.get("n_repeated_participant_groups", 0))
+        <= int(topology.get("n_analysis_groups", 0))
+        and int(topology.get("max_sessions_per_participant", 0)) >= 1
+    )
     gates = {
         "figure01_10_complete": required_figures.issubset(figures),
         "q1_separate_error_targets_present": q1_ok,

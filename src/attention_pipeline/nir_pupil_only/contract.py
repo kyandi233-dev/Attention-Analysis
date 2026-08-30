@@ -341,41 +341,25 @@ def adapt_session_rows(
     return out
 
 
-def cohort_topology_summary(records: Iterable[Mapping[str, Any]]) -> dict[str, int]:
-    rows = [SourceIdentity.from_mapping(value) for value in records]
-    sessions = {row.session_id for row in rows}
-    if len(sessions) != len(rows):
-        raise ValueError("topology manifest contains duplicate session_id")
-    groups: dict[str, list[str]] = {}
-    for row in rows:
-        groups.setdefault(row.analysis_group_token, []).append(row.session_id)
-    invalid = {key: len(value) for key, value in groups.items() if len(value) not in {1, 2}}
-    if invalid:
-        raise ValueError("current topology supports only one- or two-session analysis groups")
-    repeat_groups = sum(len(value) == 2 for value in groups.values())
-    return {
-        "n_sessions": len(sessions),
-        "n_analysis_groups": len(groups),
-        "n_double_session_repeat_groups": int(repeat_groups),
-    }
+# Historical direct-import compatibility. The package-level API exports the
+# implementation from nir_pupil_only.topology; keep these wrappers aligned.
+def cohort_topology_summary(records: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
+    from .topology import cohort_topology_summary as _summary
+    return _summary(records)
 
 
 def validate_cohort_topology(
     records: Iterable[Mapping[str, Any]],
     *,
-    expected_sessions: int = 44,
-    expected_analysis_groups: int = 38,
-    expected_double_session_repeat_groups: int = 6,
-) -> dict[str, int]:
-    summary = cohort_topology_summary(records)
-    expected = {
-        "n_sessions": int(expected_sessions),
-        "n_analysis_groups": int(expected_analysis_groups),
-        "n_double_session_repeat_groups": int(expected_double_session_repeat_groups),
-    }
-    if summary != expected:
-        raise ValueError(f"cohort topology mismatch: observed={summary}, expected={expected}")
-    return summary
+    expected_sessions: int = 116,
+    expected_analysis_groups: int = 61,
+) -> dict[str, Any]:
+    from .topology import validate_cohort_topology as _validate
+    return _validate(
+        records,
+        expected_sessions=expected_sessions,
+        expected_analysis_groups=expected_analysis_groups,
+    )
 
 
 def refuse_iris_derived_metrics(*_: Any, **__: Any) -> None:

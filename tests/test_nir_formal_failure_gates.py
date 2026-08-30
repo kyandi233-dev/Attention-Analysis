@@ -49,7 +49,13 @@ def test_report_gate_does_not_treat_failure_table_as_success():
         probe_windows=probes,
         model_failures=failures,
         failure_tables_written=True,
-        topology={"n_sessions": 44, "n_analysis_groups": 38, "n_double_session_repeat_groups": 6},
+        topology={
+            "n_sessions": 44,
+            "n_analysis_groups": 38,
+            "n_repeated_participant_groups": 6,
+            "max_sessions_per_participant": 2,
+            "group_size_distribution": {"1": 32, "2": 6},
+        },
     )
     assert result["gates"]["model_failure_gate_active"]
     assert result["scientific_inference_authorized"] is False

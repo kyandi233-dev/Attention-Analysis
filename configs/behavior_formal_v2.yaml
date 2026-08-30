@@ -34,7 +34,7 @@ cohort:
   legacy_repeat_group_is_source_not_canonical_statistical_key: true
   expected_session_count: 116
   expected_group_count: 61
-  expected_double_session_repeat_groups: 10
+  # Participant visit counts may be 1..N. Group-size counts are descriptive, never release gates.
   current_queue_is_full_study_sample: false
 
 paths:
@@ -135,7 +135,9 @@ analysis_policy:
   participant_identity_unresolved_blocks_inference_not_session_qc: true
   forbid_session_id_participant_fallback: true
   cohort_manifest_defines_session_membership: true
-  current_116_61_10_is_analysis_subset_not_study_total: true
+  current_116_61_is_analysis_subset_not_study_total: true
+  participant_group_size_may_be_any_positive_integer: true
+  repeated_measure_dependence_uses_participant_group_id: true
   questionnaire_must_left_join_sessions: true
   questionnaire_missing_does_not_drop_session: true
   preserve_raw_omission_scoring: true

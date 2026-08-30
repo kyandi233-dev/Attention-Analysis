@@ -379,6 +379,7 @@ def run_validation(
     formats: Iterable[str] = ("png",),
     dpi: int = 220,
     expected_topology: dict[str, int] | None = None,
+    canonical_cohort_topology: Mapping[str, Any] | None = None,
     runtime_provenance: Mapping[str, Any] | None = None,
     config_digest: str | None = None,
 ) -> dict[str, Any]:
@@ -412,21 +413,35 @@ def run_validation(
     )
     repeat_summary = repeat_session_descriptive_summary(data["time_on_task"])
 
-    topology = {
-        "n_sessions": int(trials["session_id"].astype(str).nunique()),
-        "n_analysis_groups": int(trials["analysis_group_token"].astype(str).nunique()),
-    }
     group_sessions = (
         trials[["analysis_group_token", "session_id"]]
         .drop_duplicates()
         .groupby("analysis_group_token")["session_id"]
         .nunique()
+        .astype(int)
     )
-    topology["n_double_session_repeat_groups"] = int(group_sessions.eq(2).sum())
-    if expected_topology is not None and topology != expected_topology:
-        raise ValidationContractError(
-            f"topology mismatch: observed={topology}, expected={expected_topology}"
-        )
+    distribution = {
+        str(size): int(group_sessions.eq(size).sum())
+        for size in sorted(group_sessions.unique())
+    }
+    topology = {
+        "n_sessions": int(trials["session_id"].astype(str).nunique()),
+        "n_analysis_groups": int(trials["analysis_group_token"].astype(str).nunique()),
+        "n_repeated_participant_groups": int(group_sessions.gt(1).sum()),
+        "max_sessions_per_participant": int(group_sessions.max()) if len(group_sessions) else 0,
+        "group_size_distribution": distribution,
+    }
+    if expected_topology is not None:
+        required = {
+            key: int(expected_topology[key])
+            for key in ("n_sessions", "n_analysis_groups")
+            if key in expected_topology
+        }
+        observed_required = {key: int(topology[key]) for key in required}
+        if observed_required != required:
+            raise ValidationContractError(
+                f"topology mismatch: observed={observed_required}, expected={required}"
+            )
 
     qc_axes = qc_count_axes(
         sessions=trials["session_id"],
@@ -498,6 +513,8 @@ def run_validation(
         "config_digest": config_digest,
         "runtime_provenance": dict(runtime_provenance or {}),
         "topology": topology,
+        "canonical_cohort_topology": dict(canonical_cohort_topology or {}),
+        "availability_subset_does_not_redefine_canonical_cohort": True,
         "figures": figures,
         "model_failure_rows": int(len(model_failures)),
         "visual_temporal_gate_rows": int(len(visual_audit)),

@@ -42,8 +42,8 @@ cohort:
   require_session_unique: true
   expected_session_count: 116
   expected_group_count: 61
-  expected_double_session_repeat_groups: 10
-  note: "116 identity-resolved sessions / 61 anonymous participant groups / 10 groups with exactly two sessions are distinct counting axes; 32 groups have more than one session overall. Modality availability never defines this cohort."
+  participant_group_size_policy: any_positive_integer
+  note: "116 identity-resolved sessions / 61 anonymous participant groups define the governed cohort snapshot. Participant visit counts may be 1..N; group-size distributions are descriptive, never release gates. Modality availability never defines this cohort."
 
 identity:
   canonical_statistical_unit: participant_group_id
@@ -106,7 +106,7 @@ behavior:
     b1_b2: session_pair_then_participant_cluster_bootstrap
     cycle: nested_block_session_participant_with_block_by_cycle_model
     error_trajectory: separate_error_events_with_participant_centered_rt
-    two_session_reliability_claim: not_estimable
+    repeat_visit_reliability_claim: metric_specific_not_authorized_by_visit_count_alone
     failed_models_must_be_written: true
 
 nir:

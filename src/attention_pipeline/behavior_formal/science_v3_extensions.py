@@ -1,6 +1,7 @@
 """Repeated-measure extensions required by the behavior science-v3 ledger."""
 from __future__ import annotations
 
+import json
 import math
 from typing import Any, Iterable
 
@@ -19,7 +20,7 @@ def cluster_bootstrap_b1_b2(
     """Summarize session-internal B1-B2 differences with participant-cluster bootstrap.
 
     Repeated sessions first collapse to one participant-group mean difference so a
-    two-session repeat participant is not counted as two independent people.
+    participant with any number of sessions is not counted as multiple independent people.
     """
     rows: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
@@ -258,13 +259,16 @@ def fit_block_cycle_gee(
 
 
 def repeat_stability_boundary(session_metrics: pd.DataFrame) -> pd.DataFrame:
-    """Record the inferential boundary instead of inventing two-point reliability."""
+    """Describe unbalanced 1..N visits without treating visit count as reliability evidence."""
     groups = session_metrics[["repeat_participant_id", "session_id"]].drop_duplicates()
-    counts = groups.groupby("repeat_participant_id")["session_id"].nunique()
-    repeat_groups = int(counts.eq(2).sum())
+    counts = groups.groupby("repeat_participant_id")["session_id"].nunique().astype(int)
+    repeated = counts[counts.gt(1)]
+    distribution = {str(size): int(counts.eq(size).sum()) for size in sorted(counts.unique())}
     return pd.DataFrame([{
         "analysis": "repeat_session_stability",
-        "status": "not_estimable_for_broad_reliability",
-        "double_session_repeat_group_n": repeat_groups,
-        "reason": "two sessions per repeat group are insufficient for broad reliability/validity claims; retain descriptive paired differences only",
+        "status": "requires_metric_specific_reliability_design",
+        "repeated_participant_group_n": int(len(repeated)),
+        "max_sessions_per_participant": int(counts.max()) if len(counts) else 0,
+        "group_size_distribution": json.dumps(distribution, ensure_ascii=False, sort_keys=True),
+        "reason": "participant visit counts may be 1..N; counts alone do not authorize a broad reliability claim",
     }])

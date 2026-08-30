@@ -10,9 +10,10 @@ paths:
   stimulus_visual_table: "@path:stimulus_visual_properties"
 
 cohort:
-  expected_session_count: 116
-  expected_analysis_group_count: 61
-  expected_double_session_repeat_groups: 10
+  canonical_session_count: 116
+  canonical_analysis_group_count: 61
+  participant_group_size_policy: any_positive_integer
+  availability_subset_topology_is_descriptive: true
 
 source_contract:
   required_stage: "11_analysis_tables"

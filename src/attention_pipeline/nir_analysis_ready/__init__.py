@@ -55,19 +55,27 @@ def _full_contract(config_path: str | Path) -> dict[str, Any]:
     config = load_config(config_path)
     cohort = included_cohort(load_cohort_manifest(config), require_groups=True)
     group_sizes = cohort.groupby("repeat_participant_id")["session_id"].nunique()
+    distribution = {
+        str(size): int(group_sizes.eq(size).sum())
+        for size in sorted(group_sizes.astype(int).unique())
+    }
     canonical = {
         "n_sessions": int(len(cohort)),
         "n_analysis_groups": int(group_sizes.size),
-        "n_double_session_repeat_groups": int(group_sizes.eq(2).sum()),
+        "n_repeated_participant_groups": int(group_sizes.gt(1).sum()),
+        "max_sessions_per_participant": int(group_sizes.max()) if len(group_sizes) else 0,
+        "group_size_distribution": distribution,
     }
     expected_cfg = config.section("cohort_topology")
     expected = {
         "n_sessions": int(expected_cfg.get("sessions", 116)),
         "n_analysis_groups": int(expected_cfg.get("analysis_groups", 61)),
-        "n_double_session_repeat_groups": int(expected_cfg.get("double_session_repeat_groups", 10)),
     }
-    if canonical != expected:
-        raise ValueError(f"canonical cohort topology mismatch: observed={canonical}, expected={expected}")
+    observed_required = {key: int(canonical[key]) for key in expected}
+    if observed_required != expected:
+        raise ValueError(
+            f"canonical cohort topology mismatch: observed={observed_required}, expected={expected}"
+        )
 
     payload, records = load_source_manifest(config)
     available = {str(row["session_id"]) for row in records}

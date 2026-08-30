@@ -28,13 +28,14 @@ def test_nir_topology_allows_more_than_two_sessions_per_participant():
     assert observed == {
         "n_sessions": 6,
         "n_analysis_groups": 3,
-        "n_double_session_repeat_groups": 1,
+        "n_repeated_participant_groups": 2,
+        "max_sessions_per_participant": 3,
+        "group_size_distribution": {"1": 1, "2": 1, "3": 1},
     }
     assert validate_cohort_topology(
         rows,
         expected_sessions=6,
         expected_analysis_groups=3,
-        expected_double_session_repeat_groups=1,
     ) == observed
 
 
@@ -71,7 +72,6 @@ def test_full_contract_separates_governed_cohort_from_nir_availability(monkeypat
                 return {
                     "sessions": 4,
                     "analysis_groups": 2,
-                    "double_session_repeat_groups": 0,
                 }
             raise KeyError(name)
 
@@ -87,7 +87,9 @@ def test_full_contract_separates_governed_cohort_from_nir_availability(monkeypat
     assert contract["canonical_cohort_topology"] == {
         "n_sessions": 4,
         "n_analysis_groups": 2,
-        "n_double_session_repeat_groups": 0,
+        "n_repeated_participant_groups": 1,
+        "max_sessions_per_participant": 3,
+        "group_size_distribution": {"1": 1, "3": 1},
     }
     assert contract["nir_availability"] == {
         "n_available_sessions": 3,
@@ -99,5 +101,7 @@ def test_full_contract_separates_governed_cohort_from_nir_availability(monkeypat
     assert contract["source_available_subset_topology"] == {
         "n_sessions": 3,
         "n_analysis_groups": 2,
-        "n_double_session_repeat_groups": 0,
+        "n_repeated_participant_groups": 1,
+        "max_sessions_per_participant": 2,
+        "group_size_distribution": {"1": 1, "2": 1},
     }

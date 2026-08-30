@@ -61,12 +61,14 @@ def test_cycle_gee_failure_is_explicit_for_insufficient_data():
     assert set(failures["status"]) == {"not_estimable"}
 
 
-def test_two_session_repeat_is_recorded_as_stability_boundary_not_reliability():
+def test_unbalanced_repeat_visits_are_descriptive_not_a_reliability_gate():
     session = pd.DataFrame([
         {"repeat_participant_id": "p1", "session_id": "s1"},
         {"repeat_participant_id": "p1", "session_id": "s2"},
-        {"repeat_participant_id": "p2", "session_id": "s3"},
+        {"repeat_participant_id": "p1", "session_id": "s3"},
+        {"repeat_participant_id": "p2", "session_id": "s4"},
     ])
     boundary = repeat_stability_boundary(session)
-    assert boundary.iloc[0]["double_session_repeat_group_n"] == 1
-    assert boundary.iloc[0]["status"] == "not_estimable_for_broad_reliability"
+    assert boundary.iloc[0]["repeated_participant_group_n"] == 1
+    assert boundary.iloc[0]["max_sessions_per_participant"] == 3
+    assert boundary.iloc[0]["status"] == "requires_metric_specific_reliability_design"

@@ -43,10 +43,9 @@ def main() -> int:
     code_provenance = resolve_git_checkout(repo_root, role="code", require_clean=require_clean)
 
     cohort = config.section("cohort")
-    topology = {
-        "n_sessions": int(cohort["expected_session_count"]),
-        "n_analysis_groups": int(cohort["expected_analysis_group_count"]),
-        "n_double_session_repeat_groups": int(cohort["expected_double_session_repeat_groups"]),
+    canonical_topology = {
+        "n_sessions": int(cohort["canonical_session_count"]),
+        "n_analysis_groups": int(cohort["canonical_analysis_group_count"]),
     }
     figure_cfg = config.section("figures")
     manifest = run_validation(
@@ -55,7 +54,7 @@ def main() -> int:
         visual_properties=visual,
         formats=tuple(str(x) for x in figure_cfg.get("formats", ["png"])),
         dpi=int(figure_cfg.get("dpi", 220)),
-        expected_topology=topology,
+        canonical_cohort_topology=canonical_topology,
         runtime_provenance={"code": code_provenance},
         config_digest=config.digest,
     )

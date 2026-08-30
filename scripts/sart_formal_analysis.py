@@ -13,6 +13,7 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -145,18 +146,20 @@ def _expected(config) -> dict[str, int] | None:
     keys = {
         "sessions": cohort.get("expected_session_count"),
         "analysis_groups": cohort.get("expected_group_count"),
-        "double_session_repeat_groups": cohort.get("expected_double_session_repeat_groups"),
     }
     return None if any(v is None for v in keys.values()) else {k: int(v) for k, v in keys.items()}
 
 
-def _observed_topology(session_metrics: pd.DataFrame) -> dict[str, int]:
+def _observed_topology(session_metrics: pd.DataFrame) -> dict[str, Any]:
     pairs = session_metrics[["repeat_participant_id", "session_id"]].drop_duplicates()
-    sizes = pairs.groupby("repeat_participant_id")["session_id"].nunique()
+    sizes = pairs.groupby("repeat_participant_id")["session_id"].nunique().astype(int)
+    distribution = {str(size): int(sizes.eq(size).sum()) for size in sorted(sizes.unique())}
     return {
         "sessions": int(session_metrics["session_id"].astype(str).nunique()),
         "analysis_groups": int(pairs["repeat_participant_id"].astype(str).nunique()),
-        "double_session_repeat_groups": int(sizes.eq(2).sum()),
+        "repeated_participant_groups": int(sizes.gt(1).sum()),
+        "max_sessions_per_participant": int(sizes.max()) if len(sizes) else 0,
+        "group_size_distribution": distribution,
     }
 
 

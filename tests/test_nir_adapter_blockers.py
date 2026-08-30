@@ -299,4 +299,4 @@ def test_science_boundary_config_keeps_oar_qc_only_and_mmwave_external_validatio
     assert config["mmwave"]["no_external_ecg_rsp_validation_claim"] is True
     assert config["cohort"]["expected_session_count"] == 116
     assert config["cohort"]["expected_group_count"] == 61
-    assert config["cohort"]["expected_double_session_repeat_groups"] == 10
+    assert config["cohort"]["participant_group_size_policy"] == "any_positive_integer"

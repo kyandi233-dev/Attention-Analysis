@@ -4,7 +4,7 @@ This module is the formal replacement for the historical session-as-participant
 statistics. It keeps Go omission and No-Go commission separate, produces the
 same canonical metrics at probe/block/session/cycle scales, preserves governed
 participant clustering, and fail-closes model failures. The governed formal cohort
-is 116 sessions across 61 participant groups; 10 groups have exactly two sessions.
+is 116 sessions across 61 participant groups. Participant visit counts may be 1..N.
 The 149-session registration universe is provenance and does not define the downstream cohort.
 """
 from __future__ import annotations
@@ -45,9 +45,8 @@ PROBE_MODEL_METRICS = tuple(
     ]
 )
 EXPECTED_TOPOLOGY = {
-    "sessions": 44,
-    "analysis_groups": 38,
-    "double_session_repeat_groups": 6,
+    "sessions": 116,
+    "analysis_groups": 61,
 }
 MODEL_FAILURE_COLUMNS = (
     "model_name", "model_family", "outcome", "predictor", "status",
@@ -306,17 +305,27 @@ def build_b1_b2_pairs(block_metrics: pd.DataFrame) -> tuple[pd.DataFrame, pd.Dat
 
 
 def validate_topology(session_metrics: pd.DataFrame,
-                      expected: dict[str, int] | None = None) -> dict[str, int]:
+                      expected: dict[str, int] | None = None) -> dict[str, Any]:
+    """Validate cohort membership without prescribing participant visit counts."""
     expected = expected or EXPECTED_TOPOLOGY
     sessions = int(session_metrics["session_id"].astype(str).nunique())
     groups = session_metrics[["repeat_participant_id", "session_id"]].drop_duplicates()
     group_n = int(groups["repeat_participant_id"].astype(str).nunique())
-    sizes = groups.groupby("repeat_participant_id")["session_id"].nunique()
-    repeats = int(sizes.eq(2).sum())
-    observed = {"sessions": sessions, "analysis_groups": group_n,
-                "double_session_repeat_groups": repeats}
-    if expected and observed != expected:
-        raise BehaviorContractError(f"cohort topology mismatch: observed={observed}, expected={expected}")
+    sizes = groups.groupby("repeat_participant_id")["session_id"].nunique().astype(int)
+    if sizes.empty or sizes.lt(1).any():
+        raise BehaviorContractError("each participant group must contain at least one session")
+    distribution = {str(size): int(sizes.eq(size).sum()) for size in sorted(sizes.unique())}
+    observed = {
+        "sessions": sessions,
+        "analysis_groups": group_n,
+        "repeated_participant_groups": int(sizes.gt(1).sum()),
+        "max_sessions_per_participant": int(sizes.max()),
+        "group_size_distribution": distribution,
+    }
+    required = {key: int(expected[key]) for key in ("sessions", "analysis_groups") if key in expected}
+    actual = {key: int(observed[key]) for key in required}
+    if actual != required:
+        raise BehaviorContractError(f"cohort topology mismatch: observed={actual}, expected={required}")
     return observed
 
 
@@ -480,12 +489,12 @@ def qc_denominators(trials: pd.DataFrame, primary_probe: pd.DataFrame,
     ])
 
 
-def write_chinese_result_summary(output: Path, topology: dict[str, int],
+def write_chinese_result_summary(output: Path, topology: dict[str, Any],
                                  q1_results: pd.DataFrame, q2_results: pd.DataFrame,
                                  failures: pd.DataFrame) -> None:
     lines = ["# FocusWave 行为正式分析结果说明", "",
              "本文件由行为科学 v3 正式合同生成。所有样本量均标明观察单位，重复参加场次不会被当作独立参与者。", "",
-             f"当前分析队列：{topology['sessions']} 场，{topology['analysis_groups']} 个匿名参与者分析组，其中 {topology['double_session_repeat_groups']} 组包含双场重复参加；该队列不等于研究总体样本。", "",
+             f"当前分析队列：{topology['sessions']} 场，{topology['analysis_groups']} 个匿名参与者分析组；其中 {topology.get('repeated_participant_groups', 'unknown')} 组包含多次参加，最多 {topology.get('max_sessions_per_participant', 'unknown')} 场。参与次数分布只作描述，不作为分析放行门。", "",
              "## 指标口径", "",
              "Go 遗漏与 No-Go 误按使用不同机会数作为分母；RT 仅汇总正确 Go 反应。RT 输出均值、中位数、SD、MAD、IQR、CV 与 Theil–Sen 时间斜率；同时输出 d′、c 与 β。", "",
              "原始 Go omission、clean Go omission 与 timing-ambiguous Go omission 均为预先定义结局，并共享 Go 分母；clean + timing-ambiguous 必须等于 raw。clean 仅表示未检出当前定义的运动时序歧义，不等同于已证明的注意失败。", "",

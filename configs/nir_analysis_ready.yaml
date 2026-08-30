@@ -8,7 +8,7 @@ pipeline:
 cohort_topology:
   sessions: 116
   analysis_groups: 61
-  double_session_repeat_groups: 10
+  # Participant visit counts may be 1..N; the distribution is emitted for audit only.
 
 paths:
   # JSON source-availability manifest consumed by the staged pupil-only materializer.
@@ -21,6 +21,7 @@ source_contract:
   availability_accounting: available_sessions_plus_unavailable_sessions_equals_canonical_cohort
   canonical_cohort_source: "@path:cohort_manifest"
   missing_nir_never_redefines_cohort: true
+  participant_group_size_may_be_any_positive_integer: true
   eye_mapping:
     frame_left: left
     frame_right: right

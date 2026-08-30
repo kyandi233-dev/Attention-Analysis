@@ -82,12 +82,17 @@ def test_participant_disjoint_folds_never_split_one_group():
     assert folded.groupby("repeat_participant_id")["fold_id"].nunique().eq(1).all()
 
 
-def test_topology_uses_three_distinct_count_axes():
-    session = pd.DataFrame({"repeat_participant_id": ["p1", "p1", "p2"], "session_id": ["s1", "s2", "s3"]})
-    expected = {"sessions": 3, "analysis_groups": 2, "double_session_repeat_groups": 1}
-    assert validate_topology(session, expected) == expected
+def test_topology_allows_unbalanced_one_to_many_visits_without_a_group_size_gate():
+    session = pd.DataFrame({
+        "repeat_participant_id": ["p1", "p1", "p1", "p2", "p2", "p3"],
+        "session_id": ["s1", "s2", "s3", "s4", "s5", "s6"],
+    })
+    observed = validate_topology(session, {"sessions": 6, "analysis_groups": 3})
+    assert observed["repeated_participant_groups"] == 2
+    assert observed["max_sessions_per_participant"] == 3
+    assert observed["group_size_distribution"] == {"1": 1, "2": 1, "3": 1}
     with pytest.raises(BehaviorContractError):
-        validate_topology(session, {"sessions": 3, "analysis_groups": 3, "double_session_repeat_groups": 0})
+        validate_topology(session, {"sessions": 6, "analysis_groups": 4})
 
 
 def test_q1_q2_failure_rows_are_not_estimable_not_empty_success():
