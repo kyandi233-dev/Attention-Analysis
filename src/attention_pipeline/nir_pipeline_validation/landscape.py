@@ -58,9 +58,12 @@ def load_continuous_analysis_ready(
         if not required.issubset(header.columns):
             missing.append(subject)
             continue
+        usecols = ["subject", "block_num", "window_start_ms", "pupil_median", "track"]
+        if "pupil_sd" in header.columns:
+            usecols.append("pupil_sd")
         frame = pd.read_csv(
             path,
-            usecols=["subject", "block_num", "window_start_ms", "pupil_median", "track"],
+            usecols=usecols,
             encoding="utf-8-sig",
             low_memory=False,
         )
@@ -72,7 +75,12 @@ def load_continuous_analysis_ready(
         frame["block_num"] = _numeric(frame["block_num"])
         frame["unix_ms"] = _numeric(frame["window_start_ms"])
         frame["pir"] = _numeric(frame["pupil_median"])
-        frame = frame[["subject", "block_num", "unix_ms", "pir"]]
+        if "pupil_sd" in frame.columns:
+            frame["pir_sd"] = _numeric(frame["pupil_sd"])
+        keep = ["subject", "block_num", "unix_ms", "pir"]
+        if "pir_sd" in frame.columns:
+            keep.append("pir_sd")
+        frame = frame[keep]
         frame = frame.dropna(subset=["block_num", "unix_ms"]).sort_values(
             ["block_num", "unix_ms"], kind="stable"
         )
@@ -325,6 +333,11 @@ def continuous_event_trajectory(
         signal = signal.sort_values("unix_ms", kind="stable")
         times = _numeric(signal["unix_ms"]).to_numpy(dtype=float)
         values = _numeric(signal["pir"]).to_numpy(dtype=float)
+        sd_values = (
+            _numeric(signal["pir_sd"]).to_numpy(dtype=float)
+            if "pir_sd" in signal.columns
+            else np.full(times.shape, np.nan, dtype=float)
+        )
         for event in event_block.itertuples(index=False):
             onset = float(getattr(event, "event_onset_ms"))
             if not np.isfinite(onset):
@@ -335,6 +348,7 @@ def continuous_event_trajectory(
                 continue
             rel = (times[left:right] - onset) / 1000.0
             vals = values[left:right]
+            sd_vals = sd_values[left:right]
             bins = np.digitize(rel, edges, right=False) - 1
             for bin_idx in range(len(edges) - 1):
                 mask = bins == bin_idx
@@ -355,7 +369,7 @@ def continuous_event_trajectory(
                     "valid_fraction": float(finite.sum() / mask.sum()),
                     "pupil_median": float(np.nanmedian(vals[mask])) if np.isfinite(vals[mask]).any() else np.nan,
                     "pupil_mean": float(np.nanmean(vals[mask])) if np.isfinite(vals[mask]).any() else np.nan,
-                    "pupil_sd": float(np.nanstd(vals[mask], ddof=1)) if np.isfinite(vals[mask]).sum() >= 2 else np.nan,
+                    "pupil_sd": float(np.nanmedian(sd_vals[mask])) if np.isfinite(sd_vals[mask]).any() else np.nan,
                 }
                 for col in event_extra:
                     record[col] = getattr(event, col, None)
