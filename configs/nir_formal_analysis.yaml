@@ -9,8 +9,19 @@ paths:
   # NIR-linked Behavior trials must use the same authoritative portable Behavior config/runtime.
   behavior_config: "configs/behavior_formal_v2.yaml"
   analysis_ready_root: "@path:nir_analysis_ready_root"
+  analysis_tables_root: "@path:nir_analysis_tables_root"
   output_root: "@path:nir_analysis_tables_root"
   stimulus_visual_table: "@path:stimulus_visual_properties"
+
+analysis:
+  main_track: binocular_primary
+  trial_display_window: pre_5s
+  probe_model_window: pre_30s
+
+analysis:
+  main_track: binocular_primary
+  trial_display_window: pre_5s
+  probe_model_window: pre_30s
 
 sessions:
   include: []

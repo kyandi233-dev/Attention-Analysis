@@ -151,6 +151,7 @@ def figure_motion_exposure(probe_features: pd.DataFrame, cycle_table: pd.DataFra
     """
     configure_cjk_style()
     fig, axes = plt.subplots(2, 2, figsize=(7.2, 6.4))
+    fig.subplots_adjust(wspace=0.32, hspace=0.5)
     metrics = (
         ("body_motion_energy_median", "整体运动能量中位数"),
         ("exposure_change_abs_median", "曝光变化绝对值中位数"),
@@ -222,6 +223,7 @@ def figure_pose_direction(probe_features: pd.DataFrame, output_root: Path) -> tu
     """
     configure_cjk_style()
     fig, axes = plt.subplots(1, 3, figsize=(9.6, 3.2))
+    fig.subplots_adjust(wspace=0.34)
     specs = (
         ("pose_lateral_right_per_sec_median", "左右方向（正=右，/s）"),
         ("pose_vertical_up_per_sec_median", "上下方向（正=上，/s）"),
@@ -258,6 +260,7 @@ def figure_blink_events(session_coverage: pd.DataFrame, output_root: Path) -> tu
     """
     configure_cjk_style()
     fig, axes = plt.subplots(1, 3, figsize=(9.6, 3.2))
+    fig.subplots_adjust(wspace=0.34)
     specs = (
         ("blink_event_rate_per_min", "候选事件频率（次/分钟）"),
         ("blink_event_duration_median_ms", "事件时长中位数（ms）"),

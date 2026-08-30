@@ -20,11 +20,13 @@ from .figure_style import (
 
 
 def _empty(ax: plt.Axes, text: str) -> None:
-    ax.text(0.5, 0.5, text, ha="center", va="center", transform=ax.transAxes, fontsize=7)
+    ax.text(0.5, 0.5, text, ha="center", va="center", transform=ax.transAxes, fontsize=8)
     ax.set_xticks([])
     ax.set_yticks([])
     for spine in ax.spines.values():
         spine.set_visible(False)
+    ax.add_patch(plt.Rectangle((0.02, 0.05), 0.96, 0.9, transform=ax.transAxes,
+                               fill=True, facecolor="#F4F4F4", edgecolor="#BBBBBB", linewidth=0.6, zorder=0))
 
 
 def _numeric(series: pd.Series) -> pd.Series:
@@ -74,6 +76,12 @@ def _heatmap(
         return
     image = ax.imshow(matrix.to_numpy(dtype=float), aspect="auto", vmin=vmin, vmax=vmax, cmap=cmap)
     x_labels = [str(x) for x in matrix.columns]
+    n_cols = len(matrix.columns)
+    if n_cols > 12:
+        # 稀疏化刻度标签，避免密集列标签糊成黑带
+        step = int(np.ceil(n_cols / 10))
+        shown = {i * step for i in range(n_cols)} | {n_cols - 1}
+        x_labels = [lab if i in shown else "" for i, lab in enumerate(x_labels)]
     y_labels = [textwrap.fill(str(x).replace("_", " "), width=18, break_long_words=False) for x in matrix.index]
     ax.set_xticks(np.arange(len(matrix.columns)), x_labels, rotation=45, ha="right")
     ax.set_yticks(np.arange(len(matrix.index)), y_labels)
@@ -927,7 +935,7 @@ def figure09_quality_control(
 ) -> list[str]:
     coverage = _normalize_coverage_wide(coverage)
     coverage_metric_zh = {
-        "pupil_valid_fraction_median": "有效 pupil 占比中位数",
+        "pupil_valid_fraction_median": "有效瞳孔占比中位数",
         "available_duration_fraction_median": "可用时长占比中位数",
         "internal_coverage_fraction_median": "窗内覆盖占比中位数",
         "boundary_truncated_fraction": "边界截断占比",
@@ -966,7 +974,7 @@ def figure09_quality_control(
         ax.set_xticks(x, [f"B{int(v)}" for v in summary.index])
         ax.set_ylim(0, 1)
         ax.set_ylabel("平均窗口占比")
-        ax.legend(loc="best", ncol=2)
+        ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.16), ncol=4, frameon=False, fontsize=7)
         clean_axis(ax, grid_y=True)
     ax.set_title("双眼/单眼/缺失构成")
     panel_label(ax, "C")

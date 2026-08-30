@@ -132,6 +132,8 @@ def make_figure(
         },
         constrained_layout=False,
     )
+    if nrows > 1 or ncols > 1:
+        fig.subplots_adjust(wspace=0.32, hspace=0.5)
     return fig, axes
 
 
