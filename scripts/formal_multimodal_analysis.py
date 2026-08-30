@@ -230,10 +230,15 @@ def command_nir_adapt(config: Config, *, sessions: list[str] | None, run_id: str
 
 
 def command_merge_audit(config: Config, *, unit: str, table_specs: list[str], how: str, output: str | None) -> dict[str, object]:
-    """Audit the retained historical merge scaffold; never authorize production fusion."""
+    """Audit the retained historical merge scaffold; never authorize production fusion.
+
+    Production fusion is authorized only through scripts/multimodal_fusion_analysis.py
+    once the fusion status is frozen_and_implemented. This audit command remains
+    legacy-only regardless of fusion status.
+    """
     fusion = config.section("fusion")
-    if str(fusion.get("status", "disabled_deferred")) != "disabled_deferred":
-        raise ValueError("multimodal fusion must remain disabled_deferred until explicitly re-frozen")
+    if str(fusion.get("status", "disabled_deferred")) not in ("disabled_deferred", "frozen_and_implemented"):
+        raise ValueError("fusion status must be disabled_deferred or frozen_and_implemented")
     tables: dict[str, pd.DataFrame] = {}
     for spec in table_specs:
         if "=" not in spec:

@@ -209,12 +209,18 @@ mmwave:
   hrv_core_claim_allowed: false
 
 fusion:
-  status: disabled_deferred
-  active_production_merge_allowed: false
-  reason: "single-modality analysis and QC must be frozen first"
+  status: frozen_and_implemented
+  active_production_merge_allowed: true
+  frozen_date: "2026-08-31"
+  frozen_by: "project lead review of multimodal fusion full run"
+  production_entrypoint: "scripts/multimodal_fusion_analysis.py"
+  implementation_commit: "0fc1137"
+  design_spec: "FocusWave-Formal-Analysis/分析设计/1.10-多模态融合分析设计规格_20260831.md"
+  full_run: "11_数据/_FormalAnalysis/MultiModal/full-20260831 (61 folds x 8 combinations x 2 outcomes x 2 models, 0 failures)"
+  reason: "single-modality analysis and QC frozen; fusion implemented, contract-tested and full-run on common subset"
   # Compatibility metadata for the historical merge scaffold. These keys retain
   # the old repeat_participant_id alias only because merge.py is deferred and not
-  # production-authoritative; future production fusion must use participant_group_id.
+  # production-authoritative; production fusion uses participant_group_id.
   units: [trial, probe, cycle, block, session, participant_group]
   key_contract:
     trial: [repeat_participant_id, session_id, block_id, trial_id]
