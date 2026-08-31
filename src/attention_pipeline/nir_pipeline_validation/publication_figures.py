@@ -981,7 +981,7 @@ def figure09_quality_control(
 
 
 
-    finalize_layout(fig, left=0.12, wspace=0.62, hspace=None)
+    finalize_layout(fig, left=0.12, bottom=0.30, wspace=0.78, hspace=None)
     return save_figure(fig, base, formats, raster_dpi=raster_dpi)
 
 
@@ -1028,7 +1028,7 @@ def figure10_robustness(
 
 
 
-    finalize_layout(fig, left=0.14, bottom=0.16, wspace=0.55, hspace=None)
+    finalize_layout(fig, left=0.14, bottom=0.26, wspace=0.70, hspace=None)
     return save_figure(fig, base, formats, raster_dpi=raster_dpi)
 
 
