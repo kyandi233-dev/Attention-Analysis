@@ -988,7 +988,7 @@ def figure09_quality_control(
 
 
 
-    finalize_layout(fig, left=0.10, bottom=0.30, right=0.985, wspace=0.90, hspace=None)
+    finalize_layout(fig, left=0.10, bottom=0.30, right=0.985, wspace=1.25, hspace=None)
     return save_figure(fig, base, formats, raster_dpi=raster_dpi)
 
 
