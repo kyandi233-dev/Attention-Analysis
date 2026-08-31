@@ -951,14 +951,14 @@ def figure09_quality_control(
     trial_matrix = _coverage_fraction_matrix(coverage, level="trial", track=track)
     if not trial_matrix.empty:
         trial_matrix.index = [coverage_metric_zh.get(str(name), str(name)) for name in trial_matrix.index]
-    _heatmap(axes[0], trial_matrix, vmin=0, vmax=1, cmap="viridis", cbar_label="", cbar_ax=[axes[0], axes[1]])
+    _heatmap(axes[0], trial_matrix, vmin=0, vmax=1, cmap="viridis", cbar_label="占比")
     axes[0].set_title("试次窗口覆盖维度")
     panel_label(axes[0], "A")
 
     probe_matrix = _coverage_fraction_matrix(coverage, level="probe", track=track)
     if not probe_matrix.empty:
         probe_matrix.index = [coverage_metric_zh.get(str(name), str(name)) for name in probe_matrix.index]
-    _heatmap(axes[1], probe_matrix, vmin=0, vmax=1, cmap="viridis", cbar_label="占比", cbar_ax=None)
+    _heatmap(axes[1], probe_matrix, vmin=0, vmax=1, cmap="viridis", cbar_label="占比")
     axes[1].set_title("探针窗口覆盖维度")
     panel_label(axes[1], "B")
 
@@ -988,7 +988,7 @@ def figure09_quality_control(
 
 
 
-    finalize_layout(fig, left=0.10, bottom=0.30, right=0.97, wspace=1.05, hspace=None)
+    finalize_layout(fig, left=0.10, bottom=0.30, right=0.985, wspace=0.90, hspace=None)
     return save_figure(fig, base, formats, raster_dpi=raster_dpi)
 
 
