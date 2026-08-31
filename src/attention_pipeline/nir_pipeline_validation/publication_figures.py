@@ -70,6 +70,7 @@ def _heatmap(
     cmap: str = "coolwarm",
     cbar_label: str = "",
     annotate: bool = False,
+    cbar_ax: list | None = None,
 ) -> None:
     if matrix.empty:
         _empty(ax, "无数据")
@@ -91,10 +92,16 @@ def _heatmap(
                 value = matrix.iloc[i, j]
                 if pd.notna(value):
                     ax.text(j, i, f"{value:.2f}", ha="center", va="center", fontsize=5.8)
-    cbar = ax.figure.colorbar(image, ax=ax, fraction=0.046, pad=0.025)
-    if cbar_label:
-        cbar.set_label(cbar_label, fontsize=7)
-    cbar.ax.tick_params(labelsize=6)
+    if cbar_ax is None:
+        cbar = ax.figure.colorbar(image, ax=ax, fraction=0.046, pad=0.025)
+        if cbar_label:
+            cbar.set_label(cbar_label, fontsize=7)
+        cbar.ax.tick_params(labelsize=6)
+    else:
+        cbar = ax.figure.colorbar(image, ax=cbar_ax, fraction=0.030, pad=0.02)
+        if cbar_label:
+            cbar.set_label(cbar_label, fontsize=7)
+        cbar.ax.tick_params(labelsize=6)
 
 
 def _subject_block_box(
@@ -940,18 +947,18 @@ def figure09_quality_control(
         "internal_coverage_fraction_median": "窗内覆盖占比中位数",
         "boundary_truncated_fraction": "边界截断占比",
     }
-    fig, axes = make_figure(width="full", height_cm=6.5, nrows=1, ncols=3)
+    fig, axes = make_figure(width="full", height_cm=8.0, nrows=1, ncols=3)
     trial_matrix = _coverage_fraction_matrix(coverage, level="trial", track=track)
     if not trial_matrix.empty:
         trial_matrix.index = [coverage_metric_zh.get(str(name), str(name)) for name in trial_matrix.index]
-    _heatmap(axes[0], trial_matrix, vmin=0, vmax=1, cmap="viridis", cbar_label="占比")
+    _heatmap(axes[0], trial_matrix, vmin=0, vmax=1, cmap="viridis", cbar_label="", cbar_ax=[axes[0], axes[1]])
     axes[0].set_title("试次窗口覆盖维度")
     panel_label(axes[0], "A")
 
     probe_matrix = _coverage_fraction_matrix(coverage, level="probe", track=track)
     if not probe_matrix.empty:
         probe_matrix.index = [coverage_metric_zh.get(str(name), str(name)) for name in probe_matrix.index]
-    _heatmap(axes[1], probe_matrix, vmin=0, vmax=1, cmap="viridis", cbar_label="占比")
+    _heatmap(axes[1], probe_matrix, vmin=0, vmax=1, cmap="viridis", cbar_label="占比", cbar_ax=None)
     axes[1].set_title("探针窗口覆盖维度")
     panel_label(axes[1], "B")
 
@@ -981,7 +988,7 @@ def figure09_quality_control(
 
 
 
-    finalize_layout(fig, left=0.12, bottom=0.30, wspace=0.78, hspace=None)
+    finalize_layout(fig, left=0.10, bottom=0.30, right=0.97, wspace=1.05, hspace=None)
     return save_figure(fig, base, formats, raster_dpi=raster_dpi)
 
 
@@ -994,7 +1001,7 @@ def figure10_robustness(
     formats: Iterable[str],
     raster_dpi: int,
 ) -> list[str]:
-    fig, axes = make_figure(width="full", height_cm=6.5, nrows=1, ncols=3)
+    fig, axes = make_figure(width="full", height_cm=8.0, nrows=1, ncols=3)
     matrix = _corr_matrix(track_correlations, "track_a", "track_b", "correlation")
     _heatmap(axes[0], matrix, vmin=-1, vmax=1, cmap="coolwarm", cbar_label="Pearson r", annotate=True)
     axes[0].set_title("六轨道一致性")
@@ -1028,7 +1035,7 @@ def figure10_robustness(
 
 
 
-    finalize_layout(fig, left=0.14, bottom=0.26, wspace=0.70, hspace=None)
+    finalize_layout(fig, left=0.12, bottom=0.28, right=0.97, wspace=0.95, hspace=None)
     return save_figure(fig, base, formats, raster_dpi=raster_dpi)
 
 
