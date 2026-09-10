@@ -1,13 +1,18 @@
 from __future__ import annotations
 
+import copy
+from dataclasses import replace
 from pathlib import Path
 import runpy
 
 import numpy as np
 import pandas as pd
+import pytest
 import yaml
 
 from attention_pipeline.behavior_formal.science_v3 import aggregate_behavior_metrics
+from attention_pipeline.config import load_config
+from attention_pipeline.formal_analysis.behavior_adapter import assert_current_behavior_rt_cv_contract
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,6 +45,26 @@ def test_formal_config_uses_only_sample_sd_mathematical_requirement() -> None:
     minimum_n, basis = _formal_rt_cv_contract()
     assert minimum_n == 2
     assert basis == "sample_sd_mathematical_requirement_not_empirical_gate"
+
+
+def test_current_formal_runtime_fails_closed_if_rt_cv_contract_drifts_or_disappears() -> None:
+    config = load_config(CONFIG_PATH, use_env_paths=False)
+    assert_current_behavior_rt_cv_contract(config)
+
+    data = copy.deepcopy(config.data)
+    data["behavior"]["rt_cv_min_n"] = 20
+    with pytest.raises(ValueError, match="requires rt_cv_min_n=2"):
+        assert_current_behavior_rt_cv_contract(replace(config, data=data))
+
+    data = copy.deepcopy(config.data)
+    del data["behavior"]["rt_cv_min_n"]
+    with pytest.raises(ValueError, match="must explicitly set behavior.rt_cv_min_n=2"):
+        assert_current_behavior_rt_cv_contract(replace(config, data=data))
+
+    data = copy.deepcopy(config.data)
+    data["behavior"]["rt_cv_min_n_basis"] = "empirical_gate"
+    with pytest.raises(ValueError, match="rt_cv_min_n_basis"):
+        assert_current_behavior_rt_cv_contract(replace(config, data=data))
 
 
 def test_two_to_nineteen_valid_rt_cv_is_preserved_by_formal_runner_annotation() -> None:
