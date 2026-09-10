@@ -14,7 +14,8 @@ import numpy as np
 import pandas as pd
 
 from .feature_schemes import FeatureScheme, require_scheme_columns, validate_mainline_feature_scheme
-from .models import refit_logistic_and_predict, select_logistic_model
+from .models import ModelSelectionError, refit_logistic_and_predict, select_logistic_model
+from .preprocessing import PreprocessingContractError
 from .task import Q1_BINARY_SPEC, SupervisedLearningContractError, encode_q1_binary
 
 
@@ -31,6 +32,14 @@ OPTIONAL_PROBE_LOCATORS = (
     "window_start_unix_ms",
     "window_effective_start_unix_ms",
     "window_end_unix_ms",
+)
+_EXPECTED_FOLD_FAILURES = (
+    ModelSelectionError,
+    PreprocessingContractError,
+    SupervisedLearningContractError,
+    ValueError,
+    FloatingPointError,
+    np.linalg.LinAlgError,
 )
 
 
@@ -200,7 +209,7 @@ def run_nested_loso(
                         "reason": "",
                     }
                 )
-            except Exception as exc:
+            except _EXPECTED_FOLD_FAILURES as exc:
                 reason = f"{type(exc).__name__}: {exc}"
                 base_prediction["feature_set_id"] = None
                 base_prediction["selected_c"] = np.nan
