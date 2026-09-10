@@ -1,0 +1,33 @@
+name: Task B analysis-set audit CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  analysis-set-task-b:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install package and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+
+      - name: Compile Task B modules
+        run: |
+          python -m py_compile \
+            src/attention_pipeline/multimodal_formal/quality_admission.py \
+            src/attention_pipeline/multimodal_formal/analysis_sets.py \
+            src/attention_pipeline/multimodal_formal/prediction_archive.py
+
+      - name: Run Task B contract tests
+        run: python -m pytest -q tests/test_task_b_analysis_set_audit.py
