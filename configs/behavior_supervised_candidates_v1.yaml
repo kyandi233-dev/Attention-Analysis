@@ -1,0 +1,65 @@
+pipeline:
+  name: focuswave-behavior-supervised-candidates-v1
+  version: 1.0.0
+  authority: FocusWave-Formal-Analysis/analysis-design-1.15.5-1.15.7
+
+source:
+  table: behavior_supervised_probe_30s.csv
+  analysis_unit: probe
+  primary_window_seconds: 30
+  one_row_per_probe: true
+
+identity_and_locators:
+  - participant_group_id
+  - session_id
+  - block_id
+  - probe_event_id
+
+outcomes:
+  q1_nominal_4class:
+    role: supervised_target_source
+    downstream_task: q1_equals_1_vs_2_3_4
+  q2_ordinal_4level:
+    role: interpretation_construct_only
+    first_round_predictor_allowed: false
+
+candidate_dimensions:
+  rt_level:
+    columns: [go_correct_rt_mean_ms, go_correct_rt_median_ms]
+    one_representative_per_feature_scheme: true
+    final_choice: pending
+  rt_variability:
+    preferred_current: go_correct_rt_cv
+    limited_alternatives: [go_correct_rt_sd_ms, go_correct_rt_mad_ms, go_correct_rt_iqr_ms]
+    one_representative_per_feature_scheme: true
+    final_choice: pending
+  rt_trend:
+    columns: [go_correct_rt_theilsen_slope_ms_per_s]
+    final_choice: frozen_behavior_producer_definition
+  omission:
+    columns: [raw_go_omission_rate]
+    final_choice: frozen_raw_only
+  error_control:
+    columns: [commission_rate, dprime_loglinear]
+    final_choice: pending_whether_both_retained
+
+descriptive_qc_sensitivity_only:
+  - clean_go_omission_rate
+  - timing_ambiguous_go_omission_rate
+
+compatibility_aliases_not_independent_predictors:
+  omission_rate: raw_go_omission_rate
+  omission_no_detected_motor_timing_ambiguity_rate: clean_go_omission_rate
+  omission_motor_timing_ambiguous_rate: timing_ambiguous_go_omission_rate
+
+policies:
+  no_imputation_in_task_c_interface: true
+  no_row_deletion_by_feature_coverage_in_task_c: true
+  no_full_cohort_empirical_redundancy_selection: true
+  analysis_set_id_generated_by_task_c: false
+  analysis_set_id_owned_by_task_b: true
+  data_dependent_selection_owned_by_task_a_training_boundary: true
+  clean_timing_omission_not_first_round_predictors: true
+  rt_cv_empirical_minimum_n_gate: false
+  rt_level_choice_not_frozen_here: true
+  commission_dprime_joint_retention_not_frozen_here: true
