@@ -48,6 +48,7 @@ jobs:
             tests/test_behavior_task_c_rt_cv.py \
             tests/test_behavior_task_c_omission_contract.py \
             tests/test_behavior_task_c_supervised_interface.py \
+            tests/test_behavior_task_c_review_guards.py \
             tests/test_behavior_science_v3_contract.py \
             tests/test_behavior_error_taxonomy.py \
             tests/test_behavior_omission_candidate_validation.py \
