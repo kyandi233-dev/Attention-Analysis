@@ -153,7 +153,9 @@ analysis_policy:
   questionnaire_must_left_join_sessions: true
   questionnaire_missing_does_not_drop_session: true
   preserve_raw_omission_scoring: true
-  raw_clean_timing_ambiguous_omission_are_prespecified_formal_endpoints: true
+  raw_go_omission_is_current_primary_omission_endpoint: true
+  clean_timing_omission_are_descriptive_qc_sensitivity: true
+  historical_three_omission_endpoint_outputs_retained_for_provenance: true
   clean_plus_timing_ambiguous_must_equal_raw_omission: true
   finer_prestimulus_carryover_subtypes_are_qc_only: true
   late_response_candidate_is_timing_diagnostic_only: true
