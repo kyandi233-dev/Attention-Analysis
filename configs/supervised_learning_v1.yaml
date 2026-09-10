@@ -60,6 +60,13 @@ feature_schemes:
   participant_specific_suffixes_forbidden: [_within, _between]
   note: "Task A provides the nested selection interface; C/D supply or freeze modality candidate schemes."
 
+models:
+  primary:
+    kind: logistic_l2
+    C_candidates: [0.01, 0.1, 1.0, 10.0]
+    max_iter: 2000
+  selection_metric: mean_inner_log_loss
+
 outputs:
   preserve_probe_keys: true
   preserve_raw_q1: true
