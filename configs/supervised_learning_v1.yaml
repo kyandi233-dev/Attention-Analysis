@@ -66,9 +66,21 @@ feature_schemes:
     - block_id
     - probe_event_id
     - probe_id
+    - probe_order_in_block
+    - probe_index_in_block
+    - probe_index_global
+    - probe_time_ms
+    - probe_onset_unix_ms
     - window_name
+    - window_start_unix_ms
+    - window_effective_start_unix_ms
+    - window_end_unix_ms
+    - analysis_set_id
+    - run_id
+    - model_id
+    - outer_fold_group
   participant_specific_suffixes_forbidden: [_within, _between]
-  note: "Task A provides the nested selection interface; C/D supply or freeze model-family candidate schemes. Candidate schemes compete only within the same model family and must share the same modality_blocks within that family."
+  note: "Task A provides the nested selection interface; C/D supply or freeze model-family candidate schemes. Candidate schemes compete only within the same model family and must share the same modality_blocks within that family. Probe/window locators and audit identifiers are preserved for reporting but never used as first-round predictors."
 
 models:
   primary:
