@@ -35,6 +35,9 @@ def test_valid_predeclared_behavior_scheme_uses_raw_omission() -> None:
 def test_current_mainline_forbidden_inputs_fail_closed() -> None:
     forbidden = [
         "q1_nominal_4class",
+        "q1_binary",
+        "p_q1_equals_1",
+        "predicted_q1_binary",
         "q2_ordinal_4level",
         "omission_rate",
         "clean_go_omission_rate",
