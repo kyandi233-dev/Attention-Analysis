@@ -25,6 +25,7 @@ from .task import Q1_BINARY_SPEC, SupervisedLearningContractError, positive_clas
 DEFAULT_C_CANDIDATES = (0.01, 0.1, 1.0, 10.0)
 DEFAULT_INNER_SPLITS = 5
 DEFAULT_MAX_ITER = 2000
+_TEST_OUTCOME_COLUMNS = frozenset({Q1_BINARY_SPEC.source_column, "q1_binary"})
 
 
 class ModelSelectionError(RuntimeError):
@@ -70,8 +71,7 @@ def _fit_logistic(x: pd.DataFrame, y: np.ndarray, *, c: float, max_iter: int, se
     if len(np.unique(y)) < 2:
         raise ModelSelectionError("training split contains only one binary class")
     # LogisticRegression uses L2 regularization by default throughout the supported
-    # scikit-learn range. Omitting the deprecated explicit penalty="l2" spelling
-    # keeps the same scientific model while remaining forward-compatible.
+    # scikit-learn range. Omitting deprecated penalty="l2" keeps the same model.
     model = LogisticRegression(
         C=float(c),
         solver="lbfgs",
@@ -93,12 +93,7 @@ def select_logistic_model(
     max_iter: int = DEFAULT_MAX_ITER,
     seed: int = 20260910,
 ) -> ModelSelectionResult:
-    """Select feature scheme and C using genuinely nested grouped CV.
-
-    Preprocessing is fitted once per (scheme, inner split), never on all outer
-    training rows before inner validation. A candidate is eligible only when it
-    succeeds on every declared inner split; failures are preserved in the audit.
-    """
+    """Select feature scheme and C using genuinely nested grouped CV."""
     if group_col not in outer_train.columns:
         raise SupervisedLearningContractError(f"missing grouping column: {group_col}")
     if outer_train[group_col].isna().any():
@@ -152,11 +147,7 @@ def select_logistic_model(
                 "failure_by_c": {},
             }
             try:
-                state = fit_preprocessing(
-                    inner_train,
-                    columns=scheme.columns,
-                    group_col=group_col,
-                )
+                state = fit_preprocessing(inner_train, columns=scheme.columns, group_col=group_col)
                 x_train = apply_preprocessing(inner_train, state, group_col=group_col)
                 x_valid = apply_preprocessing(inner_valid, state, group_col=group_col)
                 audit["preprocessing"] = state.audit_dict()
@@ -184,7 +175,7 @@ def select_logistic_model(
                         raise ModelSelectionError("inner validation log loss is non-finite")
                     losses[(scheme.feature_set_id, c)].append(loss)
                     audit["loss_by_c"][str(c)] = loss
-                except Exception as exc:  # preserve candidate-level failure without contaminating peers
+                except Exception as exc:
                     reason = f"{type(exc).__name__}: {exc}"
                     failures[(scheme.feature_set_id, c)].append(f"inner_fold={fold_index}: {reason}")
                     audit["failure_by_c"][str(c)] = reason
@@ -213,7 +204,6 @@ def select_logistic_model(
             f"failures={failed_candidates}"
         )
 
-    # Stable tie-break: mean loss, then declared scheme order, then declared C order.
     _, _, _, winner_scheme, winner_c = min(eligible, key=lambda item: (item[0], item[1], item[2]))
     return ModelSelectionResult(
         feature_scheme=winner_scheme,
@@ -227,7 +217,7 @@ def select_logistic_model(
 def refit_logistic_and_predict(
     outer_train: pd.DataFrame,
     y_outer_train: Sequence[object] | np.ndarray,
-    outer_test: pd.DataFrame,
+    outer_test_features: pd.DataFrame,
     *,
     feature_scheme: FeatureScheme,
     selected_c: float,
@@ -235,21 +225,23 @@ def refit_logistic_and_predict(
     max_iter: int = DEFAULT_MAX_ITER,
     seed: int = 20260910,
 ) -> dict[str, object]:
-    """Refit winner on complete outer training data and predict untouched test rows.
+    """Refit winner on complete outer training data and predict label-free test rows.
 
-    The function intentionally accepts no outer-test labels, so test outcomes
-    cannot influence preprocessing, fitting, thresholding or hyperparameters.
+    ``outer_test_features`` is deliberately required to exclude Q1 outcome columns.
+    This makes the zero-calibration boundary structural rather than relying only on
+    callers to ignore labels correctly.
     """
+    leaked = sorted(_TEST_OUTCOME_COLUMNS & set(outer_test_features.columns))
+    if leaked:
+        raise SupervisedLearningContractError(
+            f"outer_test_features must be outcome-free; leaked columns: {leaked}"
+        )
     require_scheme_columns(outer_train, feature_scheme)
-    require_scheme_columns(outer_test, feature_scheme)
+    require_scheme_columns(outer_test_features, feature_scheme)
     labels = _binary_labels(y_outer_train, len(outer_train))
-    state = fit_preprocessing(
-        outer_train,
-        columns=feature_scheme.columns,
-        group_col=group_col,
-    )
+    state = fit_preprocessing(outer_train, columns=feature_scheme.columns, group_col=group_col)
     x_train = apply_preprocessing(outer_train, state, group_col=group_col)
-    x_test = apply_preprocessing(outer_test, state, group_col=group_col)
+    x_test = apply_preprocessing(outer_test_features, state, group_col=group_col)
     model = _fit_logistic(
         x_train,
         labels,
@@ -264,9 +256,9 @@ def refit_logistic_and_predict(
         "feature_set_id": feature_scheme.feature_set_id,
         "selected_c": float(selected_c),
         "n_train_rows": int(len(outer_train)),
-        "n_test_rows": int(len(outer_test)),
+        "n_test_rows": int(len(outer_test_features)),
         "train_group_ids": list(state.fit_group_ids),
-        "test_group_ids": sorted(outer_test[group_col].astype(str).unique().tolist()),
+        "test_group_ids": sorted(outer_test_features[group_col].astype(str).unique().tolist()),
         "preprocessing": state.audit_dict(),
         "model_classes": [int(v) for v in model.classes_.tolist()],
         "p_positive": p_positive,

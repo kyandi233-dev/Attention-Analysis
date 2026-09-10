@@ -10,6 +10,7 @@ from attention_pipeline.supervised_learning.models import (
     refit_logistic_and_predict,
     select_logistic_model,
 )
+from attention_pipeline.supervised_learning.task import SupervisedLearningContractError
 
 
 def _frame(seed: int = 7) -> tuple[pd.DataFrame, np.ndarray]:
@@ -41,10 +42,9 @@ def test_nested_selection_prefers_predeclared_predictive_scheme() -> None:
         n_splits=4,
         seed=11,
     )
-
     assert result.feature_scheme.feature_set_id == "signal"
     assert result.selected_c in {0.1, 1.0}
-    assert len(result.inner_fold_audits) == 8  # 2 schemes x 4 common inner splits
+    assert len(result.inner_fold_audits) == 8
 
 
 def test_inner_validation_participant_cannot_change_its_inner_training_preprocessing() -> None:
@@ -59,12 +59,8 @@ def test_inner_validation_participant_cannot_change_its_inner_training_preproces
     altered.loc[mask, "sparse"] = -1e12
     changed = select_logistic_model(altered, y, feature_schemes=schemes, c_candidates=[1.0], n_splits=4)
 
-    base_audit = next(
-        row for row in base.inner_fold_audits if target_group in row["validation_group_ids"]
-    )
-    changed_audit = next(
-        row for row in changed.inner_fold_audits if target_group in row["validation_group_ids"]
-    )
+    base_audit = next(row for row in base.inner_fold_audits if target_group in row["validation_group_ids"])
+    changed_audit = next(row for row in changed.inner_fold_audits if target_group in row["validation_group_ids"])
     assert target_group not in base_audit["train_group_ids"]
     assert base_audit["train_group_ids"] == changed_audit["train_group_ids"]
     assert base_audit["preprocessing"] == changed_audit["preprocessing"]
@@ -81,13 +77,7 @@ def test_complete_outer_training_refit_uses_all_training_groups_and_no_test_labe
         }
     )
     scheme = FeatureScheme("signal", ("signal", "sparse"))
-    result = refit_logistic_and_predict(
-        frame,
-        y,
-        outer_test,
-        feature_scheme=scheme,
-        selected_c=1.0,
-    )
+    result = refit_logistic_and_predict(frame, y, outer_test, feature_scheme=scheme, selected_c=1.0)
 
     assert set(result["train_group_ids"]) == set(frame["participant_group_id"].unique())
     assert result["test_group_ids"] == ["HELD-OUT"]
@@ -95,6 +85,25 @@ def test_complete_outer_training_refit_uses_all_training_groups_and_no_test_labe
     assert result["preprocessing"]["fit_group_ids"] == result["train_group_ids"]
     assert len(result["p_positive"]) == len(outer_test)
     assert len(result["predicted_label"]) == len(outer_test)
+
+
+def test_final_predict_interface_rejects_test_outcome_columns() -> None:
+    frame, y = _frame()
+    outer_test = pd.DataFrame(
+        {
+            "participant_group_id": ["HELD-OUT"],
+            "signal": [1.0],
+            "q1_nominal_4class": [1],
+        }
+    )
+    with pytest.raises(SupervisedLearningContractError, match="outcome-free"):
+        refit_logistic_and_predict(
+            frame,
+            y,
+            outer_test,
+            feature_scheme=FeatureScheme("signal", ("signal",)),
+            selected_c=1.0,
+        )
 
 
 def test_inner_group_count_is_not_silently_reduced() -> None:

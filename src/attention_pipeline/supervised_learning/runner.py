@@ -47,9 +47,7 @@ def _resolve_analysis_set_id(frame: pd.DataFrame, explicit: str | None) -> str |
         return explicit
     values = frame["analysis_set_id"].dropna().astype(str).drop_duplicates().tolist()
     if len(values) > 1:
-        raise SupervisedLearningContractError(
-            f"Task A expects one analysis_set_id per run; got {values}"
-        )
+        raise SupervisedLearningContractError(f"Task A expects one analysis_set_id per run; got {values}")
     from_frame = values[0] if values else None
     if explicit is not None and from_frame is not None and str(explicit) != from_frame:
         raise SupervisedLearningContractError(
@@ -113,19 +111,14 @@ def run_nested_loso(
     analysis_set_id: str | None = None,
 ) -> SupervisedRunResult:
     """Run one full participant-disjoint LOSO analysis on an explicit frame."""
-    data, locator_columns = _validate_frame(
-        frame,
-        model_feature_schemes,
-        group_col=group_col,
-    )
+    data, locator_columns = _validate_frame(frame, model_feature_schemes, group_col=group_col)
     resolved_analysis_set = _resolve_analysis_set_id(data, analysis_set_id)
     groups = sorted(data[group_col].astype(str).unique().tolist())
     if len(groups) < 2:
         raise SupervisedLearningContractError("outer LOSO requires at least two participant groups")
     if len(groups) - 1 < int(inner_splits):
         raise SupervisedLearningContractError(
-            f"after holding out one participant, inner CV needs {inner_splits} training groups; "
-            f"only {len(groups) - 1} remain"
+            f"after holding out one participant, inner CV needs {inner_splits} training groups; only {len(groups) - 1} remain"
         )
 
     prediction_frames: list[pd.DataFrame] = []
@@ -165,10 +158,12 @@ def run_nested_loso(
                     max_iter=int(max_iter),
                     seed=fold_seed,
                 )
+                model_test_columns = list(dict.fromkeys([group_col, *selection.feature_scheme.columns]))
+                outer_test_features = outer_test[model_test_columns].copy()
                 fitted = refit_logistic_and_predict(
                     outer_train,
                     y_train,
-                    outer_test,
+                    outer_test_features,
                     feature_scheme=selection.feature_scheme,
                     selected_c=selection.selected_c,
                     group_col=group_col,
@@ -180,12 +175,8 @@ def run_nested_loso(
 
                 base_prediction["feature_set_id"] = selection.feature_scheme.feature_set_id
                 base_prediction["selected_c"] = float(selection.selected_c)
-                base_prediction[Q1_BINARY_SPEC.positive_probability_name] = np.asarray(
-                    fitted["p_positive"], dtype=float
-                )
-                base_prediction["predicted_q1_binary"] = np.asarray(
-                    fitted["predicted_label"], dtype=int
-                )
+                base_prediction[Q1_BINARY_SPEC.positive_probability_name] = np.asarray(fitted["p_positive"], dtype=float)
+                base_prediction["predicted_q1_binary"] = np.asarray(fitted["predicted_label"], dtype=int)
                 base_prediction["model_failed"] = False
                 base_prediction["failure_reason"] = ""
                 prediction_frames.append(base_prediction)
@@ -262,11 +253,7 @@ def run_nested_loso(
         "c_candidates": [float(v) for v in c_candidates],
         "outer_method": "leave_one_participant_out",
         "zero_individual_calibration": True,
+        "outer_test_outcomes_passed_to_model": False,
         "upstream_analysis_set_generation_in_task_a": False,
     }
-    return SupervisedRunResult(
-        predictions=predictions,
-        fold_audits=fold_audits,
-        failures=failures,
-        metadata=metadata,
-    )
+    return SupervisedRunResult(predictions=predictions, fold_audits=fold_audits, failures=failures, metadata=metadata)
