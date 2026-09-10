@@ -8,8 +8,16 @@ import pandas as pd
 import pytest
 import yaml
 
+from attention_pipeline.behavior_formal.behavior_supervised_contract import (
+    FIRST_ROUND_OMISSION_DESCRIPTIVE_QC_ONLY,
+)
 from attention_pipeline.behavior_formal.behavior_supervised_interface import (
+    DESCRIPTIVE_QC_COLUMNS,
+    ERROR_CONTROL_CANDIDATES,
     FIRST_ROUND_CANDIDATE_POOL,
+    RT_LEVEL_CANDIDATES,
+    RT_TREND_CANDIDATES,
+    RT_VARIABILITY_CANDIDATES,
     BehaviorSupervisedInterfaceError,
     build_behavior_supervised_feature_audit,
     build_behavior_supervised_probe_table,
@@ -24,8 +32,12 @@ def _primary_probe() -> pd.DataFrame:
     rows = []
     for i in range(3):
         n_rt = [12, 3, 10][i]
+        participant = f"P-{i // 2}"
         rows.append({
-            "participant_group_id": f"P-{i // 2}",
+            "participant_group_id": participant,
+            "repeat_participant_id": participant,
+            "participant_identity_source": "questionnaire_repeat_registry",
+            "participant_identity_resolved_for_clustering": True,
             "session_id": f"S-{i}",
             "block_id": "B1",
             "probe_event_id": f"S-{i}|B1|probe|1",
@@ -89,19 +101,14 @@ def test_interface_preserves_all_probe_rows_and_feature_cells_without_imputation
     assert "analysis_set_id" not in out.columns
     assert "omission_rate" not in out.columns
     assert set(FIRST_ROUND_CANDIDATE_POOL).issubset(out.columns)
+    assert out["repeat_participant_id"].equals(out["participant_group_id"])
 
 
 def test_clean_timing_and_finer_omission_fields_are_preserved_only_for_qc_audit() -> None:
     out = build_behavior_supervised_probe_table(_primary_probe())
     audit = build_behavior_supervised_feature_audit(out)
-    qc_names = [
-        "clean_go_omission_rate",
-        "timing_ambiguous_go_omission_rate",
-        "omission_prestimulus_only_ambiguity_rate",
-        "omission_carryover_only_ambiguity_rate",
-    ]
-    qc = audit[audit["field"].isin(qc_names)]
-    assert len(qc) == len(qc_names)
+    qc = audit[audit["field"].isin(DESCRIPTIVE_QC_COLUMNS)]
+    assert len(qc) == len(DESCRIPTIVE_QC_COLUMNS)
     assert qc["role"].eq("descriptive_qc_sensitivity_only").all()
     raw = audit[audit["field"].eq("raw_go_omission_rate")].iloc[0]
     assert raw["role"] == "first_round_supervised_omission_candidate"
@@ -140,12 +147,20 @@ def test_materialized_interface_writes_probe_table_audit_and_manifest_without_an
         materialize_behavior_supervised_interface(source_path, output_root)
 
 
-def test_candidate_yaml_matches_c4_boundaries() -> None:
+def test_candidate_yaml_exactly_matches_python_candidate_and_qc_contracts() -> None:
     cfg = yaml.safe_load((ROOT / "configs" / "behavior_supervised_candidates_v1.yaml").read_text(encoding="utf-8"))
     assert cfg["source"]["primary_window_seconds"] == 30
-    assert cfg["candidate_dimensions"]["omission"]["columns"] == ["raw_go_omission_rate"]
+    assert tuple(cfg["candidate_dimensions"]["rt_level"]["columns"]) == RT_LEVEL_CANDIDATES
+    variability = cfg["candidate_dimensions"]["rt_variability"]
+    assert variability["preferred_current"] == RT_VARIABILITY_CANDIDATES[0]
+    assert tuple(variability["limited_alternatives"]) == RT_VARIABILITY_CANDIDATES[1:]
+    assert tuple(cfg["candidate_dimensions"]["rt_trend"]["columns"]) == RT_TREND_CANDIDATES
+    assert tuple(cfg["candidate_dimensions"]["omission"]["columns"]) == ("raw_go_omission_rate",)
+    assert tuple(cfg["candidate_dimensions"]["error_control"]["columns"]) == ERROR_CONTROL_CANDIDATES[1:]
+    assert tuple(cfg["descriptive_qc_sensitivity_only"]) == FIRST_ROUND_OMISSION_DESCRIPTIVE_QC_ONLY
     assert cfg["outcomes"]["q2_ordinal_4level"]["first_round_predictor_allowed"] is False
     assert cfg["policies"]["no_imputation_in_task_c_interface"] is True
     assert cfg["policies"]["no_row_deletion_by_feature_coverage_in_task_c"] is True
     assert cfg["policies"]["analysis_set_id_generated_by_task_c"] is False
     assert cfg["policies"]["analysis_set_id_owned_by_task_b"] is True
+    assert cfg["policies"]["all_nonraw_omission_rates_not_first_round_predictors"] is True
