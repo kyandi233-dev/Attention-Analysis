@@ -4,7 +4,10 @@ import pytest
 
 from attention_pipeline.multimodal_formal.quality_admission import audit_quality
 from attention_pipeline.multimodal_formal.analysis_sets import build_analysis_sets
-from attention_pipeline.multimodal_formal.prediction_archive import validate_prediction_archive
+from attention_pipeline.multimodal_formal.prediction_archive import (
+    normalize_task_a_predictions,
+    validate_prediction_archive,
+)
 
 
 def _tables():
@@ -270,3 +273,55 @@ def test_nir_no_valid_pupil_samples_are_explicit_support_failure():
     assert first.missing_kind == "feature_support_invalid"
     assert first.feature_support_evidence == "n_pupil_valid>=1:producer_math_support"
     assert not bool(first.eligible_for_missing_strategy)
+
+
+def _task_a_native_predictions(sets):
+    included = sets[sets.included_complete].copy()
+    rows = []
+    for model in ["M0", "M1"]:
+        for _, r in included.iterrows():
+            rows.append({
+                "session_id": r.session_id,
+                "participant_group_id": r.participant_group_id,
+                "block_id": r.block_id,
+                "probe_event_id": (
+                    f"{r.session_id}|{r.block_id}|probe|{int(r.probe_index_in_block)}"
+                ),
+                "analysis_set_id": r.analysis_set_id,
+                "outer_fold_group": r.participant_group_id,
+                "model_id": model,
+                "q1_binary": 1,
+                "predicted_q1_binary": 1,
+                "p_q1_equals_1": 0.75,
+                "model_failed": False,
+                "failure_reason": "",
+            })
+    return pd.DataFrame(rows)
+
+
+def test_current_task_a_prediction_schema_normalizes_and_validates():
+    sets = _prediction_sets()
+    native = _task_a_native_predictions(sets)
+    normalized = normalize_task_a_predictions(native)
+    assert normalized.probe_index_in_block.notna().all()
+    assert set(normalized.outcome) == {"q1_equals_1_vs_2_3_4"}
+    audit = validate_prediction_archive(normalized, sets)
+    assert audit["prediction_n"] == 6
+    assert audit["failed_prediction_n"] == 0
+
+
+def test_task_a_failed_rows_remain_auditable_without_fabricated_predictions():
+    sets = _prediction_sets()
+    native = _task_a_native_predictions(sets)
+    native.loc[0, "model_failed"] = True
+    native.loc[0, "failure_reason"] = "ModelSelectionError: synthetic failure"
+    native.loc[0, "predicted_q1_binary"] = pd.NA
+    native.loc[0, "p_q1_equals_1"] = np.nan
+    normalized = normalize_task_a_predictions(native)
+    audit = validate_prediction_archive(normalized, sets)
+    assert audit["failed_prediction_n"] == 1
+    assert audit["successful_prediction_n"] == 5
+    bad = normalized.copy()
+    bad.loc[0, "probability_positive"] = 0.5
+    with pytest.raises(ValueError, match="fabricated"):
+        validate_prediction_archive(bad, sets)
