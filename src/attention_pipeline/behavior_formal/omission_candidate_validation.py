@@ -6,7 +6,8 @@ import numpy as np
 import pandas as pd
 
 from .behavior_error_taxonomy import (
-    FORMAL_OMISSION_ENDPOINT_METRICS,
+    CURRENT_PRIMARY_OMISSION_ENDPOINT_METRICS,
+    OMISSION_PARTITION_RATE_METRICS,
     OMISSION_QC_RATE_METRICS,
     TAXONOMY_RATE_METRICS,
 )
@@ -19,16 +20,23 @@ def _participant_column(frame: pd.DataFrame) -> str | None:
     return None
 
 
+def _omission_role(metric: str) -> str:
+    if metric in CURRENT_PRIMARY_OMISSION_ENDPOINT_METRICS:
+        return "current_primary_omission_endpoint"
+    if metric in OMISSION_PARTITION_RATE_METRICS:
+        return "descriptive_qc_sensitivity_partition"
+    return "qc_or_timing_diagnostic"
+
+
 def validate_omission_candidates(
     scale_tables: Mapping[str, pd.DataFrame],
     primary_probe: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
     """Describe omission coverage/distribution/redundancy without full-cohort selection.
 
-    Historical behavior endpoint roles are retained for provenance, but this
-    full-cohort audit has no authority to include/drop supervised predictors.
-    Current first-round supervised omission roles are defined separately in
-    ``behavior_supervised_contract.py``.
+    Raw is the current primary omission endpoint. Clean/timing and finer timing
+    fields remain descriptive/QC/sensitivity information. This full-cohort audit
+    has no authority to include/drop supervised predictors.
     """
     frames = {k: v for k, v in scale_tables.items() if v is not None}
     frames["probe"] = primary_probe
@@ -41,11 +49,7 @@ def validate_omission_candidates(
         participant = _participant_column(frame)
         available = [m for m in TAXONOMY_RATE_METRICS if m in frame.columns]
         for metric in TAXONOMY_RATE_METRICS:
-            endpoint_role = (
-                "prespecified_formal_endpoint"
-                if metric in FORMAL_OMISSION_ENDPOINT_METRICS
-                else "qc_or_timing_diagnostic"
-            )
+            endpoint_role = _omission_role(metric)
             if metric not in frame.columns:
                 validation_rows.append({
                     "scale": scale,
@@ -118,7 +122,7 @@ def validate_omission_candidates(
                 "endpoint_role": endpoint_role,
                 "endpoint_status": (
                     "prespecified_not_pvalue_selected"
-                    if endpoint_role == "prespecified_formal_endpoint"
+                    if endpoint_role == "current_primary_omission_endpoint"
                     else "not_a_primary_endpoint"
                 ),
                 "selection_authority": "descriptive_only",
@@ -144,8 +148,8 @@ def validate_omission_candidates(
                 for b in available[i + 1:]:
                     r = corr.loc[a, b] if a in corr.index and b in corr.columns else np.nan
                     structural_pair = (
-                        a in FORMAL_OMISSION_ENDPOINT_METRICS
-                        and b in FORMAL_OMISSION_ENDPOINT_METRICS
+                        a in OMISSION_PARTITION_RATE_METRICS
+                        and b in OMISSION_PARTITION_RATE_METRICS
                     )
                     redundancy_rows.append({
                         "scale": scale,
@@ -160,7 +164,7 @@ def validate_omission_candidates(
                         "selection_authority": "descriptive_only",
                         "automatic_drop_allowed": False,
                         "redundancy_interpretation": (
-                            "formal omission endpoints are algebraically/structurally related; correlation is descriptive only"
+                            "omission partition metrics share the same denominator and are structurally related; correlation is descriptive only"
                             if structural_pair
                             else "descriptive redundancy audit"
                         ),
