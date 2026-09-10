@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import runpy
 
 import numpy as np
 import pandas as pd
@@ -153,6 +154,24 @@ def test_materialized_interface_writes_probe_table_audit_and_manifest_without_an
     assert saved["source_sha256"] == manifest["source_sha256"]
     with pytest.raises(FileExistsError):
         materialize_behavior_supervised_interface(source_path, output_root)
+
+
+def test_cli_source_provenance_requires_matching_formal_run_config_digest(tmp_path) -> None:
+    source = tmp_path / "probe_primary_30s.csv"
+    _primary_probe().to_csv(source, index=False)
+    namespace = runpy.run_path(str(ROOT / "scripts" / "behavior_supervised_interface.py"))
+    verify = namespace["_verified_source_config_digest"]
+    run_manifest = tmp_path / "run_manifest.json"
+
+    run_manifest.write_text(json.dumps({"config_digest": "abc"}), encoding="utf-8")
+    assert verify(source, current_config_digest="abc") == "abc"
+
+    with pytest.raises(ValueError, match="source/config provenance mismatch"):
+        verify(source, current_config_digest="different")
+
+    run_manifest.unlink()
+    with pytest.raises(FileNotFoundError, match="source formal run manifest"):
+        verify(source, current_config_digest="abc")
 
 
 def test_candidate_yaml_exactly_matches_python_candidate_and_qc_contracts() -> None:
