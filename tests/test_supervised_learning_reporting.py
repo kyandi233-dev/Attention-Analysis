@@ -14,6 +14,7 @@ def _complete_result() -> SupervisedRunResult:
         {
             "run_id": ["run-001", "run-001"],
             "analysis_set_id": ["set-a", "set-a"],
+            "participant_group_id": ["P01", "P02"],
             "model_id": ["behavior", "behavior"],
             "outer_fold_group": ["P01", "P02"],
             "session_id": ["S01", "S02"],
@@ -31,7 +32,24 @@ def _complete_result() -> SupervisedRunResult:
     )
     return SupervisedRunResult(
         predictions=predictions,
-        fold_audits=[{"outer_fold_group": "P01"}, {"outer_fold_group": "P02"}],
+        fold_audits=[
+            {
+                "run_id": "run-001",
+                "analysis_set_id": "set-a",
+                "model_id": "behavior",
+                "outer_fold_group": "P01",
+                "failed": False,
+                "reason": "",
+            },
+            {
+                "run_id": "run-001",
+                "analysis_set_id": "set-a",
+                "model_id": "behavior",
+                "outer_fold_group": "P02",
+                "failed": False,
+                "reason": "",
+            },
+        ],
         failures=pd.DataFrame(),
         metadata={
             "run_id": "run-001",
@@ -73,4 +91,28 @@ def test_write_supervised_run_rejects_prediction_row_loss(tmp_path) -> None:
     result = _complete_result()
     result.predictions = result.predictions.iloc[:1].copy()
     with pytest.raises(ValueError, match="prediction row count mismatch"):
+        write_supervised_run(result, output_root=tmp_path)
+
+
+def test_write_supervised_run_rejects_missing_or_duplicate_fold_audits(tmp_path) -> None:
+    missing = _complete_result()
+    missing.fold_audits = missing.fold_audits[:1]
+    with pytest.raises(ValueError, match="fold audit count mismatch"):
+        write_supervised_run(missing, output_root=tmp_path)
+
+    duplicate = _complete_result()
+    duplicate.fold_audits[1] = dict(duplicate.fold_audits[0])
+    with pytest.raises(ValueError, match="duplicate fold audit rows"):
+        write_supervised_run(duplicate, output_root=tmp_path)
+
+
+def test_write_supervised_run_rejects_failure_key_disagreement(tmp_path) -> None:
+    result = _complete_result()
+    result.predictions.loc[0, "model_failed"] = True
+    result.predictions.loc[0, "failure_reason"] = "expected synthetic failure"
+    result.predictions.loc[0, "feature_set_id"] = None
+    result.predictions.loc[0, "selected_c"] = float("nan")
+    result.predictions.loc[0, "p_q1_equals_1"] = float("nan")
+    result.predictions.loc[0, "predicted_q1_binary"] = pd.NA
+    with pytest.raises(ValueError, match="failed-fold keys disagree"):
         write_supervised_run(result, output_root=tmp_path)
