@@ -16,6 +16,9 @@ from .task import Q1_BINARY_SPEC, SupervisedLearningContractError
 
 _MAINLINE_FORBIDDEN_COLUMNS: dict[str, str] = {
     Q1_BINARY_SPEC.source_column: "outcome label cannot be used as a predictor",
+    "q1_binary": "derived outcome label cannot be used as a predictor",
+    Q1_BINARY_SPEC.positive_probability_name: "supervised output probability cannot be recycled as a predictor",
+    "predicted_q1_binary": "supervised output label cannot be recycled as a predictor",
     "q2_ordinal_4level": "Q2 is interpretation/construct validation, not a first-round Q1 predictor",
     "omission_rate": "historical alias duplicates raw_go_omission_rate",
     "clean_go_omission_rate": "clean omission is descriptive/QC only in the first-round mainline",
