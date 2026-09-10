@@ -17,7 +17,6 @@ import pandas as pd
 
 from attention_pipeline.formal_analysis.identity_contract import assert_participant_group_contract
 
-from .behavior_error_taxonomy import OMISSION_QC_RATE_METRICS
 from .behavior_supervised_contract import (
     FIRST_ROUND_OMISSION_DESCRIPTIVE_QC_ONLY,
     FIRST_ROUND_SUPERVISED_OMISSION_PREDICTORS,
@@ -77,10 +76,12 @@ FIRST_ROUND_CANDIDATE_POOL = tuple(dict.fromkeys(
 ))
 
 REQUIRED_OMISSION_PARTITION_COLUMNS = (
+    "omission_rate",
     "raw_go_omission_rate",
     "clean_go_omission_rate",
     "timing_ambiguous_go_omission_rate",
     "go_opportunities",
+    "omission_numerator",
     "omission_denominator",
     "omission_taxonomy_denominator",
     "raw_go_omission_n",
@@ -163,8 +164,17 @@ def _strict_boolean(series: pd.Series, *, column: str) -> pd.Series:
     return parsed.astype(bool)
 
 
+def _nonnegative_integer(series: pd.Series, *, column: str) -> pd.Series:
+    numeric = pd.to_numeric(series, errors="coerce")
+    if numeric.isna().any() or not np.isfinite(numeric.to_numpy(dtype=float)).all():
+        raise BehaviorSupervisedInterfaceError(f"{column} must contain finite nonnegative integer counts")
+    if numeric.lt(0).any() or not np.allclose(numeric.to_numpy(dtype=float), np.round(numeric.to_numpy(dtype=float)), rtol=0.0, atol=1e-12):
+        raise BehaviorSupervisedInterfaceError(f"{column} must contain finite nonnegative integer counts")
+    return numeric.astype(float)
+
+
 def _validate_rt_cv_handoff(frame: pd.DataFrame) -> None:
-    """Reject primary tables still carrying the historical empirical RT-CV gate."""
+    """Reject primary tables that violate the mathematical RT-CV contract."""
     _require_columns(frame, ("rt_cv_min_n", "rt_cv_status", "correct_go_rt_opportunities", "go_correct_rt_cv"))
     minimum = pd.to_numeric(frame["rt_cv_min_n"], errors="coerce")
     if minimum.isna().any() or not minimum.eq(RT_CV_MATHEMATICAL_MIN_N).all():
@@ -174,21 +184,28 @@ def _validate_rt_cv_handoff(frame: pd.DataFrame) -> None:
             f"observed={values}"
         )
 
-    n_rt = pd.to_numeric(frame["correct_go_rt_opportunities"], errors="coerce")
+    n_rt = _nonnegative_integer(frame["correct_go_rt_opportunities"], column="correct_go_rt_opportunities")
     cv = pd.to_numeric(frame["go_correct_rt_cv"], errors="coerce")
     status = frame["rt_cv_status"].astype(str).str.strip()
     should_be_estimable = n_rt.ge(RT_CV_MATHEMATICAL_MIN_N)
     wrongly_masked = should_be_estimable & cv.isna()
-    wrong_status = should_be_estimable & ~status.eq("estimable")
-    if wrongly_masked.any() or wrong_status.any():
+    wrong_estimable_status = should_be_estimable & ~status.eq("estimable")
+    spuriously_present = ~should_be_estimable & cv.notna()
+    spurious_status = ~should_be_estimable & status.eq("estimable")
+    if wrongly_masked.any() or wrong_estimable_status.any():
         raise BehaviorSupervisedInterfaceError(
             "RT-CV handoff contract failed: rows with at least two valid correct-Go RTs must retain mathematically defined CV/status"
+        )
+    if spuriously_present.any() or spurious_status.any():
+        raise BehaviorSupervisedInterfaceError(
+            "RT-CV handoff contract failed: rows with fewer than two valid correct-Go RTs must remain non-estimable"
         )
 
 
 def _validate_omission_handoff(frame: pd.DataFrame) -> None:
-    """Verify raw/clean/timing partition and shared Go denominator before handoff."""
+    """Verify program raw omission, partition counts/rates and shared denominator."""
     _require_columns(frame, REQUIRED_OMISSION_PARTITION_COLUMNS)
+    alias = pd.to_numeric(frame["omission_rate"], errors="coerce")
     raw = pd.to_numeric(frame["raw_go_omission_rate"], errors="coerce")
     clean = pd.to_numeric(frame["clean_go_omission_rate"], errors="coerce")
     timing = pd.to_numeric(frame["timing_ambiguous_go_omission_rate"], errors="coerce")
@@ -197,6 +214,12 @@ def _validate_omission_handoff(frame: pd.DataFrame) -> None:
         raise BehaviorSupervisedInterfaceError(
             "omission handoff contract failed: raw/clean/timing rates must be jointly present or jointly missing"
         )
+    alias_mismatch = alias.notna().ne(raw.notna()) | (alias.notna() & raw.notna() & alias.sub(raw).abs().gt(OMISSION_PARTITION_TOLERANCE))
+    if alias_mismatch.any():
+        raise BehaviorSupervisedInterfaceError(
+            "omission handoff contract failed: omission_rate compatibility alias must equal raw_go_omission_rate"
+        )
+
     all_finite = finite_count.eq(3)
     if all_finite.any():
         error = (raw - clean - timing).abs()
@@ -204,26 +227,52 @@ def _validate_omission_handoff(frame: pd.DataFrame) -> None:
             raise BehaviorSupervisedInterfaceError(
                 "omission handoff contract failed: raw_go_omission_rate != clean + timing_ambiguous"
             )
+        rate_block = pd.concat([raw, clean, timing], axis=1)
+        if ((rate_block.loc[all_finite] < -OMISSION_PARTITION_TOLERANCE) | (rate_block.loc[all_finite] > 1 + OMISSION_PARTITION_TOLERANCE)).any().any():
+            raise BehaviorSupervisedInterfaceError("omission handoff contract failed: omission rates must be proportions in [0, 1]")
 
-    go_n = pd.to_numeric(frame["go_opportunities"], errors="coerce")
-    program_den = pd.to_numeric(frame["omission_denominator"], errors="coerce")
-    taxonomy_den = pd.to_numeric(frame["omission_taxonomy_denominator"], errors="coerce")
-    if go_n.isna().any() or program_den.isna().any() or taxonomy_den.isna().any():
-        raise BehaviorSupervisedInterfaceError("omission handoff contract failed: Go denominators contain missing values")
+    go_n = _nonnegative_integer(frame["go_opportunities"], column="go_opportunities")
+    program_den = _nonnegative_integer(frame["omission_denominator"], column="omission_denominator")
+    taxonomy_den = _nonnegative_integer(frame["omission_taxonomy_denominator"], column="omission_taxonomy_denominator")
     if not (go_n.eq(program_den) & go_n.eq(taxonomy_den)).all():
         raise BehaviorSupervisedInterfaceError(
             "omission handoff contract failed: raw/clean/timing must share the same Go opportunity denominator"
         )
 
-    raw_n = pd.to_numeric(frame["raw_go_omission_n"], errors="coerce")
-    clean_n = pd.to_numeric(frame["clean_go_omission_n"], errors="coerce")
-    timing_n = pd.to_numeric(frame["timing_ambiguous_go_omission_n"], errors="coerce")
-    if raw_n.isna().any() or clean_n.isna().any() or timing_n.isna().any():
-        raise BehaviorSupervisedInterfaceError("omission handoff contract failed: omission counts contain missing values")
+    program_n = _nonnegative_integer(frame["omission_numerator"], column="omission_numerator")
+    raw_n = _nonnegative_integer(frame["raw_go_omission_n"], column="raw_go_omission_n")
+    clean_n = _nonnegative_integer(frame["clean_go_omission_n"], column="clean_go_omission_n")
+    timing_n = _nonnegative_integer(frame["timing_ambiguous_go_omission_n"], column="timing_ambiguous_go_omission_n")
+    if not program_n.eq(raw_n).all():
+        raise BehaviorSupervisedInterfaceError(
+            "omission handoff contract failed: program omission_numerator must equal raw_go_omission_n"
+        )
     if not raw_n.eq(clean_n + timing_n).all():
         raise BehaviorSupervisedInterfaceError(
             "omission handoff contract failed: raw_go_omission_n != clean + timing_ambiguous counts"
         )
+    if (raw_n.gt(go_n) | clean_n.gt(go_n) | timing_n.gt(go_n)).any():
+        raise BehaviorSupervisedInterfaceError("omission handoff contract failed: omission counts cannot exceed Go opportunities")
+
+    positive_den = go_n.gt(0)
+    if positive_den.any():
+        expected = pd.DataFrame({
+            "raw": raw_n / go_n,
+            "clean": clean_n / go_n,
+            "timing": timing_n / go_n,
+        })
+        observed = pd.DataFrame({"raw": raw, "clean": clean, "timing": timing})
+        mismatch = (observed.loc[positive_den] - expected.loc[positive_den]).abs().gt(OMISSION_PARTITION_TOLERANCE)
+        if observed.loc[positive_den].isna().any().any() or mismatch.any().any():
+            raise BehaviorSupervisedInterfaceError(
+                "omission handoff contract failed: omission rates must equal counts divided by the shared Go denominator"
+            )
+    zero_den = go_n.eq(0)
+    if zero_den.any():
+        if raw_n.loc[zero_den].gt(0).any() or clean_n.loc[zero_den].gt(0).any() or timing_n.loc[zero_den].gt(0).any():
+            raise BehaviorSupervisedInterfaceError("omission handoff contract failed: zero Go opportunities require zero omission counts")
+        if pd.concat([raw.loc[zero_den], clean.loc[zero_den], timing.loc[zero_den]], axis=1).notna().any().any():
+            raise BehaviorSupervisedInterfaceError("omission handoff contract failed: zero Go opportunities require missing omission rates")
 
 
 def build_behavior_supervised_probe_table(primary_probe: pd.DataFrame) -> pd.DataFrame:
@@ -450,6 +499,10 @@ def materialize_behavior_supervised_interface(
         "files": {
             "probe_table": interface_path.name,
             "feature_audit": audit_path.name,
+        },
+        "output_sha256": {
+            "probe_table": _sha256(interface_path),
+            "feature_audit": _sha256(audit_path),
         },
     }
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
