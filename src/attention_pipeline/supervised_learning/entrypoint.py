@@ -17,6 +17,9 @@ from .runner import run_nested_loso
 from .task import Q1_BINARY_SPEC, SupervisedLearningContractError
 
 
+FORMAL_PARTICIPANT_GROUP_COLUMN = "participant_group_id"
+
+
 def _require_frozen_runtime_contract(config_data: Mapping[str, Any]) -> None:
     task = config_data.get("task", {})
     expected_task = {
@@ -46,9 +49,9 @@ def _require_frozen_runtime_contract(config_data: Mapping[str, Any]) -> None:
         raise SupervisedLearningContractError("Task A inner validation must refit preprocessing within each grouped split")
     outer_group = str(outer.get("group_column", ""))
     inner_group = str(inner.get("group_column", ""))
-    if not outer_group or inner_group != outer_group:
+    if outer_group != FORMAL_PARTICIPANT_GROUP_COLUMN or inner_group != outer_group:
         raise SupervisedLearningContractError(
-            "Task A inner and outer validation must use the same participant grouping column"
+            "Task A inner and outer validation must use the same participant grouping column: participant_group_id"
         )
     if validation.get("zero_individual_calibration") is not True:
         raise SupervisedLearningContractError("Task A mainline requires zero individual calibration")
@@ -182,7 +185,7 @@ def run_supervised_from_config(
     result = run_nested_loso(
         frame,
         model_feature_schemes=families,
-        group_col=str(validation.get("outer", {}).get("group_column", "participant_group_id")),
+        group_col=str(validation.get("outer", {}).get("group_column", FORMAL_PARTICIPANT_GROUP_COLUMN)),
         c_candidates=primary_model.get("C_candidates", (0.01, 0.1, 1.0, 10.0)),
         inner_splits=int(inner.get("n_splits", 5)),
         max_iter=int(primary_model.get("max_iter", 2000)),
