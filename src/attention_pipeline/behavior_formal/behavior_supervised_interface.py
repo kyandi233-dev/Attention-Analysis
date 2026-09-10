@@ -17,6 +17,7 @@ import pandas as pd
 
 from attention_pipeline.formal_analysis.identity_contract import assert_participant_group_contract
 
+from .behavior_error_taxonomy import OMISSION_QC_RATE_METRICS
 from .behavior_supervised_contract import (
     FIRST_ROUND_OMISSION_DESCRIPTIVE_QC_ONLY,
     FIRST_ROUND_SUPERVISED_OMISSION_PREDICTORS,
@@ -26,6 +27,7 @@ from .behavior_supervised_contract import (
 
 INTERFACE_VERSION = "behavior-supervised-probe-v1"
 PRIMARY_WINDOW_SECONDS = 30
+RT_CV_MATHEMATICAL_MIN_N = 2
 
 IDENTITY_LOCATOR_COLUMNS = (
     "participant_group_id",
@@ -83,7 +85,9 @@ WINDOW_AUDIT_COLUMNS = (
 
 COMPUTABILITY_AUDIT_COLUMNS = (
     "rt_variability_valid_n",
+    "rt_cv_min_n",
     "rt_cv_status",
+    "rt_slope_min_n",
     "rt_slope_status",
     "rt_slope_fit_scope",
     "sdt_status",
@@ -109,7 +113,12 @@ OPPORTUNITY_AUDIT_COLUMNS = (
     "omission_taxonomy_denominator",
 )
 
-DESCRIPTIVE_QC_COLUMNS = FIRST_ROUND_OMISSION_DESCRIPTIVE_QC_ONLY
+# The clean/timing partition plus finer motor-timing subtypes remain descriptive
+# and QC-only. They are preserved for auditability but are never promoted into
+# FIRST_ROUND_CANDIDATE_POOL.
+DESCRIPTIVE_QC_COLUMNS = tuple(dict.fromkeys(
+    (*FIRST_ROUND_OMISSION_DESCRIPTIVE_QC_ONLY, *OMISSION_QC_RATE_METRICS)
+))
 
 
 class BehaviorSupervisedInterfaceError(ValueError):
@@ -138,6 +147,29 @@ def _strict_boolean(series: pd.Series, *, column: str) -> pd.Series:
         bad = sorted(normalized.loc[parsed.isna()].unique().tolist())
         raise BehaviorSupervisedInterfaceError(f"{column} contains invalid boolean values: {bad}")
     return parsed.astype(bool)
+
+
+def _validate_rt_cv_handoff(frame: pd.DataFrame) -> None:
+    """Reject primary tables still carrying the historical empirical RT-CV gate."""
+    _require_columns(frame, ("rt_cv_min_n", "rt_cv_status", "correct_go_rt_opportunities", "go_correct_rt_cv"))
+    minimum = pd.to_numeric(frame["rt_cv_min_n"], errors="coerce")
+    if minimum.isna().any() or not minimum.eq(RT_CV_MATHEMATICAL_MIN_N).all():
+        values = sorted(set(minimum.dropna().astype(float).tolist()))
+        raise BehaviorSupervisedInterfaceError(
+            "RT-CV handoff contract requires rt_cv_min_n=2 as the sample-SD mathematical condition; "
+            f"observed={values}"
+        )
+
+    n_rt = pd.to_numeric(frame["correct_go_rt_opportunities"], errors="coerce")
+    cv = pd.to_numeric(frame["go_correct_rt_cv"], errors="coerce")
+    status = frame["rt_cv_status"].astype(str).str.strip()
+    should_be_estimable = n_rt.ge(RT_CV_MATHEMATICAL_MIN_N)
+    wrongly_masked = should_be_estimable & cv.isna()
+    wrong_status = should_be_estimable & ~status.eq("estimable")
+    if wrongly_masked.any() or wrong_status.any():
+        raise BehaviorSupervisedInterfaceError(
+            "RT-CV handoff contract failed: rows with at least two valid correct-Go RTs must retain mathematically defined CV/status"
+        )
 
 
 def build_behavior_supervised_probe_table(primary_probe: pd.DataFrame) -> pd.DataFrame:
@@ -192,6 +224,7 @@ def build_behavior_supervised_probe_table(primary_probe: pd.DataFrame) -> pd.Dat
     if crosses_block.any():
         raise BehaviorSupervisedInterfaceError("probe window crossing block boundary is forbidden")
 
+    _validate_rt_cv_handoff(primary_probe)
     validate_first_round_omission_predictors(FIRST_ROUND_CANDIDATE_POOL)
     ordered = list(IDENTITY_LOCATOR_COLUMNS)
     ordered.extend(c for c in OPTIONAL_IDENTITY_AUDIT_COLUMNS if c in primary_probe.columns)
@@ -331,12 +364,14 @@ def materialize_behavior_supervised_interface(
         "source_sha256": _sha256(source),
         "config_digest": config_digest,
         "primary_window_seconds": PRIMARY_WINDOW_SECONDS,
+        "rt_cv_mathematical_min_n": RT_CV_MATHEMATICAL_MIN_N,
         "n_rows": int(len(interface)),
         "n_participant_groups": int(interface["participant_group_id"].astype(str).nunique()),
         "n_sessions": int(interface["session_id"].astype(str).nunique()),
         "probe_event_id_unique": bool(interface["probe_event_id"].is_unique),
         "participant_identity_contract_checked": True,
         "primary_probe_role_contract_checked": True,
+        "rt_cv_handoff_contract_checked": True,
         "row_filter_applied": False,
         "imputation_applied": False,
         "scaling_applied": False,
