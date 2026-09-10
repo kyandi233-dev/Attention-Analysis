@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import attention_pipeline.supervised_learning.runner as supervised_runner
 from attention_pipeline.supervised_learning.feature_schemes import FeatureScheme
 from attention_pipeline.supervised_learning.runner import run_nested_loso
 from attention_pipeline.supervised_learning.task import SupervisedLearningContractError
@@ -179,3 +180,19 @@ def test_duplicate_probe_locator_or_missing_q1_fails_before_training() -> None:
     missing_q1.loc[0, "q1_nominal_4class"] = np.nan
     with pytest.raises(SupervisedLearningContractError, match="missing Q1"):
         run_nested_loso(missing_q1, model_feature_schemes=_schemes(), inner_splits=3)
+
+
+def test_unexpected_programming_error_in_outer_fold_propagates(monkeypatch) -> None:
+    frame = _probe_frame()
+
+    def _programmer_defect(*args, **kwargs):
+        raise TypeError("simulated runner programmer defect")
+
+    monkeypatch.setattr(supervised_runner, "select_logistic_model", _programmer_defect)
+    with pytest.raises(TypeError, match="simulated runner programmer defect"):
+        run_nested_loso(
+            frame,
+            model_feature_schemes=_schemes(),
+            inner_splits=3,
+            c_candidates=[1.0],
+        )
