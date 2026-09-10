@@ -153,3 +153,16 @@ def test_runtime_config_cannot_split_inner_and_outer_participant_keys(tmp_path) 
 
     with pytest.raises(SupervisedLearningContractError, match="same participant grouping column"):
         run_supervised_from_config(config_path, paths_config=paths_path, run_id="blocked")
+
+
+def test_runtime_config_cannot_replace_participant_grouping_with_session_grouping(tmp_path) -> None:
+    input_path = tmp_path / "probe_table.csv"
+    output_root = tmp_path / "outputs"
+    _probe_table().to_csv(input_path, index=False)
+    config_data, paths_data = _config(input_path, output_root)
+    config_data["validation"]["outer"]["group_column"] = "session_id"
+    config_data["validation"]["inner"]["group_column"] = "session_id"
+    config_path, paths_path = _write_configs(tmp_path, config_data, paths_data)
+
+    with pytest.raises(SupervisedLearningContractError, match="participant_group_id"):
+        run_supervised_from_config(config_path, paths_config=paths_path, run_id="blocked")
