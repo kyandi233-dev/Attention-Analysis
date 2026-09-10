@@ -59,7 +59,11 @@ validation:
 
 behavior:
   cycle_bins: 6
-  rt_cv_min_n: 20
+  # Mathematical estimability only: sample SD requires at least two valid RTs.
+  # This is NOT an empirical/scientific admission threshold and must not be
+  # tuned on the formal cohort. 2--19 valid RT windows remain eligible for CV.
+  rt_cv_min_n: 2
+  rt_cv_min_n_basis: sample_sd_mathematical_requirement_not_empirical_gate
   rt_slope_min_n: 5
   rt_valid_min_ms: 100
   rt_valid_max_ms: null
@@ -159,3 +163,4 @@ analysis_policy:
   failed_models_must_be_written: true
   participant_disjoint_prediction: true
   inference_and_prediction_outputs_are_separate: true
+  rt_cv_has_no_empirical_minimum_n_gate: true
