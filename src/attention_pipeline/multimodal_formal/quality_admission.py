@@ -14,7 +14,7 @@ import pandas as pd
 
 from .alignment import KEY_COLUMNS, PRIMARY_WINDOW
 
-VERSION = "task-b-analysis-set-audit-v1.0.0"
+VERSION = "task-b-analysis-set-audit-v1.1.0"
 KEYS = list(KEY_COLUMNS)
 GROUP = "participant_group_id"
 REVIEW_COVERAGE_REFERENCE = 0.80
@@ -57,7 +57,9 @@ def validate_probe_keys(frame: pd.DataFrame, modality: str) -> None:
         raise ValueError(f"{modality}: illegal formal probe keys")
 
 
-def _source_state(frame: pd.DataFrame, modality: str, matched: pd.Series) -> tuple[pd.Series, pd.Series, str]:
+def _source_state(
+    frame: pd.DataFrame, modality: str, matched: pd.Series
+) -> tuple[pd.Series, pd.Series, str]:
     """Use explicit source evidence; finite feature values never prove source presence."""
     if modality == "behavior":
         return matched.copy(), matched.copy(), "formal_behavior_record"
@@ -80,7 +82,11 @@ def _source_state(frame: pd.DataFrame, modality: str, matched: pd.Series) -> tup
 
     if "source_present" in frame.columns:
         present = matched & _true(frame["source_present"])
-        readable = present & (_true(frame["source_readable"]) if "source_readable" in frame.columns else True)
+        readable = present & (
+            _true(frame["source_readable"])
+            if "source_readable" in frame.columns
+            else True
+        )
         return present, readable, "explicit_source_present"
 
     false = matched & False
@@ -116,10 +122,17 @@ def _alignment_state(frame: pd.DataFrame, matched: pd.Series) -> tuple[pd.Series
             valid &= s.lt(e) & e.le(p) & np.isclose(e.sub(s), 30000, atol=1)
             evidence.append(f"{start}:{end}:{probe}")
 
-    bounds = {"window_effective_start_unix_ms", "block_start_unix_ms", "window_end_unix_ms", "block_end_unix_ms"}
+    bounds = {
+        "window_effective_start_unix_ms",
+        "block_start_unix_ms",
+        "window_end_unix_ms",
+        "block_end_unix_ms",
+    }
     if bounds <= set(frame.columns):
         exported = frame["block_start_unix_ms"].notna() | frame["block_end_unix_ms"].notna()
-        inherited = frame.get("window_boundary_source", pd.Series("", index=frame.index)).eq("probe_primary_30s")
+        inherited = frame.get(
+            "window_boundary_source", pd.Series("", index=frame.index)
+        ).eq("probe_primary_30s")
         inside = (
             pd.to_numeric(frame["window_effective_start_unix_ms"], errors="coerce")
             .ge(pd.to_numeric(frame["block_start_unix_ms"], errors="coerce"))
@@ -132,8 +145,10 @@ def _alignment_state(frame: pd.DataFrame, matched: pd.Series) -> tuple[pd.Series
     return valid.fillna(False), ";".join(evidence) or "normalized_formal_probe_product"
 
 
-def _native_qc_state(frame: pd.DataFrame, modality: str, feature: str) -> tuple[pd.Series, str]:
-    """Apply only explicit upstream QC evidence; do not recreate old empirical thresholds."""
+def _native_qc_state(
+    frame: pd.DataFrame, modality: str, feature: str
+) -> tuple[pd.Series, str]:
+    """Apply only explicit upstream modality QC; do not recreate empirical thresholds."""
     valid = pd.Series(True, index=frame.index, dtype=bool)
     evidence: list[str] = []
 
@@ -146,17 +161,90 @@ def _native_qc_state(frame: pd.DataFrame, modality: str, feature: str) -> tuple[
         valid &= _true(frame[feature_qc])
         evidence.append(feature_qc)
 
-    if modality == "nir":
-        n_valid = f"{feature}_n_valid"
-        if n_valid in frame.columns:
-            valid &= pd.to_numeric(frame[n_valid], errors="coerce").gt(0)
-            evidence.append(f"{n_valid}>0")
+    # The current authoritative merge-ready producer explicitly marks QC_FAIL
+    # while still reporting observed/loadable=True. Treat that as native QC failure,
+    # not as residual feature missingness that could later be imputed.
+    if modality == "mmwave" and "mmwave_state" in frame.columns:
+        state = frame["mmwave_state"].astype("string")
+        known = state.notna()
+        valid &= ~known | state.eq("OBSERVED")
+        evidence.append("mmwave_state=OBSERVED")
 
     if modality == "rgb" and feature.startswith("blink_") and "rgb_source_status" in frame.columns:
         valid &= frame["rgb_source_status"].eq("ok")
         evidence.append("rgb_source_status=ok_for_blink")
 
     return valid.fillna(False), ";".join(evidence) or "no_additional_explicit_qc_gate"
+
+
+def _feature_support_state(
+    frame: pd.DataFrame, modality: str, feature: str
+) -> tuple[pd.Series, str]:
+    """Use producer-defined mathematical/estimability support, never empirical cutoffs.
+
+    This layer intentionally does not implement historical rules such as RT-CV n>=20.
+    It only prevents an explicitly non-estimable summary from being mislabeled as a
+    residual single-feature missing value eligible for later imputation.
+    """
+    valid = pd.Series(True, index=frame.index, dtype=bool)
+    evidence: list[str] = []
+
+    if modality == "behavior":
+        rt_n_col = "correct_go_rt_opportunities"
+        if rt_n_col in frame.columns:
+            n_rt = pd.to_numeric(frame[rt_n_col], errors="coerce")
+            one_rt = {
+                "go_correct_rt_mean_ms",
+                "go_correct_rt_median_ms",
+                "go_correct_rt_mad_ms",
+                "go_correct_rt_iqr_ms",
+            }
+            two_rt = {
+                "go_correct_rt_sd_ms",
+                "go_correct_rt_cv",
+                "go_correct_rt_theilsen_slope_ms_per_s",
+            }
+            if feature in one_rt:
+                valid &= n_rt.ge(1)
+                evidence.append(f"{rt_n_col}>=1")
+            elif feature in two_rt:
+                valid &= n_rt.ge(2)
+                evidence.append(f"{rt_n_col}>=2")
+
+        if feature in {"dprime_loglinear", "criterion_c", "beta"} and "sdt_status" in frame.columns:
+            valid &= frame["sdt_status"].astype("string").eq("estimable")
+            evidence.append("sdt_status=estimable")
+
+        if feature in {
+            "omission_rate",
+            "raw_go_omission_rate",
+            "clean_go_omission_rate",
+            "timing_ambiguous_go_omission_rate",
+        } and "omission_denominator" in frame.columns:
+            valid &= pd.to_numeric(frame["omission_denominator"], errors="coerce").gt(0)
+            evidence.append("omission_denominator>0")
+
+        if feature == "commission_rate" and "commission_denominator" in frame.columns:
+            valid &= pd.to_numeric(frame["commission_denominator"], errors="coerce").gt(0)
+            evidence.append("commission_denominator>0")
+
+    if modality == "nir" and feature.startswith("pupil_") and "n_pupil_valid" in frame.columns:
+        n_valid = pd.to_numeric(frame["n_pupil_valid"], errors="coerce")
+        minimum = 1
+        if feature in {
+            "pupil_diff_mad",
+            "pupil_diff_rate_mad_per_sec",
+            "pupil_peak_to_trough",
+        }:
+            minimum = 2
+        elif feature == "pupil_slope_per_sec":
+            # Mirrors summarize_signal/robust_binned_slope_per_sec mathematical support,
+            # not a new scientific stability threshold.
+            minimum = 3
+        valid &= n_valid.ge(minimum)
+        evidence.append(f"n_pupil_valid>={minimum}:producer_math_support")
+
+    return valid.fillna(False), ";".join(evidence) or "no_explicit_support_gate"
 
 
 def audit_quality(
@@ -191,15 +279,23 @@ def audit_quality(
         else:
             validate_probe_keys(source, modality)
             identity_check = source.merge(
-                identity, on=KEYS, how="left", suffixes=("", "_formal"), validate="one_to_one"
+                identity,
+                on=KEYS,
+                how="left",
+                suffixes=("", "_formal"),
+                validate="one_to_one",
             )
             formal_group = f"{GROUP}_formal"
-            mismatch = identity_check[formal_group].notna() & identity_check[GROUP].ne(identity_check[formal_group])
+            mismatch = identity_check[formal_group].notna() & identity_check[GROUP].ne(
+                identity_check[formal_group]
+            )
             if mismatch.any():
                 raise ValueError(f"{modality}: identity disagrees with behavior")
 
         merge_source = source.drop(columns=[GROUP], errors="ignore")
-        frame = identity.merge(merge_source, on=KEYS, how="left", indicator=True, validate="one_to_one")
+        frame = identity.merge(
+            merge_source, on=KEYS, how="left", indicator=True, validate="one_to_one"
+        )
         matched = frame["_merge"].eq("both")
         present, readable, source_basis = _source_state(frame, modality, matched)
         aligned, alignment_basis = _alignment_state(frame, matched)
@@ -218,6 +314,7 @@ def audit_quality(
 
         for feature in cols:
             qc_valid, qc_basis = _native_qc_state(frame, modality, feature)
+            support_valid, support_basis = _feature_support_state(frame, modality, feature)
             column_present = feature in frame.columns
             raw = (
                 pd.to_numeric(frame[feature], errors="coerce")
@@ -225,8 +322,8 @@ def audit_quality(
                 else pd.Series(np.nan, index=frame.index, dtype=float)
             )
             finite = pd.Series(np.isfinite(raw), index=frame.index)
-            computable = opportunity & qc_valid & finite
-            missing_strategy_eligible = opportunity & qc_valid & column_present
+            computable = opportunity & qc_valid & support_valid & finite
+            missing_strategy_eligible = opportunity & qc_valid & support_valid & column_present
 
             reason = np.select(
                 [
@@ -235,6 +332,7 @@ def audit_quality(
                     ~readable,
                     ~aligned,
                     ~qc_valid,
+                    ~support_valid,
                     pd.Series(not column_present, index=frame.index),
                     ~finite,
                 ],
@@ -244,6 +342,7 @@ def audit_quality(
                     "structural_source_unreadable",
                     "structural_alignment_invalid",
                     "native_qc_invalid",
+                    "feature_support_invalid",
                     "feature_column_missing",
                     "single_feature_missing",
                 ],
@@ -259,6 +358,7 @@ def audit_quality(
             detail["aligned"] = aligned
             detail["measurement_opportunity"] = opportunity
             detail["native_qc_valid"] = qc_valid
+            detail["feature_support_valid"] = support_valid
             detail["feature_column_present"] = column_present
             detail["feature_computable"] = computable
             detail["eligible_for_missing_strategy"] = missing_strategy_eligible
@@ -266,6 +366,7 @@ def audit_quality(
             detail["source_evidence"] = source_basis
             detail["alignment_evidence"] = alignment_basis
             detail["native_qc_evidence"] = qc_basis
+            detail["feature_support_evidence"] = support_basis
             detail["value"] = raw.where(computable)
             feature_rows.append(detail)
 
@@ -302,13 +403,18 @@ def audit_quality(
                     "valid_variance": variance,
                     "nonzero_valid_rate": nonzero_rate,
                     "zero_variance": bool(computable_n > 0 and unique_n == 1),
-                    "fewer_than_3_unique_values_review": bool(computable_n > 0 and unique_n < 3),
+                    "fewer_than_3_unique_values_review": bool(
+                        computable_n > 0 and unique_n < 3
+                    ),
                     "severe_floor_review": floor,
                     "severe_ceiling_review": ceiling,
-                    "coverage_below_0_80_review": bool(np.isfinite(coverage) and coverage < REVIEW_COVERAGE_REFERENCE),
+                    "coverage_below_0_80_review": bool(
+                        np.isfinite(coverage) and coverage < REVIEW_COVERAGE_REFERENCE
+                    ),
                     "automatic_exclusion": False,
                     "review_reference_only": REVIEW_COVERAGE_REFERENCE,
                     "native_qc_evidence": qc_basis,
+                    "feature_support_evidence": support_basis,
                 }
             )
 
@@ -348,7 +454,9 @@ def audit_quality(
     }
 
 
-def write_quality_audit(output_dir: str | Path, result: dict[str, pd.DataFrame]) -> dict[str, str]:
+def write_quality_audit(
+    output_dir: str | Path, result: dict[str, pd.DataFrame]
+) -> dict[str, str]:
     """Write Task-B audit tables without producing a full-sample admitted-feature list."""
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
