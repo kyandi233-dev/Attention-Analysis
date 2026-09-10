@@ -67,6 +67,20 @@ def test_current_formal_runtime_fails_closed_if_rt_cv_contract_drifts_or_disappe
         assert_current_behavior_rt_cv_contract(replace(config, data=data))
 
 
+def test_rt_cv_guard_does_not_redefine_generic_or_historical_adapter_configs() -> None:
+    config = load_config(CONFIG_PATH, use_env_paths=False)
+
+    data = copy.deepcopy(config.data)
+    data.pop("pipeline", None)
+    data["behavior"].pop("rt_cv_min_n", None)
+    assert_current_behavior_rt_cv_contract(replace(config, data=data))
+
+    data = copy.deepcopy(config.data)
+    data["pipeline"]["name"] = "historical-behavior-reproduction"
+    data["behavior"]["rt_cv_min_n"] = 20
+    assert_current_behavior_rt_cv_contract(replace(config, data=data))
+
+
 def test_two_to_nineteen_valid_rt_cv_is_preserved_by_formal_runner_annotation() -> None:
     minimum_n, _ = _formal_rt_cv_contract()
     namespace = runpy.run_path(str(ROOT / "scripts" / "sart_formal_analysis.py"))
