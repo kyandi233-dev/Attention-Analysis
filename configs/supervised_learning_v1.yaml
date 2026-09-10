@@ -42,6 +42,22 @@ preprocessing:
 
 feature_schemes:
   status: interface_only_pending_task_c_d
+  candidates: []
+  mainline_forbidden_columns:
+    - q1_nominal_4class
+    - q2_ordinal_4level
+    - omission_rate
+    - clean_go_omission_rate
+    - timing_ambiguous_go_omission_rate
+    - hard_pupil_fraction
+    - participant_group_id
+    - repeat_participant_id
+    - session_id
+    - block_id
+    - probe_event_id
+    - probe_id
+    - window_name
+  participant_specific_suffixes_forbidden: [_within, _between]
   note: "Task A provides the nested selection interface; C/D supply or freeze modality candidate schemes."
 
 outputs:
