@@ -36,11 +36,17 @@ def _minimal_probe() -> pd.DataFrame:
             "go_correct_rt_mad_ms": 30.0,
             "go_correct_rt_iqr_ms": 55.0,
             "go_correct_rt_theilsen_slope_ms_per_s": 0.2,
-            "raw_go_omission_rate": 0.05,
-            "clean_go_omission_rate": 0.03,
-            "timing_ambiguous_go_omission_rate": 0.02,
+            "raw_go_omission_rate": 0.0625,
+            "clean_go_omission_rate": 0.0625,
+            "timing_ambiguous_go_omission_rate": 0.0,
             "commission_rate": 0.1,
             "dprime_loglinear": 2.0,
+            "go_opportunities": 16,
+            "omission_denominator": 16,
+            "omission_taxonomy_denominator": 16,
+            "raw_go_omission_n": 1,
+            "clean_go_omission_n": 1,
+            "timing_ambiguous_go_omission_n": 0,
             "correct_go_rt_opportunities": 8,
             "rt_variability_valid_n": 8,
             "rt_cv_min_n": 2,
@@ -100,6 +106,18 @@ def test_behavior_interface_requires_primary_independent_probe_role() -> None:
         build_behavior_supervised_probe_table(frame)
 
 
+def test_behavior_interface_rejects_broken_omission_partition_or_denominator() -> None:
+    frame = _minimal_probe()
+    frame["clean_go_omission_rate"] = 0.01
+    with pytest.raises(BehaviorSupervisedInterfaceError, match="raw_go_omission_rate != clean"):
+        build_behavior_supervised_probe_table(frame)
+
+    frame = _minimal_probe()
+    frame["omission_taxonomy_denominator"] = 15
+    with pytest.raises(BehaviorSupervisedInterfaceError, match="same Go opportunity denominator"):
+        build_behavior_supervised_probe_table(frame)
+
+
 def test_behavior_interface_preserves_estimability_status_fields() -> None:
     out = build_behavior_supervised_probe_table(_minimal_probe())
     for column in ("rt_cv_min_n", "rt_cv_status", "rt_slope_status", "sdt_status"):
@@ -117,3 +135,20 @@ def test_force_refuses_to_delete_unrecognized_output_directory(tmp_path: Path) -
     with pytest.raises(BehaviorSupervisedInterfaceError, match="without a Task C interface manifest"):
         materialize_behavior_supervised_interface(source, output, force=True)
     assert sentinel.read_text(encoding="utf-8") == "do not delete"
+
+
+def test_force_validates_new_source_before_replacing_last_valid_interface(tmp_path: Path) -> None:
+    source = tmp_path / "probe_primary_30s.csv"
+    output = tmp_path / "supervised_interface_v1"
+    _minimal_probe().to_csv(source, index=False)
+    materialize_behavior_supervised_interface(source, output)
+    previous_manifest = (output / "behavior_supervised_interface_manifest.json").read_text(encoding="utf-8")
+
+    bad = _minimal_probe()
+    bad["participant_group_id"] = bad["session_id"]
+    bad["repeat_participant_id"] = bad["session_id"]
+    bad.to_csv(source, index=False)
+    with pytest.raises(BehaviorSupervisedInterfaceError, match="participant identity contract"):
+        materialize_behavior_supervised_interface(source, output, force=True)
+
+    assert (output / "behavior_supervised_interface_manifest.json").read_text(encoding="utf-8") == previous_manifest
