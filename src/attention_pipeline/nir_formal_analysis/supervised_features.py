@@ -19,6 +19,8 @@ PRIMARY_VALID_COLUMNS: Final = (
     "left_pupil_valid_primary",
     "right_pupil_valid_primary",
 )
+FORMAL_SIDECAR_RAW_COLUMN: Final = f"{BASE_SIGNAL}__raw"
+FORMAL_SIDECAR_VALID_COLUMN: Final = f"{BASE_SIGNAL}__valid_primary"
 PRIMARY_WINDOW_SEC: Final = 30
 SENSITIVITY_WINDOW_SEC: Final = (10, 20)
 ALLOWED_WINDOW_SEC: Final = (10, 20, 30)
@@ -71,32 +73,48 @@ def _finite_positive(series: pd.Series) -> pd.Series:
     )
 
 
-def build_raw_binocular_timepoints(frame: pd.DataFrame) -> pd.DataFrame:
-    """Build the zero-calibration binocular pupil series from raw eye values.
+def _derive_block(frame: pd.DataFrame) -> pd.Series:
+    if "block" in frame.columns:
+        block = pd.to_numeric(frame["block"], errors="coerce")
+    elif "block_num" in frame.columns:
+        block = pd.to_numeric(frame["block_num"], errors="coerce")
+    elif "phase" in frame.columns:
+        phase = frame["phase"].astype("string").str.strip().str.lower()
+        block = pd.to_numeric(
+            phase.str.extract(r"^block\s*([12])$", expand=False), errors="coerce"
+        )
+    else:
+        raise ValueError(
+            "analysis-ready frame requires block/block_num or formal phase=block1/block2"
+        )
+    if block.isna().any():
+        raise ValueError("analysis-ready frame has rows without a formal block identity")
+    return block.astype(int)
 
-    The existing analysis-ready table also contains session×eye centered/robust-z
-    columns. Those columns are intentionally ignored here because a new-participant
-    probe feature must be computable from the current pre-probe window alone.
-    """
 
-    required = {
-        "session_id",
-        "block",
-        "unix_ms",
-        *RAW_VALUE_COLUMNS,
-        *PRIMARY_VALID_COLUMNS,
-    }
-    missing = sorted(required - set(frame.columns))
-    if missing:
-        raise ValueError(f"analysis-ready frame missing supervised NIR columns: {missing}")
+def _optional_metadata_columns(frame: pd.DataFrame) -> list[str]:
+    return [
+        name
+        for name in (
+            "subject",
+            "analysis_group_token",
+            "participant_group_id",
+            "phase",
+            "phase_segment",
+            "video_time_ms",
+            "phase_time_ms",
+        )
+        if name in frame.columns
+    ]
 
+
+def _build_from_wide_eye_columns(frame: pd.DataFrame) -> pd.DataFrame:
     out = pd.DataFrame(index=frame.index)
     for name in (
         "session_id",
         "subject",
         "analysis_group_token",
         "participant_group_id",
-        "block",
         "phase",
         "phase_segment",
         "frame_idx",
@@ -106,18 +124,139 @@ def build_raw_binocular_timepoints(frame: pd.DataFrame) -> pd.DataFrame:
     ):
         if name in frame.columns:
             out[name] = frame[name]
+    out["block"] = _derive_block(frame)
 
     left = pd.to_numeric(frame["left_raw_pupil_diameter"], errors="coerce")
     right = pd.to_numeric(frame["right_raw_pupil_diameter"], errors="coerce")
     left_valid = _bool_series(frame["left_pupil_valid_primary"]) & _finite_positive(left)
     right_valid = _bool_series(frame["right_pupil_valid_primary"]) & _finite_positive(right)
 
+    out["left_raw_pupil_diameter"] = left
+    out["right_raw_pupil_diameter"] = right
+    out["left_pupil_valid_primary"] = left_valid
+    out["right_pupil_valid_primary"] = right_valid
+    return out
+
+
+def _build_from_formal_sidecar(frame: pd.DataFrame) -> pd.DataFrame:
+    required = {
+        "session_id",
+        "eye",
+        "unix_ms",
+        FORMAL_SIDECAR_RAW_COLUMN,
+        FORMAL_SIDECAR_VALID_COLUMN,
+    }
+    missing = sorted(required - set(frame.columns))
+    if missing:
+        raise ValueError(f"formal candidate sidecar missing supervised NIR columns: {missing}")
+
+    work = frame.copy()
+    work["block"] = _derive_block(work)
+    work["session_id"] = work["session_id"].astype(str)
+    work["eye"] = work["eye"].astype("string").str.strip().str.lower()
+    invalid_eyes = sorted(set(work["eye"].dropna().astype(str)) - {"left", "right"})
+    if invalid_eyes:
+        raise ValueError(f"formal candidate sidecar has unsupported eye labels: {invalid_eyes}")
+
+    work["unix_ms"] = pd.to_numeric(work["unix_ms"], errors="coerce")
+    if work["unix_ms"].isna().any():
+        raise ValueError("formal candidate sidecar has missing unix_ms for supervised NIR")
+
+    work["_raw_value"] = pd.to_numeric(work[FORMAL_SIDECAR_RAW_COLUMN], errors="coerce")
+    work["_valid_value"] = (
+        _bool_series(work[FORMAL_SIDECAR_VALID_COLUMN])
+        & _finite_positive(work["_raw_value"])
+    )
+
+    index_cols = ["session_id", "block", "unix_ms"]
+    if "frame_idx" in work.columns:
+        index_cols.append("frame_idx")
+
+    duplicate_eye_key = [*index_cols, "eye"]
+    if work.duplicated(duplicate_eye_key, keep=False).any():
+        raise ValueError(f"duplicate formal candidate sidecar eye-time key: {duplicate_eye_key}")
+
+    raw = work.pivot(index=index_cols, columns="eye", values="_raw_value")
+    valid = work.pivot(index=index_cols, columns="eye", values="_valid_value")
+    base = raw.index.to_frame(index=False)
+
+    metadata_cols = _optional_metadata_columns(work)
+    if metadata_cols:
+        metadata = (
+            work.groupby(index_cols, sort=False, dropna=False)[metadata_cols]
+            .first()
+            .reindex(raw.index)
+            .reset_index(drop=True)
+        )
+        base = pd.concat([base.reset_index(drop=True), metadata], axis=1)
+
+    base["left_raw_pupil_diameter"] = (
+        pd.to_numeric(raw["left"], errors="coerce").to_numpy()
+        if "left" in raw.columns
+        else np.nan
+    )
+    base["right_raw_pupil_diameter"] = (
+        pd.to_numeric(raw["right"], errors="coerce").to_numpy()
+        if "right" in raw.columns
+        else np.nan
+    )
+    base["left_pupil_valid_primary"] = (
+        valid["left"].fillna(False).astype(bool).to_numpy()
+        if "left" in valid.columns
+        else False
+    )
+    base["right_pupil_valid_primary"] = (
+        valid["right"].fillna(False).astype(bool).to_numpy()
+        if "right" in valid.columns
+        else False
+    )
+    return base
+
+
+def build_raw_binocular_timepoints(frame: pd.DataFrame) -> pd.DataFrame:
+    """Build the zero-calibration binocular pupil series from accepted raw inputs.
+
+    The production path consumes the current long-form candidate sidecar
+    (one eye per row: ``eye`` + ``pupil_geom_mean_diameter__raw`` +
+    ``pupil_geom_mean_diameter__valid_primary``). A pre-widened left/right schema
+    remains accepted only as a compatibility/testing input.
+
+    Session×eye centered/robust-z columns are intentionally ignored because a
+    new-participant probe feature must be computable from the current pre-probe
+    window alone.
+    """
+
+    if "session_id" not in frame.columns or "unix_ms" not in frame.columns:
+        raise ValueError("analysis-ready frame missing session_id/unix_ms for supervised NIR")
+
+    wide_required = {*RAW_VALUE_COLUMNS, *PRIMARY_VALID_COLUMNS}
+    if wide_required.issubset(frame.columns):
+        out = _build_from_wide_eye_columns(frame)
+        input_schema = "prewidened_eye_compatibility"
+    elif {
+        "eye",
+        FORMAL_SIDECAR_RAW_COLUMN,
+        FORMAL_SIDECAR_VALID_COLUMN,
+    }.issubset(frame.columns):
+        out = _build_from_formal_sidecar(frame)
+        input_schema = "formal_candidate_sidecar_long"
+    else:
+        raise ValueError(
+            "analysis-ready frame does not match accepted supervised NIR schemas: "
+            f"formal long sidecar requires eye/{FORMAL_SIDECAR_RAW_COLUMN}/"
+            f"{FORMAL_SIDECAR_VALID_COLUMN}; compatibility wide input requires "
+            f"{sorted(wide_required)}"
+        )
+
+    left = pd.to_numeric(out["left_raw_pupil_diameter"], errors="coerce")
+    right = pd.to_numeric(out["right_raw_pupil_diameter"], errors="coerce")
+    left_valid = _bool_series(out["left_pupil_valid_primary"]) & _finite_positive(left)
+    right_valid = _bool_series(out["right_pupil_valid_primary"]) & _finite_positive(right)
+
     both = left_valid & right_valid
     left_only = left_valid & ~right_valid
     right_only = ~left_valid & right_valid
 
-    out["left_raw_pupil_diameter"] = left
-    out["right_raw_pupil_diameter"] = right
     out["left_pupil_valid_primary"] = left_valid
     out["right_pupil_valid_primary"] = right_valid
     out["raw_binocular_pupil"] = np.select(
@@ -132,6 +271,7 @@ def build_raw_binocular_timepoints(frame: pd.DataFrame) -> pd.DataFrame:
     )
     out["base_signal"] = BASE_SIGNAL
     out["zero_calibration_source"] = "raw_current_probe_window_only"
+    out["supervised_input_schema"] = input_schema
 
     out["unix_ms"] = pd.to_numeric(out["unix_ms"], errors="coerce")
     out["block"] = pd.to_numeric(out["block"], errors="coerce")
@@ -144,7 +284,10 @@ def build_raw_binocular_timepoints(frame: pd.DataFrame) -> pd.DataFrame:
     if out.duplicated(key, keep=False).any():
         raise ValueError(f"duplicate supervised NIR timepoint key: {key}")
 
-    return out.sort_values(["session_id", "block", "unix_ms"], kind="stable").reset_index(drop=True)
+    sort_cols = ["session_id", "block", "unix_ms"]
+    if "frame_idx" in out.columns:
+        sort_cols.append("frame_idx")
+    return out.sort_values(sort_cols, kind="stable").reset_index(drop=True)
 
 
 def select_preprobe_window(
@@ -188,14 +331,7 @@ def select_preprobe_window(
 
 
 def summarize_supervised_window(window: pd.DataFrame) -> dict[str, object]:
-    """Return the frozen compact NIR candidate family for one pre-probe window.
-
-    Numeric summaries reuse ``nir_behavior.features.summarize_signal`` so the
-    supervised interface cannot silently drift to a different slope/statistic
-    implementation.  Estimability is stricter than the historical generic
-    summary: variability requires at least two valid samples, and the trend
-    requires the existing robust-binned slope implementation to return a value.
-    """
+    """Return the frozen compact NIR candidate family for one pre-probe window."""
 
     required = {"unix_ms", "raw_binocular_pupil"}
     missing = sorted(required - set(window.columns))
