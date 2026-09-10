@@ -50,9 +50,14 @@ def test_current_mainline_forbidden_inputs_fail_closed() -> None:
             validate_mainline_feature_scheme(FeatureScheme("bad", (column,)))
 
 
-def test_duplicate_features_and_duplicate_scheme_ids_are_rejected() -> None:
+def test_duplicate_features_duplicate_modality_blocks_and_duplicate_scheme_ids_are_rejected() -> None:
     with pytest.raises(SupervisedLearningContractError, match="duplicate columns"):
         validate_mainline_feature_scheme(FeatureScheme("dup", ("x", "x")))
+
+    with pytest.raises(SupervisedLearningContractError, match="duplicate modality_blocks"):
+        validate_mainline_feature_scheme(
+            FeatureScheme("dup-block", ("x",), modality_blocks=("behavior", "behavior"))
+        )
 
     with pytest.raises(SupervisedLearningContractError, match="feature_set_id values must be unique"):
         load_feature_schemes(
