@@ -27,6 +27,7 @@ _FAILURE_COLUMNS = (
     "n_outer_test_rows",
     "reason",
 )
+_FOLD_KEY = ("model_id", "outer_fold_group")
 
 
 def _json_default(value: Any) -> Any:
@@ -45,10 +46,21 @@ def _json_default(value: Any) -> Any:
     raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
+def _key_set(frame: pd.DataFrame, columns: tuple[str, str]) -> set[tuple[str, str]]:
+    if frame.empty:
+        return set()
+    return {
+        (str(model_id), str(group_id))
+        for model_id, group_id in frame.loc[:, list(columns)].itertuples(index=False, name=None)
+    }
+
+
 def _validate_prediction_contract(result: SupervisedRunResult) -> None:
     predictions = result.predictions
     required = {
         "run_id",
+        "analysis_set_id",
+        "participant_group_id",
         "model_id",
         "outer_fold_group",
         "session_id",
@@ -56,6 +68,8 @@ def _validate_prediction_contract(result: SupervisedRunResult) -> None:
         "probe_event_id",
         "q1_nominal_4class",
         "q1_binary",
+        "feature_set_id",
+        "selected_c",
         "p_q1_equals_1",
         "predicted_q1_binary",
         "model_failed",
@@ -69,14 +83,15 @@ def _validate_prediction_contract(result: SupervisedRunResult) -> None:
 
     n_input = result.metadata.get("n_input_rows")
     n_models = result.metadata.get("n_models")
-    if n_input is None or n_models is None:
+    n_groups = result.metadata.get("n_participant_groups")
+    if n_input is None or n_models is None or n_groups is None:
         raise SupervisedLearningContractError(
-            "run metadata must contain n_input_rows and n_models"
+            "run metadata must contain n_input_rows, n_models and n_participant_groups"
         )
-    expected = int(n_input) * int(n_models)
-    if len(predictions) != expected:
+    expected_predictions = int(n_input) * int(n_models)
+    if len(predictions) != expected_predictions:
         raise SupervisedLearningContractError(
-            f"prediction row count mismatch: got {len(predictions)}, expected {expected}"
+            f"prediction row count mismatch: got {len(predictions)}, expected {expected_predictions}"
         )
 
     duplicate_key = ["model_id", "session_id", "block_id", "probe_event_id"]
@@ -84,6 +99,67 @@ def _validate_prediction_contract(result: SupervisedRunResult) -> None:
         raise SupervisedLearningContractError(
             f"duplicate prediction rows for key {duplicate_key}"
         )
+
+    expected_audits = int(n_groups) * int(n_models)
+    if len(result.fold_audits) != expected_audits:
+        raise SupervisedLearningContractError(
+            f"fold audit count mismatch: got {len(result.fold_audits)}, expected {expected_audits}"
+        )
+    audit_frame = pd.DataFrame(result.fold_audits)
+    audit_required = {"run_id", "analysis_set_id", "model_id", "outer_fold_group", "failed", "reason"}
+    missing_audit = sorted(audit_required - set(audit_frame.columns))
+    if missing_audit:
+        raise SupervisedLearningContractError(
+            f"fold audit output missing required fields: {missing_audit}"
+        )
+    if audit_frame.duplicated(list(_FOLD_KEY)).any():
+        raise SupervisedLearningContractError(
+            f"duplicate fold audit rows for key {list(_FOLD_KEY)}"
+        )
+
+    failures = result.failures
+    if failures.empty and len(failures.columns) == 0:
+        failure_keys: set[tuple[str, str]] = set()
+    else:
+        missing_failure = sorted(set(_FAILURE_COLUMNS) - set(failures.columns))
+        if missing_failure:
+            raise SupervisedLearningContractError(
+                f"failure table missing required columns: {missing_failure}"
+            )
+        if failures.duplicated(list(_FOLD_KEY)).any():
+            raise SupervisedLearningContractError(
+                f"duplicate failure rows for key {list(_FOLD_KEY)}"
+            )
+        failure_keys = _key_set(failures, _FOLD_KEY)
+
+    failed_audit_keys = _key_set(audit_frame.loc[audit_frame["failed"].astype(bool)], _FOLD_KEY)
+    failed_prediction_keys = _key_set(predictions.loc[predictions["model_failed"].astype(bool)], _FOLD_KEY)
+    if failure_keys != failed_audit_keys or failure_keys != failed_prediction_keys:
+        raise SupervisedLearningContractError(
+            "failed-fold keys disagree across predictions, fold audits and failure table"
+        )
+
+    successful = predictions.loc[~predictions["model_failed"].astype(bool)]
+    if not successful.empty:
+        p = pd.to_numeric(successful["p_q1_equals_1"], errors="coerce")
+        if p.isna().any() or ((p < 0.0) | (p > 1.0)).any():
+            raise SupervisedLearningContractError(
+                "successful prediction rows must contain finite p_q1_equals_1 within [0, 1]"
+            )
+        predicted = pd.to_numeric(successful["predicted_q1_binary"], errors="coerce")
+        if predicted.isna().any() or not predicted.isin([0, 1]).all():
+            raise SupervisedLearningContractError(
+                "successful prediction rows must contain binary predicted_q1_binary"
+            )
+        selected_c = pd.to_numeric(successful["selected_c"], errors="coerce")
+        if selected_c.isna().any() or (selected_c <= 0).any():
+            raise SupervisedLearningContractError(
+                "successful prediction rows must contain a finite positive selected_c"
+            )
+        if successful["feature_set_id"].isna().any() or successful["feature_set_id"].astype(str).str.strip().eq("").any():
+            raise SupervisedLearningContractError(
+                "successful prediction rows must contain a non-empty feature_set_id"
+            )
 
 
 def write_supervised_run(
