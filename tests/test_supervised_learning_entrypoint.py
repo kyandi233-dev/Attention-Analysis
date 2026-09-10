@@ -166,3 +166,23 @@ def test_runtime_config_cannot_replace_participant_grouping_with_session_groupin
 
     with pytest.raises(SupervisedLearningContractError, match="participant_group_id"):
         run_supervised_from_config(config_path, paths_config=paths_path, run_id="blocked")
+
+
+def test_runtime_config_cannot_mix_modality_compositions_within_one_model_family(tmp_path) -> None:
+    input_path = tmp_path / "probe_table.csv"
+    output_root = tmp_path / "outputs"
+    frame = _probe_table()
+    frame["nir_signal"] = 0.5
+    frame.to_csv(input_path, index=False)
+    config_data, paths_data = _config(input_path, output_root)
+    config_data["feature_schemes"]["model_families"]["behavior"]["candidates"].append(
+        {
+            "feature_set_id": "behavior_plus_nir_wrong_family",
+            "columns": ["behavior_signal", "nir_signal"],
+            "modality_blocks": ["behavior", "nir"],
+        }
+    )
+    config_path, paths_path = _write_configs(tmp_path, config_data, paths_data)
+
+    with pytest.raises(SupervisedLearningContractError, match="same modality_blocks"):
+        run_supervised_from_config(config_path, paths_config=paths_path, run_id="blocked")
