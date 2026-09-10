@@ -1,6 +1,6 @@
 """Nested model selection and complete outer-training refit.
 
-The selection API receives only outer-training rows.  Every inner split fits its
+The selection API receives only outer-training rows. Every inner split fits its
 own preprocessing state on inner-training participants, applies that frozen state
 to inner validation, and evaluates predeclared feature schemes plus Logistic C.
 Outer-test rows are accepted only by the final refit/predict function and never by
@@ -69,9 +69,11 @@ def _binary_labels(y: Sequence[object] | np.ndarray, expected_n: int) -> np.ndar
 def _fit_logistic(x: pd.DataFrame, y: np.ndarray, *, c: float, max_iter: int, seed: int) -> LogisticRegression:
     if len(np.unique(y)) < 2:
         raise ModelSelectionError("training split contains only one binary class")
+    # LogisticRegression uses L2 regularization by default throughout the supported
+    # scikit-learn range. Omitting the deprecated explicit penalty="l2" spelling
+    # keeps the same scientific model while remaining forward-compatible.
     model = LogisticRegression(
         C=float(c),
-        penalty="l2",
         solver="lbfgs",
         max_iter=int(max_iter),
         random_state=int(seed),
@@ -94,7 +96,7 @@ def select_logistic_model(
     """Select feature scheme and C using genuinely nested grouped CV.
 
     Preprocessing is fitted once per (scheme, inner split), never on all outer
-    training rows before inner validation.  A candidate is eligible only when it
+    training rows before inner validation. A candidate is eligible only when it
     succeeds on every declared inner split; failures are preserved in the audit.
     """
     if group_col not in outer_train.columns:

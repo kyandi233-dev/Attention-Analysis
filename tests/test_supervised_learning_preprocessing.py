@@ -79,6 +79,7 @@ def test_missing_or_non_numeric_feature_fails_closed() -> None:
         fit_preprocessing(train, columns=["not_here"])
 
     bad = train[["participant_group_id", "dense"]].copy()
+    bad["dense"] = bad["dense"].astype(object)
     bad.loc[0, "dense"] = "bad-value"
     with pytest.raises(PreprocessingContractError, match="non-numeric values in feature dense"):
         fit_preprocessing(bad, columns=["dense"])

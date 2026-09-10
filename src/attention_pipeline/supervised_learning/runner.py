@@ -1,8 +1,8 @@
 """Participant-disjoint outer LOSO orchestration for Task A.
 
-The runner consumes an already aligned/admitted probe-level frame.  It does not
+The runner consumes an already aligned/admitted probe-level frame. It does not
 construct analysis sets, infer modality availability, or apply producer QC; those
-belong upstream.  Its responsibility begins at an explicit analysis frame and
+belong upstream. Its responsibility begins at an explicit analysis frame and
 ends with fold audits plus one prediction row per held-out probe and model.
 """
 from __future__ import annotations
@@ -14,13 +14,24 @@ import numpy as np
 import pandas as pd
 
 from .feature_schemes import FeatureScheme, require_scheme_columns, validate_mainline_feature_scheme
-from .models import ModelSelectionError, refit_logistic_and_predict, select_logistic_model
+from .models import refit_logistic_and_predict, select_logistic_model
 from .task import Q1_BINARY_SPEC, SupervisedLearningContractError, encode_q1_binary
 
 
 DEFAULT_GROUP_COLUMN = "participant_group_id"
 REQUIRED_PROBE_LOCATORS = ("session_id", "block_id", "probe_event_id")
-OPTIONAL_PROBE_LOCATORS = ("probe_order_in_block", "probe_time_ms", "window_name")
+OPTIONAL_PROBE_LOCATORS = (
+    "probe_id",
+    "probe_order_in_block",
+    "probe_index_in_block",
+    "probe_index_global",
+    "probe_time_ms",
+    "probe_onset_unix_ms",
+    "window_name",
+    "window_start_unix_ms",
+    "window_effective_start_unix_ms",
+    "window_end_unix_ms",
+)
 
 
 @dataclass
@@ -68,7 +79,6 @@ def _validate_frame(
     if not model_feature_schemes:
         raise SupervisedLearningContractError("at least one model/feature-scheme family is required")
 
-    normalized: dict[str, Sequence[FeatureScheme]] = {}
     for model_id, schemes in model_feature_schemes.items():
         name = str(model_id).strip()
         if not name:
@@ -78,7 +88,6 @@ def _validate_frame(
         for scheme in schemes:
             validate_mainline_feature_scheme(scheme)
             require_scheme_columns(frame, scheme)
-        normalized[name] = schemes
 
     encoded = encode_q1_binary(frame[Q1_BINARY_SPEC.source_column])
     if encoded.isna().any():
@@ -136,7 +145,6 @@ def run_nested_loso(
             raise SupervisedLearningContractError("outer test fold does not contain exactly the held-out participant")
 
         y_train = outer_train["q1_binary"].to_numpy(dtype=int)
-        y_test = outer_test["q1_binary"].to_numpy(dtype=int)
 
         for model_index, (model_id, schemes) in enumerate(model_items):
             fold_seed = int(seed) + outer_index * 10000 + model_index * 1000
