@@ -1,0 +1,42 @@
+name: Task A supervised-learning CI
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  supervised-task-a:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install package and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+
+      - name: Compile Task A modules
+        run: |
+          python -m py_compile \
+            src/attention_pipeline/supervised_learning/__init__.py \
+            src/attention_pipeline/supervised_learning/task.py \
+            src/attention_pipeline/supervised_learning/preprocessing.py \
+            src/attention_pipeline/supervised_learning/feature_schemes.py \
+            src/attention_pipeline/supervised_learning/models.py \
+            src/attention_pipeline/supervised_learning/runner.py
+
+      - name: Run Task A contract tests
+        run: |
+          python -m pytest -q \
+            tests/test_supervised_learning_task.py \
+            tests/test_supervised_learning_preprocessing.py \
+            tests/test_supervised_learning_feature_schemes.py \
+            tests/test_supervised_learning_models.py \
+            tests/test_supervised_learning_runner.py
