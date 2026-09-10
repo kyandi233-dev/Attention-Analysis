@@ -15,6 +15,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from attention_pipeline.formal_analysis.identity_contract import assert_participant_group_contract
+
 from .behavior_supervised_contract import (
     FIRST_ROUND_OMISSION_DESCRIPTIVE_QC_ONLY,
     FIRST_ROUND_SUPERVISED_OMISSION_PREDICTORS,
@@ -30,6 +32,14 @@ IDENTITY_LOCATOR_COLUMNS = (
     "session_id",
     "block_id",
     "probe_event_id",
+)
+
+OPTIONAL_IDENTITY_AUDIT_COLUMNS = (
+    "repeat_participant_id",
+    "participant_key",
+    "participant_identity_source",
+    "participant_identity_resolved_for_clustering",
+    "legacy_repeat_participant_id",
 )
 
 OUTCOME_COLUMNS = (
@@ -71,6 +81,19 @@ WINDOW_AUDIT_COLUMNS = (
     "probe_time_ms",
 )
 
+COMPUTABILITY_AUDIT_COLUMNS = (
+    "rt_variability_valid_n",
+    "rt_cv_status",
+    "rt_slope_status",
+    "rt_slope_fit_scope",
+    "sdt_status",
+    "omission_taxonomy_status",
+    "omission_primary_partition_check",
+    "omission_subtype_partition_check",
+    "omission_taxonomy_denominator_contract",
+    "metric_units",
+)
+
 OPPORTUNITY_AUDIT_COLUMNS = (
     "trial_opportunities",
     "go_opportunities",
@@ -103,39 +126,80 @@ def _nonempty_string(series: pd.Series) -> pd.Series:
     return series.notna() & series.astype(str).str.strip().ne("")
 
 
+def _strict_boolean(series: pd.Series, *, column: str) -> pd.Series:
+    """Parse a boolean contract without treating non-empty strings as True."""
+    if series.isna().any():
+        raise BehaviorSupervisedInterfaceError(f"{column} contains missing values")
+    if pd.api.types.is_bool_dtype(series):
+        return series.astype(bool)
+    normalized = series.astype(str).str.strip().str.lower()
+    parsed = normalized.map({"true": True, "false": False, "1": True, "0": False})
+    if parsed.isna().any():
+        bad = sorted(normalized.loc[parsed.isna()].unique().tolist())
+        raise BehaviorSupervisedInterfaceError(f"{column} contains invalid boolean values: {bad}")
+    return parsed.astype(bool)
+
+
 def build_behavior_supervised_probe_table(primary_probe: pd.DataFrame) -> pd.DataFrame:
     """Return one unchanged-observation row per authoritative 30s probe.
 
     Missing feature cells are preserved exactly. No full-cohort coverage filter,
     imputation, scaling or empirical redundancy selection occurs here.
     """
-    required = tuple(dict.fromkeys((*IDENTITY_LOCATOR_COLUMNS, *OUTCOME_COLUMNS, *FIRST_ROUND_CANDIDATE_POOL)))
+    required = tuple(dict.fromkeys((
+        *IDENTITY_LOCATOR_COLUMNS,
+        *OUTCOME_COLUMNS,
+        *FIRST_ROUND_CANDIDATE_POOL,
+        "window_seconds_nominal",
+        "analysis_role",
+        "formal_independent_sample",
+        "anchor_trial_excluded",
+        "window_crosses_block",
+    )))
     _require_columns(primary_probe, required)
     if primary_probe.empty:
         raise BehaviorSupervisedInterfaceError("primary behavior probe table is empty")
     for column in IDENTITY_LOCATOR_COLUMNS:
         if not _nonempty_string(primary_probe[column]).all():
             raise BehaviorSupervisedInterfaceError(f"identity/locator column contains missing or blank values: {column}")
+
+    try:
+        assert_participant_group_contract(primary_probe, require_resolved=True)
+    except ValueError as exc:
+        raise BehaviorSupervisedInterfaceError(f"participant identity contract failed: {exc}") from exc
+
     if primary_probe["probe_event_id"].astype(str).duplicated().any():
         raise BehaviorSupervisedInterfaceError("primary behavior probe_event_id must be unique")
 
-    if "window_seconds_nominal" in primary_probe.columns:
-        window = pd.to_numeric(primary_probe["window_seconds_nominal"], errors="coerce")
-        if window.isna().any() or not window.eq(PRIMARY_WINDOW_SECONDS).all():
-            raise BehaviorSupervisedInterfaceError("Behavior supervised interface accepts primary 30-second probes only")
-    if "anchor_trial_excluded" in primary_probe.columns:
-        if not primary_probe["anchor_trial_excluded"].fillna(False).astype(bool).all():
-            raise BehaviorSupervisedInterfaceError("anchor trial exclusion contract failed")
-    if "window_crosses_block" in primary_probe.columns:
-        if primary_probe["window_crosses_block"].fillna(False).astype(bool).any():
-            raise BehaviorSupervisedInterfaceError("probe window crossing block boundary is forbidden")
+    window = pd.to_numeric(primary_probe["window_seconds_nominal"], errors="coerce")
+    if window.isna().any() or not window.eq(PRIMARY_WINDOW_SECONDS).all():
+        raise BehaviorSupervisedInterfaceError("Behavior supervised interface accepts primary 30-second probes only")
+
+    role = primary_probe["analysis_role"].astype(str).str.strip()
+    if not role.eq("primary_probe").all():
+        bad = sorted(role.loc[~role.eq("primary_probe")].unique().tolist())
+        raise BehaviorSupervisedInterfaceError(f"analysis_role must be primary_probe for every row; got {bad}")
+
+    independent = _strict_boolean(primary_probe["formal_independent_sample"], column="formal_independent_sample")
+    if not independent.all():
+        raise BehaviorSupervisedInterfaceError("formal_independent_sample must be true for every primary probe row")
+
+    anchor_excluded = _strict_boolean(primary_probe["anchor_trial_excluded"], column="anchor_trial_excluded")
+    if not anchor_excluded.all():
+        raise BehaviorSupervisedInterfaceError("anchor trial exclusion contract failed")
+
+    crosses_block = _strict_boolean(primary_probe["window_crosses_block"], column="window_crosses_block")
+    if crosses_block.any():
+        raise BehaviorSupervisedInterfaceError("probe window crossing block boundary is forbidden")
 
     validate_first_round_omission_predictors(FIRST_ROUND_CANDIDATE_POOL)
     ordered = list(IDENTITY_LOCATOR_COLUMNS)
+    ordered.extend(c for c in OPTIONAL_IDENTITY_AUDIT_COLUMNS if c in primary_probe.columns)
     ordered.extend(c for c in WINDOW_AUDIT_COLUMNS if c in primary_probe.columns)
     ordered.extend(OUTCOME_COLUMNS)
     ordered.extend(FIRST_ROUND_CANDIDATE_POOL)
     ordered.extend(c for c in DESCRIPTIVE_QC_COLUMNS if c in primary_probe.columns)
+    ordered.extend(c for c in COMPUTABILITY_AUDIT_COLUMNS if c in primary_probe.columns)
     ordered.extend(c for c in OPPORTUNITY_AUDIT_COLUMNS if c in primary_probe.columns)
     ordered = list(dict.fromkeys(ordered))
 
@@ -167,7 +231,7 @@ def _field_role(field: str) -> tuple[str, str]:
         return "candidate_pending_final_scientific_freeze", "commission vs dprime joint retention remains unresolved"
     if field in DESCRIPTIVE_QC_COLUMNS:
         return "descriptive_qc_sensitivity_only", "not a first-round supervised predictor"
-    return "audit_only", "opportunity/window/denominator provenance"
+    return "audit_only", "identity/window/opportunity/computability provenance"
 
 
 def build_behavior_supervised_feature_audit(interface: pd.DataFrame) -> pd.DataFrame:
@@ -177,6 +241,7 @@ def build_behavior_supervised_feature_audit(interface: pd.DataFrame) -> pd.DataF
         *OUTCOME_COLUMNS,
         *FIRST_ROUND_CANDIDATE_POOL,
         *[c for c in DESCRIPTIVE_QC_COLUMNS if c in interface.columns],
+        *[c for c in COMPUTABILITY_AUDIT_COLUMNS if c in interface.columns],
         *[c for c in OPPORTUNITY_AUDIT_COLUMNS if c in interface.columns],
     ]
     for field in dict.fromkeys(fields):
@@ -184,7 +249,8 @@ def build_behavior_supervised_feature_audit(interface: pd.DataFrame) -> pd.DataF
             continue
         value = interface[field]
         if pd.api.types.is_numeric_dtype(value):
-            valid = pd.to_numeric(value, errors="coerce").notna()
+            numeric = pd.to_numeric(value, errors="coerce")
+            valid = pd.Series(np.isfinite(numeric.to_numpy(dtype=float)), index=value.index)
         else:
             valid = _nonempty_string(value)
         role, note = _field_role(field)
@@ -209,6 +275,27 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _assert_safe_force_target(source: Path, output: Path) -> None:
+    """Allow recursive replacement only for a recognized prior Task C interface."""
+    if source == output or source.is_relative_to(output):
+        raise BehaviorSupervisedInterfaceError(
+            "refusing force replacement because the source file is inside the output directory"
+        )
+    marker = output / "behavior_supervised_interface_manifest.json"
+    if not marker.is_file():
+        raise BehaviorSupervisedInterfaceError(
+            "refusing force replacement of an existing directory without a Task C interface manifest"
+        )
+    try:
+        previous = json.loads(marker.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise BehaviorSupervisedInterfaceError("existing Task C interface manifest is unreadable") from exc
+    if previous.get("interface_version") != INTERFACE_VERSION:
+        raise BehaviorSupervisedInterfaceError(
+            "refusing force replacement because the existing directory is not the same Task C interface version"
+        )
+
+
 def materialize_behavior_supervised_interface(
     source_path: str | Path,
     output_root: str | Path,
@@ -224,6 +311,7 @@ def materialize_behavior_supervised_interface(
     if output.exists():
         if not force:
             raise FileExistsError(f"Behavior supervised interface output already exists: {output}")
+        _assert_safe_force_target(source, output)
         shutil.rmtree(output)
     output.mkdir(parents=True, exist_ok=False)
 
@@ -247,6 +335,8 @@ def materialize_behavior_supervised_interface(
         "n_participant_groups": int(interface["participant_group_id"].astype(str).nunique()),
         "n_sessions": int(interface["session_id"].astype(str).nunique()),
         "probe_event_id_unique": bool(interface["probe_event_id"].is_unique),
+        "participant_identity_contract_checked": True,
+        "primary_probe_role_contract_checked": True,
         "row_filter_applied": False,
         "imputation_applied": False,
         "scaling_applied": False,
@@ -256,6 +346,7 @@ def materialize_behavior_supervised_interface(
         "q2_role": "interpretation_construct_only_not_predictor",
         "first_round_candidate_pool": list(FIRST_ROUND_CANDIDATE_POOL),
         "descriptive_qc_only": list(DESCRIPTIVE_QC_COLUMNS),
+        "computability_audit_fields": [c for c in COMPUTABILITY_AUDIT_COLUMNS if c in interface.columns],
         "files": {
             "probe_table": interface_path.name,
             "feature_audit": audit_path.name,
