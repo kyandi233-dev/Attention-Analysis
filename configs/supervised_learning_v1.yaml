@@ -7,6 +7,12 @@ pipeline:
   implementation_plan: 分析设计/1.15.7-监督学习并行实施计划_20260910.md
   random_seed: 20260910
 
+paths:
+  input_table:
+    path_key: supervised_learning_input_probe_table
+  output_root:
+    path_key: supervised_learning_output_root
+
 task:
   name: q1_equals_1_vs_2_3_4
   analysis_unit: probe_preceding_window
@@ -42,7 +48,7 @@ preprocessing:
 
 feature_schemes:
   status: interface_only_pending_task_c_d
-  candidates: []
+  model_families: {}
   mainline_forbidden_columns:
     - q1_nominal_4class
     - q2_ordinal_4level
@@ -58,7 +64,7 @@ feature_schemes:
     - probe_id
     - window_name
   participant_specific_suffixes_forbidden: [_within, _between]
-  note: "Task A provides the nested selection interface; C/D supply or freeze modality candidate schemes."
+  note: "Task A provides the nested selection interface; C/D supply or freeze model-family candidate schemes. Candidate schemes compete only within the same model family."
 
 models:
   primary:
