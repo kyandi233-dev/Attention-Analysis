@@ -23,6 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def _primary_probe() -> pd.DataFrame:
     rows = []
     for i in range(3):
+        n_rt = [12, 3, 10][i]
         rows.append({
             "participant_group_id": f"P-{i // 2}",
             "session_id": f"S-{i}",
@@ -40,7 +41,7 @@ def _primary_probe() -> pd.DataFrame:
             "q2_ordinal_4level": [2, 3, 1][i],
             "go_correct_rt_mean_ms": 400.0 + i,
             "go_correct_rt_median_ms": 395.0 + i,
-            "go_correct_rt_cv": np.nan if i == 1 else 0.12 + i * 0.01,
+            "go_correct_rt_cv": 0.12 + i * 0.01,
             "go_correct_rt_sd_ms": 45.0 + i,
             "go_correct_rt_mad_ms": 30.0 + i,
             "go_correct_rt_iqr_ms": 60.0 + i,
@@ -48,13 +49,24 @@ def _primary_probe() -> pd.DataFrame:
             "raw_go_omission_rate": 0.05 * i,
             "clean_go_omission_rate": 0.03 * i,
             "timing_ambiguous_go_omission_rate": 0.02 * i,
+            "omission_prestimulus_only_ambiguity_rate": 0.0,
+            "omission_carryover_only_ambiguity_rate": 0.0,
+            "omission_prestimulus_and_carryover_ambiguity_rate": 0.0,
+            "late_go_response_candidate_rate": 0.0,
+            "anticipatory_go_response_candidate_rate": 0.0,
             "commission_rate": 0.10 + 0.01 * i,
             "dprime_loglinear": 2.0 - 0.1 * i,
             "omission_rate": 0.05 * i,
             "trial_opportunities": 20,
             "go_opportunities": 16,
             "nogo_opportunities": 4,
-            "correct_go_rt_opportunities": [12, 3, 10][i],
+            "correct_go_rt_opportunities": n_rt,
+            "rt_variability_valid_n": n_rt,
+            "rt_cv_min_n": 2,
+            "rt_cv_status": "estimable",
+            "rt_slope_min_n": 5,
+            "rt_slope_status": "estimable" if n_rt >= 5 else "not_estimable_low_rt_n",
+            "sdt_status": "estimable",
             "omission_numerator": i,
             "omission_denominator": 16,
             "commission_numerator": 0,
@@ -67,22 +79,29 @@ def _primary_probe() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def test_interface_preserves_all_probe_rows_and_missing_feature_cells_without_imputation() -> None:
+def test_interface_preserves_all_probe_rows_and_feature_cells_without_imputation() -> None:
     source = _primary_probe()
+    source.loc[1, "go_correct_rt_mad_ms"] = np.nan
     out = build_behavior_supervised_probe_table(source)
     assert len(out) == len(source)
     assert out["probe_event_id"].is_unique
-    assert out.loc[1, "go_correct_rt_cv"] != out.loc[1, "go_correct_rt_cv"]  # NaN remains NaN
+    assert pd.isna(out.loc[1, "go_correct_rt_mad_ms"])
     assert "analysis_set_id" not in out.columns
     assert "omission_rate" not in out.columns
     assert set(FIRST_ROUND_CANDIDATE_POOL).issubset(out.columns)
 
 
-def test_clean_and_timing_omission_are_preserved_only_for_qc_audit() -> None:
+def test_clean_timing_and_finer_omission_fields_are_preserved_only_for_qc_audit() -> None:
     out = build_behavior_supervised_probe_table(_primary_probe())
     audit = build_behavior_supervised_feature_audit(out)
-    qc = audit[audit["field"].isin(["clean_go_omission_rate", "timing_ambiguous_go_omission_rate"])]
-    assert len(qc) == 2
+    qc_names = [
+        "clean_go_omission_rate",
+        "timing_ambiguous_go_omission_rate",
+        "omission_prestimulus_only_ambiguity_rate",
+        "omission_carryover_only_ambiguity_rate",
+    ]
+    qc = audit[audit["field"].isin(qc_names)]
+    assert len(qc) == len(qc_names)
     assert qc["role"].eq("descriptive_qc_sensitivity_only").all()
     raw = audit[audit["field"].eq("raw_go_omission_rate")].iloc[0]
     assert raw["role"] == "first_round_supervised_omission_candidate"
@@ -110,6 +129,9 @@ def test_materialized_interface_writes_probe_table_audit_and_manifest_without_an
     assert manifest["row_filter_applied"] is False
     assert manifest["imputation_applied"] is False
     assert manifest["analysis_set_id_generated"] is False
+    assert manifest["participant_identity_contract_checked"] is True
+    assert manifest["primary_probe_role_contract_checked"] is True
+    assert manifest["rt_cv_handoff_contract_checked"] is True
     assert (output_root / "behavior_supervised_probe_30s.csv").is_file()
     assert (output_root / "behavior_supervised_feature_audit.csv").is_file()
     saved = json.loads((output_root / "behavior_supervised_interface_manifest.json").read_text(encoding="utf-8"))
