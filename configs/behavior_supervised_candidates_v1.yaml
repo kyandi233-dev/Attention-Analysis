@@ -46,6 +46,11 @@ candidate_dimensions:
 descriptive_qc_sensitivity_only:
   - clean_go_omission_rate
   - timing_ambiguous_go_omission_rate
+  - omission_prestimulus_only_ambiguity_rate
+  - omission_carryover_only_ambiguity_rate
+  - omission_prestimulus_and_carryover_ambiguity_rate
+  - late_go_response_candidate_rate
+  - anticipatory_go_response_candidate_rate
 
 compatibility_aliases_not_independent_predictors:
   omission_rate: raw_go_omission_rate
@@ -59,7 +64,7 @@ policies:
   analysis_set_id_generated_by_task_c: false
   analysis_set_id_owned_by_task_b: true
   data_dependent_selection_owned_by_task_a_training_boundary: true
-  clean_timing_omission_not_first_round_predictors: true
+  all_nonraw_omission_rates_not_first_round_predictors: true
   rt_cv_empirical_minimum_n_gate: false
   rt_level_choice_not_frozen_here: true
   commission_dprime_joint_retention_not_frozen_here: true
