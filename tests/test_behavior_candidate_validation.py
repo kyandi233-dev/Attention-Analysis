@@ -21,6 +21,7 @@ def _frame() -> pd.DataFrame:
             ambiguous = raw - clean
             rows.append(
                 {
+                    "participant_group_id": p,
                     "repeat_participant_id": p,
                     "session_id": f"{p}-s{session_i}",
                     "block_id": "B1",
@@ -49,7 +50,7 @@ def test_within_between_decomposition_is_participant_centered() -> None:
     frame = _frame()
     out = decompose_within_between(frame, ["go_correct_rt_median_ms"])
     centered = "go_correct_rt_median_ms__within_participant"
-    assert np.allclose(out.groupby("repeat_participant_id")[centered].sum().to_numpy(), 0.0)
+    assert np.allclose(out.groupby("participant_group_id")[centered].sum().to_numpy(), 0.0)
     assert out["go_correct_rt_median_ms__participant_mean"].notna().all()
 
 
@@ -59,6 +60,7 @@ def test_candidate_validation_is_descriptive_and_never_authorizes_full_cohort_dr
         {"session": frame, "block": frame.copy()}, frame.copy()
     )
     assert {"coverage", "between_participant_variance", "within_participant_variance"}.issubset(validation.columns)
+    assert validation["participant_group_column"].eq("participant_group_id").all()
     assert validation["selection_authority"].eq("descriptive_only").all()
     assert validation["automatic_drop_allowed"].eq(False).all()
 
@@ -90,6 +92,8 @@ def test_below_80pct_coverage_is_reference_only_not_scientific_rejection() -> No
 def test_legacy_omission_rate_is_compatibility_alias_not_second_formal_endpoint() -> None:
     assert "omission_rate" not in FORMAL_BEHAVIOR_ENDPOINT_METRICS
     assert "raw_go_omission_rate" in FORMAL_BEHAVIOR_ENDPOINT_METRICS
+    assert "clean_go_omission_rate" not in FORMAL_BEHAVIOR_ENDPOINT_METRICS
+    assert "timing_ambiguous_go_omission_rate" not in FORMAL_BEHAVIOR_ENDPOINT_METRICS
     validation, _, decisions = build_candidate_validation(
         {"session": _frame()}, _frame().iloc[0:0].copy()
     )
@@ -106,7 +110,7 @@ def test_visit_sensitivity_fails_closed_without_verified_order() -> None:
 
 def test_visit_sensitivity_allows_verified_order_only() -> None:
     frame = _frame()
-    frame["visit_order"] = frame.groupby("repeat_participant_id").cumcount() + 1
+    frame["visit_order"] = frame.groupby("participant_group_id").cumcount() + 1
     status = build_sensitivity_status(frame)
     assert status.loc[status["analysis"] == "first_session_only", "status"].iloc[0] == "ready"
     assert status.loc[status["analysis"] == "visit_order_adjusted", "status"].iloc[0] == "ready"
