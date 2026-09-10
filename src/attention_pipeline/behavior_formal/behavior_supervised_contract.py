@@ -8,15 +8,18 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from .behavior_error_taxonomy import OMISSION_QC_RATE_METRICS
+
 
 FIRST_ROUND_SUPERVISED_OMISSION_PREDICTORS = (
     "raw_go_omission_rate",
 )
 
-FIRST_ROUND_OMISSION_DESCRIPTIVE_QC_ONLY = (
+FIRST_ROUND_OMISSION_DESCRIPTIVE_QC_ONLY = tuple(dict.fromkeys((
     "clean_go_omission_rate",
     "timing_ambiguous_go_omission_rate",
-)
+    *OMISSION_QC_RATE_METRICS,
+)))
 
 OMISSION_COMPATIBILITY_ALIASES = {
     "omission_rate": "raw_go_omission_rate",
@@ -44,8 +47,9 @@ def validate_first_round_omission_predictors(columns: Iterable[str]) -> tuple[st
     """Validate omission-related columns for the current supervised mainline.
 
     Raw Go omission is the only eligible omission predictor. Clean/timing-
-    ambiguous components remain available upstream for description/QC, and
-    compatibility aliases must never enter as duplicate predictors.
+    ambiguous components and finer motor-timing QC rates remain available
+    upstream for description/QC, and compatibility aliases must never enter as
+    duplicate predictors.
     """
     normalized = tuple(str(column) for column in columns)
     forbidden = [
