@@ -30,7 +30,19 @@ _MAINLINE_FORBIDDEN_COLUMNS: dict[str, str] = {
     "block_id": "block locator is not a predictor",
     "probe_event_id": "probe locator is not a predictor",
     "probe_id": "probe locator is not a predictor",
+    "probe_order_in_block": "probe locator/order is audit metadata, not a first-round predictor",
+    "probe_index_in_block": "probe locator/order is audit metadata, not a first-round predictor",
+    "probe_index_global": "probe locator/order is audit metadata, not a first-round predictor",
+    "probe_time_ms": "probe timestamp is audit metadata, not a first-round predictor",
+    "probe_onset_unix_ms": "probe timestamp is audit metadata, not a first-round predictor",
     "window_name": "window locator is not a predictor",
+    "window_start_unix_ms": "window boundary is audit metadata, not a first-round predictor",
+    "window_effective_start_unix_ms": "window boundary is audit metadata, not a first-round predictor",
+    "window_end_unix_ms": "window boundary is audit metadata, not a first-round predictor",
+    "analysis_set_id": "analysis-set identity is audit metadata, not a predictor",
+    "run_id": "run identity is audit metadata, not a predictor",
+    "model_id": "model identity is audit metadata, not a predictor",
+    "outer_fold_group": "validation-fold identity is audit metadata, not a predictor",
 }
 _FORBIDDEN_SUFFIXES = ("_within", "_between")
 
