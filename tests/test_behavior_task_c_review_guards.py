@@ -36,12 +36,14 @@ def _minimal_probe() -> pd.DataFrame:
             "go_correct_rt_mad_ms": 30.0,
             "go_correct_rt_iqr_ms": 55.0,
             "go_correct_rt_theilsen_slope_ms_per_s": 0.2,
+            "omission_rate": 0.0625,
             "raw_go_omission_rate": 0.0625,
             "clean_go_omission_rate": 0.0625,
             "timing_ambiguous_go_omission_rate": 0.0,
             "commission_rate": 0.1,
             "dprime_loglinear": 2.0,
             "go_opportunities": 16,
+            "omission_numerator": 1,
             "omission_denominator": 16,
             "omission_taxonomy_denominator": 16,
             "raw_go_omission_n": 1,
@@ -71,6 +73,14 @@ def test_rt_cv_handoff_rejects_legacy_masking_even_if_threshold_column_claims_tw
     frame = _minimal_probe()
     frame["go_correct_rt_cv"] = float("nan")
     with pytest.raises(BehaviorSupervisedInterfaceError, match="rows with at least two valid"):
+        build_behavior_supervised_probe_table(frame)
+
+
+def test_rt_cv_handoff_rejects_spurious_cv_when_sample_sd_is_undefined() -> None:
+    frame = _minimal_probe()
+    frame["correct_go_rt_opportunities"] = 1
+    frame["rt_variability_valid_n"] = 1
+    with pytest.raises(BehaviorSupervisedInterfaceError, match="fewer than two valid"):
         build_behavior_supervised_probe_table(frame)
 
 
@@ -118,10 +128,38 @@ def test_behavior_interface_rejects_broken_omission_partition_or_denominator() -
         build_behavior_supervised_probe_table(frame)
 
 
+def test_behavior_interface_rejects_program_alias_count_or_rate_drift() -> None:
+    frame = _minimal_probe()
+    frame["omission_rate"] = 0.1
+    with pytest.raises(BehaviorSupervisedInterfaceError, match="compatibility alias"):
+        build_behavior_supervised_probe_table(frame)
+
+    frame = _minimal_probe()
+    frame["omission_numerator"] = 2
+    with pytest.raises(BehaviorSupervisedInterfaceError, match="omission_numerator"):
+        build_behavior_supervised_probe_table(frame)
+
+    frame = _minimal_probe()
+    frame["raw_go_omission_rate"] = 0.05
+    frame["omission_rate"] = 0.05
+    frame["clean_go_omission_rate"] = 0.05
+    with pytest.raises(BehaviorSupervisedInterfaceError, match="rates must equal counts"):
+        build_behavior_supervised_probe_table(frame)
+
+
 def test_behavior_interface_preserves_estimability_status_fields() -> None:
     out = build_behavior_supervised_probe_table(_minimal_probe())
     for column in ("rt_cv_min_n", "rt_cv_status", "rt_slope_status", "sdt_status"):
         assert column in out.columns
+
+
+def test_materialized_manifest_hashes_derived_outputs(tmp_path: Path) -> None:
+    source = tmp_path / "probe_primary_30s.csv"
+    output = tmp_path / "supervised_interface_v1"
+    _minimal_probe().to_csv(source, index=False)
+    manifest = materialize_behavior_supervised_interface(source, output)
+    assert set(manifest["output_sha256"]) == {"probe_table", "feature_audit"}
+    assert all(len(value) == 64 for value in manifest["output_sha256"].values())
 
 
 def test_force_refuses_to_delete_unrecognized_output_directory(tmp_path: Path) -> None:
