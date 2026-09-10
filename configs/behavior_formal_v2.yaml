@@ -87,6 +87,12 @@ behavior:
     clean_interpretation: "no detected prestimulus/carry-over motor-timing ambiguity; not proven attentional lapse"
     finer_prestimulus_carryover_subtypes_role: qc_descriptive_only
     late_gt_1150_role: timing_diagnostic_only
+    first_round_supervised_predictors:
+      - raw_go_omission_rate
+    first_round_supervised_descriptive_qc_only:
+      - clean_go_omission_rate
+      - timing_ambiguous_go_omission_rate
+    compatibility_alias_not_independent_predictor: omission_rate
 
 stats:
   bootstrap_iterations: 20000
@@ -164,3 +170,5 @@ analysis_policy:
   participant_disjoint_prediction: true
   inference_and_prediction_outputs_are_separate: true
   rt_cv_has_no_empirical_minimum_n_gate: true
+  first_round_supervised_omission_only_raw: true
+  clean_timing_omission_remain_available_for_descriptive_qc: true
