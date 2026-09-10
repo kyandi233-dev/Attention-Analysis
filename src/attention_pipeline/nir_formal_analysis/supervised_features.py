@@ -6,6 +6,8 @@ from typing import Final
 import numpy as np
 import pandas as pd
 
+from attention_pipeline.nir_behavior.features import summarize_signal
+
 
 SUPERVISED_NIR_INTERFACE_VERSION: Final = "nir-supervised-pupil-v1"
 BASE_SIGNAL: Final = "pupil_geom_mean_diameter"
@@ -20,6 +22,11 @@ PRIMARY_VALID_COLUMNS: Final = (
 PRIMARY_WINDOW_SEC: Final = 30
 SENSITIVITY_WINDOW_SEC: Final = (10, 20)
 ALLOWED_WINDOW_SEC: Final = (10, 20, 30)
+LEVEL_CANDIDATES: Final = ("mean", "median")
+VARIABILITY_CANDIDATES: Final = ("sd", "mad", "iqr")
+TREND_CANDIDATES: Final = ("robust_binned_slope_per_sec",)
+SUMMARY_SOURCE_FUNCTION: Final = "attention_pipeline.nir_behavior.features.summarize_signal"
+TREND_ALGORITHM: Final = "robust_binned_slope_per_sec"
 
 
 @dataclass(frozen=True)
@@ -178,3 +185,60 @@ def select_preprobe_window(
     result["window_end_ms"] = onset
     result["window_end_exclusive"] = True
     return result.reset_index(drop=True)
+
+
+def summarize_supervised_window(window: pd.DataFrame) -> dict[str, object]:
+    """Return the frozen compact NIR candidate family for one pre-probe window.
+
+    Numeric summaries reuse ``nir_behavior.features.summarize_signal`` so the
+    supervised interface cannot silently drift to a different slope/statistic
+    implementation.  Estimability is stricter than the historical generic
+    summary: variability requires at least two valid samples, and the trend
+    requires the existing robust-binned slope implementation to return a value.
+    """
+
+    required = {"unix_ms", "raw_binocular_pupil"}
+    missing = sorted(required - set(window.columns))
+    if missing:
+        raise ValueError(f"supervised NIR window missing columns: {missing}")
+
+    times = pd.to_numeric(window["unix_ms"], errors="coerce").to_numpy(dtype=float)
+    values = pd.to_numeric(window["raw_binocular_pupil"], errors="coerce").to_numpy(dtype=float)
+    generic = summarize_signal(times, values, prefix="pupil")
+    n_valid = int(generic["n_pupil_valid"])
+
+    result: dict[str, object] = {
+        "base_signal": BASE_SIGNAL,
+        "summary_source_function": SUMMARY_SOURCE_FUNCTION,
+        "trend_algorithm": TREND_ALGORITHM,
+        "n_valid_pupil_samples": n_valid,
+        "pupil_level_mean": generic["pupil_mean"],
+        "pupil_level_median": generic["pupil_median"],
+        "pupil_variability_sd": generic["pupil_sd"] if n_valid >= 2 else None,
+        "pupil_variability_mad": generic["pupil_mad"] if n_valid >= 2 else None,
+        "pupil_variability_iqr": generic["pupil_iqr"] if n_valid >= 2 else None,
+        "pupil_trend_robust_binned_slope_per_sec": generic["pupil_slope_per_sec"],
+    }
+
+    level_status = "computable" if n_valid >= 1 else "not_estimable_no_valid_samples"
+    variability_status = (
+        "computable" if n_valid >= 2 else
+        "not_estimable_low_valid_samples" if n_valid == 1 else
+        "not_estimable_no_valid_samples"
+    )
+    if n_valid < 3:
+        trend_status = (
+            "not_estimable_no_valid_samples" if n_valid == 0
+            else "not_estimable_low_valid_samples"
+        )
+    elif generic["pupil_slope_per_sec"] is None:
+        trend_status = "not_estimable_time_support"
+    else:
+        trend_status = "computable"
+
+    for candidate in LEVEL_CANDIDATES:
+        result[f"pupil_level_{candidate}_status"] = level_status
+    for candidate in VARIABILITY_CANDIDATES:
+        result[f"pupil_variability_{candidate}_status"] = variability_status
+    result["pupil_trend_robust_binned_slope_per_sec_status"] = trend_status
+    return result
