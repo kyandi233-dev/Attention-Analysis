@@ -2,7 +2,9 @@ version: nir-supervised-features-v1
 base_signal:
   name: pupil_geom_mean_diameter
   unit: px
-  source: analysis_ready_raw_eye_values
+  source: formal_candidate_sidecar_long
+  raw_column: pupil_geom_mean_diameter__raw
+  primary_valid_column: pupil_geom_mean_diameter__valid_primary
   zero_calibration: true
   forbidden_session_baselines: [centered, robust_z, participant_within_between]
 windows:
