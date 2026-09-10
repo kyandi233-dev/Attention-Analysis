@@ -105,6 +105,17 @@ def _load_feature_families(section: Mapping[str, Any]) -> dict[str, list[Feature
         schemes = load_feature_schemes(family_section)
         if not schemes:
             raise SupervisedLearningContractError(f"model family {name} has no candidate feature schemes")
+        for scheme in schemes:
+            if not scheme.modality_blocks:
+                raise SupervisedLearningContractError(
+                    f"model family {name} candidate {scheme.feature_set_id} must declare modality_blocks"
+                )
+        expected_blocks = frozenset(schemes[0].modality_blocks)
+        for scheme in schemes[1:]:
+            if frozenset(scheme.modality_blocks) != expected_blocks:
+                raise SupervisedLearningContractError(
+                    f"all candidates within model family {name} must use the same modality_blocks"
+                )
         ids = {scheme.feature_set_id for scheme in schemes}
         overlap = seen_feature_ids & ids
         if overlap:
