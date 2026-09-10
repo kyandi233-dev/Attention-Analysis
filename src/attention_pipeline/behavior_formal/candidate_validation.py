@@ -14,15 +14,16 @@ from typing import Iterable, Mapping
 import numpy as np
 import pandas as pd
 
-from .behavior_error_taxonomy import FORMAL_OMISSION_ENDPOINT_METRICS
+from .behavior_error_taxonomy import CURRENT_PRIMARY_OMISSION_ENDPOINT_METRICS
 from .science_v3 import CANONICAL_METRICS
 
 
 # ``omission_rate`` is retained in legacy tables only as a compatibility alias
-# of ``raw_go_omission_rate``. Do not admit it as a second endpoint.
+# of ``raw_go_omission_rate``. Clean/timing omission are audited separately by
+# omission_candidate_validation and are not current primary behavior endpoints.
 _BASE_FORMAL_METRICS = tuple(m for m in CANONICAL_METRICS if m != "omission_rate")
 FORMAL_BEHAVIOR_ENDPOINT_METRICS = tuple(dict.fromkeys(
-    (*_BASE_FORMAL_METRICS, *FORMAL_OMISSION_ENDPOINT_METRICS)
+    (*_BASE_FORMAL_METRICS, *CURRENT_PRIMARY_OMISSION_ENDPOINT_METRICS)
 ))
 
 
@@ -41,8 +42,6 @@ _PRIORITY = (
     "go_correct_rt_cv",
     "go_correct_rt_theilsen_slope_ms_per_s",
     "raw_go_omission_rate",
-    "clean_go_omission_rate",
-    "timing_ambiguous_go_omission_rate",
     "commission_rate",
     "dprime_loglinear",
     "criterion_c",
@@ -60,13 +59,22 @@ def _numeric(frame: pd.DataFrame, column: str) -> pd.Series:
     return pd.to_numeric(frame[column], errors="coerce")
 
 
+def _participant_column(frame: pd.DataFrame) -> str:
+    """Prefer the canonical participant grouping interface for descriptive audits."""
+    for column in ("participant_group_id", "repeat_participant_id", "participant_key"):
+        if column in frame.columns:
+            return column
+    raise ValueError("descriptive behavior audit requires participant_group_id or a verified compatibility identity")
+
+
 def decompose_within_between(
     frame: pd.DataFrame,
     metrics: Iterable[str],
     *,
-    participant_col: str = "repeat_participant_id",
+    participant_col: str | None = None,
 ) -> pd.DataFrame:
     """Add participant mean and within-participant deviation for explanation/audit."""
+    participant_col = participant_col or _participant_column(frame)
     if participant_col not in frame:
         raise ValueError(f"missing participant column: {participant_col}")
     out = frame.copy()
@@ -99,14 +107,15 @@ def _metric_row(
     finite = x[np.isfinite(x)]
     n_total = int(len(frame))
     n_valid = int(len(finite))
-    participants = int(frame.loc[x.notna(), "repeat_participant_id"].nunique()) if "repeat_participant_id" in frame else 0
+    participant_col = _participant_column(frame)
+    participants = int(frame.loc[x.notna(), participant_col].nunique())
     sessions = int(frame.loc[x.notna(), "session_id"].nunique()) if "session_id" in frame else 0
     unique_n = int(finite.nunique())
 
     between_var = math.nan
     within_var = math.nan
-    if "repeat_participant_id" in frame and n_valid:
-        tmp = pd.DataFrame({"participant": frame["repeat_participant_id"], "x": x}).dropna()
+    if n_valid:
+        tmp = pd.DataFrame({"participant": frame[participant_col], "x": x}).dropna()
         pmeans = tmp.groupby("participant")["x"].mean()
         between_var = float(pmeans.var(ddof=1)) if len(pmeans) >= 2 else math.nan
         centered = tmp["x"] - tmp.groupby("participant")["x"].transform("mean")
@@ -148,6 +157,7 @@ def _metric_row(
         "coverage": coverage,
         "below_historical_80pct_coverage_reference": bool(coverage < cfg.min_coverage),
         "participant_group_n": participants,
+        "participant_group_column": participant_col,
         "session_n": sessions,
         "unique_value_n": unique_n,
         "mean": float(finite.mean()) if n_valid else math.nan,
@@ -167,8 +177,8 @@ def _metric_row(
         "selection_authority": "descriptive_only",
         "automatic_drop_allowed": False,
         "endpoint_role": (
-            "prespecified_formal_omission_endpoint"
-            if metric in FORMAL_OMISSION_ENDPOINT_METRICS
+            "current_primary_omission_endpoint"
+            if metric in CURRENT_PRIMARY_OMISSION_ENDPOINT_METRICS
             else "formal_behavior_candidate"
         ),
         "decision_basis": (
@@ -205,10 +215,6 @@ def build_candidate_validation(
         for i, a in enumerate(available):
             for b in available[i + 1 :]:
                 r = corr.loc[a, b] if a in corr.index and b in corr.columns else math.nan
-                structural_omission_pair = (
-                    a in FORMAL_OMISSION_ENDPOINT_METRICS
-                    and b in FORMAL_OMISSION_ENDPOINT_METRICS
-                )
                 redundancy_rows.append({
                     "scale": scale,
                     "metric_a": a,
@@ -218,7 +224,6 @@ def build_candidate_validation(
                     "redundant_flag": bool(np.isfinite(r) and abs(float(r)) >= cfg.redundancy_abs_r),
                     "threshold": cfg.redundancy_abs_r,
                     "threshold_role": "historical_descriptive_reference_only",
-                    "structural_omission_pair": structural_omission_pair,
                     "selection_authority": "descriptive_only",
                     "automatic_drop_allowed": False,
                 })
@@ -226,12 +231,13 @@ def build_candidate_validation(
         validation_by_metric = {r["metric"]: r for r in rows if r["scale"] == scale}
         for metric in [m for m in _PRIORITY if m in available]:
             v = validation_by_metric[metric]
+            is_primary_omission = metric in CURRENT_PRIMARY_OMISSION_ENDPOINT_METRICS
             decisions.append({
                 "scale": scale,
                 "metric": metric,
                 "candidate_role_recommendation": (
-                    "prespecified_behavior_endpoint_descriptive_audit"
-                    if metric in FORMAL_OMISSION_ENDPOINT_METRICS
+                    "current_primary_omission_endpoint_descriptive_audit"
+                    if is_primary_omission
                     else "scientific_candidate_requires_prespecified_or_training_boundary_decision"
                 ),
                 "reason": (
@@ -239,8 +245,8 @@ def build_candidate_validation(
                     f"review_flags={v['review_flags']}"
                 ),
                 "final_endpoint_freeze_status": (
-                    "prespecified_formal_endpoint_pending_real_data_stability_review"
-                    if metric in FORMAL_OMISSION_ENDPOINT_METRICS
+                    "current_primary_omission_endpoint"
+                    if is_primary_omission
                     else "pending_scientific_or_training_boundary_decision"
                 ),
                 "selection_authority": "descriptive_only",
