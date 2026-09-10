@@ -32,6 +32,15 @@ class ModelSelectionError(RuntimeError):
     """Raised when nested selection cannot produce a valid candidate."""
 
 
+_EXPECTED_MODEL_FAILURES = (
+    ModelSelectionError,
+    SupervisedLearningContractError,
+    ValueError,
+    FloatingPointError,
+    np.linalg.LinAlgError,
+)
+
+
 @dataclass
 class ModelSelectionResult:
     """Winner plus complete inner-development audit."""
@@ -173,7 +182,7 @@ def select_logistic_model(
                         raise ModelSelectionError("inner validation log loss is non-finite")
                     losses[(scheme.feature_set_id, c)].append(loss)
                     audit["loss_by_c"][str(c)] = loss
-                except Exception as exc:
+                except _EXPECTED_MODEL_FAILURES as exc:
                     reason = f"{type(exc).__name__}: {exc}"
                     failures[(scheme.feature_set_id, c)].append(f"inner_fold={fold_index}: {reason}")
                     audit["failure_by_c"][str(c)] = reason
