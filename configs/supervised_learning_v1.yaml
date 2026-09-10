@@ -1,0 +1,56 @@
+pipeline:
+  name: focuswave-supervised-learning-v1
+  version: 1.0.0-dev
+  evidence_repo: kyandi233-dev/FocusWave-Formal-Analysis
+  evidence_branch: codex/code-fix-ledger
+  evidence_method_entry: 分析设计/1.15.5-监督学习三代方案总对比与当前正式口径_20260910.md
+  implementation_plan: 分析设计/1.15.7-监督学习并行实施计划_20260910.md
+  random_seed: 20260910
+
+task:
+  name: q1_equals_1_vs_2_3_4
+  analysis_unit: probe_preceding_window
+  primary_window_seconds: 30
+  source_column: q1_nominal_4class
+  positive_values: [1]
+  negative_values: [2, 3, 4]
+  positive_label: 1
+  negative_label: 0
+  positive_probability_name: p_q1_equals_1
+  q2_is_predictor: false
+
+validation:
+  outer:
+    method: leave_one_participant_out
+    group_column: participant_group_id
+    participant_disjoint: true
+  inner:
+    method: grouped_k_fold
+    n_splits: 5
+    group_column: participant_group_id
+    refit_preprocessing_per_split: true
+  zero_individual_calibration: true
+  forbid_test_participant_sequence_statistics: true
+  forbid_test_participant_future_information: true
+
+preprocessing:
+  median_imputation_fit_on_training_only: true
+  standardization_fit_on_training_only: true
+  data_dependent_column_handling_fit_on_training_only: true
+  unified_global_coverage_cutoff: null
+  participant_specific_within_between_mainline: false
+
+feature_schemes:
+  status: interface_only_pending_task_c_d
+  note: "Task A provides the nested selection interface; C/D supply or freeze modality candidate schemes."
+
+outputs:
+  preserve_probe_keys: true
+  preserve_raw_q1: true
+  preserve_binary_label: true
+  preserve_positive_probability: true
+  preserve_outer_fold: true
+  preserve_feature_set_id: true
+  preserve_analysis_set_id_if_supplied: true
+  preserve_run_id: true
+  preserve_failures: true
