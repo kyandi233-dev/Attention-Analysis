@@ -1,0 +1,48 @@
+name: Task C behavior-interface CI
+
+on:
+  pull_request:
+    branches:
+      - codex/formal-analysis-v2-portable
+    paths:
+      - "configs/behavior_formal_v2.yaml"
+      - "src/attention_pipeline/behavior_formal/**"
+      - "scripts/sart_formal_analysis.py"
+      - "tests/test_behavior*.py"
+      - ".github/workflows/task-c-behavior.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  task-c-behavior-contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install package and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+      - name: Compile Task C behavior modules
+        run: |
+          python -m py_compile \
+            src/attention_pipeline/behavior_formal/science_v3.py \
+            src/attention_pipeline/behavior_formal/behavior_error_taxonomy.py \
+            src/attention_pipeline/behavior_formal/candidate_validation.py \
+            src/attention_pipeline/behavior_formal/omission_candidate_validation.py \
+            scripts/sart_formal_analysis.py
+      - name: Run Task C behavior contracts
+        run: |
+          python -m pytest -q \
+            tests/test_behavior_task_c_rt_cv.py \
+            tests/test_behavior_science_v3_contract.py \
+            tests/test_behavior_error_taxonomy.py \
+            tests/test_behavior_omission_candidate_validation.py \
+            tests/test_behavior_omission_probe_models.py \
+            tests/test_behavior_candidate_validation.py
