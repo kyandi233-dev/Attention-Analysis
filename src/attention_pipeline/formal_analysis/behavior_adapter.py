@@ -21,13 +21,16 @@ RT_CV_MATHEMATICAL_BASIS = "sample_sd_mathematical_requirement_not_empirical_gat
 
 
 def assert_current_behavior_rt_cv_contract(config: Config) -> None:
-    """Fail closed if the current formal Behavior config reintroduces an RT-CV gate.
+    """Fail closed if the declared current formal Behavior config drifts on RT-CV.
 
     The value 2 is not a tunable empirical threshold: it only records the
-    mathematical requirement for a sample standard deviation. Historical or
-    unrelated pipeline configs are left untouched for provenance/reproduction.
+    mathematical requirement for a sample standard deviation. Generic adapter
+    fixtures and historical/unrelated pipeline configs that do not declare the
+    current formal-v3 pipeline remain outside this current-science guard.
     """
-    pipeline = config.section("pipeline")
+    pipeline = config.data.get("pipeline")
+    if not isinstance(pipeline, dict):
+        return
     if str(pipeline.get("name", "")).strip() != CURRENT_BEHAVIOR_PIPELINE_NAME:
         return
     behavior = config.section("behavior")
