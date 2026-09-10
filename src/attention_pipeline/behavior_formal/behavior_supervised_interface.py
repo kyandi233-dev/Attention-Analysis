@@ -28,6 +28,7 @@ from .behavior_supervised_contract import (
 INTERFACE_VERSION = "behavior-supervised-probe-v1"
 PRIMARY_WINDOW_SECONDS = 30
 RT_CV_MATHEMATICAL_MIN_N = 2
+OMISSION_PARTITION_TOLERANCE = 1e-12
 
 IDENTITY_LOCATOR_COLUMNS = (
     "participant_group_id",
@@ -75,6 +76,18 @@ FIRST_ROUND_CANDIDATE_POOL = tuple(dict.fromkeys(
     (*RT_LEVEL_CANDIDATES, *RT_VARIABILITY_CANDIDATES, *RT_TREND_CANDIDATES, *ERROR_CONTROL_CANDIDATES)
 ))
 
+REQUIRED_OMISSION_PARTITION_COLUMNS = (
+    "raw_go_omission_rate",
+    "clean_go_omission_rate",
+    "timing_ambiguous_go_omission_rate",
+    "go_opportunities",
+    "omission_denominator",
+    "omission_taxonomy_denominator",
+    "raw_go_omission_n",
+    "clean_go_omission_n",
+    "timing_ambiguous_go_omission_n",
+)
+
 WINDOW_AUDIT_COLUMNS = (
     "window_seconds_nominal",
     "analysis_role",
@@ -119,9 +132,7 @@ OPPORTUNITY_AUDIT_COLUMNS = (
 # The clean/timing partition plus finer motor-timing subtypes remain descriptive
 # and QC-only. They are preserved for auditability but are never promoted into
 # FIRST_ROUND_CANDIDATE_POOL.
-DESCRIPTIVE_QC_COLUMNS = tuple(dict.fromkeys(
-    (*FIRST_ROUND_OMISSION_DESCRIPTIVE_QC_ONLY, *OMISSION_QC_RATE_METRICS)
-))
+DESCRIPTIVE_QC_COLUMNS = tuple(dict.fromkeys(FIRST_ROUND_OMISSION_DESCRIPTIVE_QC_ONLY))
 
 
 class BehaviorSupervisedInterfaceError(ValueError):
@@ -175,6 +186,46 @@ def _validate_rt_cv_handoff(frame: pd.DataFrame) -> None:
         )
 
 
+def _validate_omission_handoff(frame: pd.DataFrame) -> None:
+    """Verify raw/clean/timing partition and shared Go denominator before handoff."""
+    _require_columns(frame, REQUIRED_OMISSION_PARTITION_COLUMNS)
+    raw = pd.to_numeric(frame["raw_go_omission_rate"], errors="coerce")
+    clean = pd.to_numeric(frame["clean_go_omission_rate"], errors="coerce")
+    timing = pd.to_numeric(frame["timing_ambiguous_go_omission_rate"], errors="coerce")
+    finite_count = pd.concat([raw.notna(), clean.notna(), timing.notna()], axis=1).sum(axis=1)
+    if finite_count.isin([1, 2]).any():
+        raise BehaviorSupervisedInterfaceError(
+            "omission handoff contract failed: raw/clean/timing rates must be jointly present or jointly missing"
+        )
+    all_finite = finite_count.eq(3)
+    if all_finite.any():
+        error = (raw - clean - timing).abs()
+        if error.loc[all_finite].gt(OMISSION_PARTITION_TOLERANCE).any():
+            raise BehaviorSupervisedInterfaceError(
+                "omission handoff contract failed: raw_go_omission_rate != clean + timing_ambiguous"
+            )
+
+    go_n = pd.to_numeric(frame["go_opportunities"], errors="coerce")
+    program_den = pd.to_numeric(frame["omission_denominator"], errors="coerce")
+    taxonomy_den = pd.to_numeric(frame["omission_taxonomy_denominator"], errors="coerce")
+    if go_n.isna().any() or program_den.isna().any() or taxonomy_den.isna().any():
+        raise BehaviorSupervisedInterfaceError("omission handoff contract failed: Go denominators contain missing values")
+    if not (go_n.eq(program_den) & go_n.eq(taxonomy_den)).all():
+        raise BehaviorSupervisedInterfaceError(
+            "omission handoff contract failed: raw/clean/timing must share the same Go opportunity denominator"
+        )
+
+    raw_n = pd.to_numeric(frame["raw_go_omission_n"], errors="coerce")
+    clean_n = pd.to_numeric(frame["clean_go_omission_n"], errors="coerce")
+    timing_n = pd.to_numeric(frame["timing_ambiguous_go_omission_n"], errors="coerce")
+    if raw_n.isna().any() or clean_n.isna().any() or timing_n.isna().any():
+        raise BehaviorSupervisedInterfaceError("omission handoff contract failed: omission counts contain missing values")
+    if not raw_n.eq(clean_n + timing_n).all():
+        raise BehaviorSupervisedInterfaceError(
+            "omission handoff contract failed: raw_go_omission_n != clean + timing_ambiguous counts"
+        )
+
+
 def build_behavior_supervised_probe_table(primary_probe: pd.DataFrame) -> pd.DataFrame:
     """Return one unchanged-observation row per authoritative 30s probe.
 
@@ -186,6 +237,7 @@ def build_behavior_supervised_probe_table(primary_probe: pd.DataFrame) -> pd.Dat
         *REQUIRED_IDENTITY_AUDIT_COLUMNS,
         *OUTCOME_COLUMNS,
         *FIRST_ROUND_CANDIDATE_POOL,
+        *REQUIRED_OMISSION_PARTITION_COLUMNS,
         "window_seconds_nominal",
         "analysis_role",
         "formal_independent_sample",
@@ -229,6 +281,7 @@ def build_behavior_supervised_probe_table(primary_probe: pd.DataFrame) -> pd.Dat
         raise BehaviorSupervisedInterfaceError("probe window crossing block boundary is forbidden")
 
     _validate_rt_cv_handoff(primary_probe)
+    _validate_omission_handoff(primary_probe)
     validate_first_round_omission_predictors(FIRST_ROUND_CANDIDATE_POOL)
     ordered = list(IDENTITY_LOCATOR_COLUMNS)
     ordered.extend(REQUIRED_IDENTITY_AUDIT_COLUMNS)
@@ -346,16 +399,21 @@ def materialize_behavior_supervised_interface(
     output = Path(output_root).resolve()
     if not source.is_file():
         raise FileNotFoundError(f"Behavior primary probe source not found: {source}")
-    if output.exists():
+    output_exists = output.exists()
+    if output_exists:
         if not force:
             raise FileExistsError(f"Behavior supervised interface output already exists: {output}")
         _assert_safe_force_target(source, output)
-        shutil.rmtree(output)
-    output.mkdir(parents=True, exist_ok=False)
 
+    # Validate and materialize in memory before replacing a recognized previous
+    # interface. A bad new source must never destroy the last valid derived output.
     primary = pd.read_csv(source)
     interface = build_behavior_supervised_probe_table(primary)
     audit = build_behavior_supervised_feature_audit(interface)
+
+    if output_exists:
+        shutil.rmtree(output)
+    output.mkdir(parents=True, exist_ok=False)
     interface_path = output / "behavior_supervised_probe_30s.csv"
     audit_path = output / "behavior_supervised_feature_audit.csv"
     manifest_path = output / "behavior_supervised_interface_manifest.json"
@@ -378,6 +436,7 @@ def materialize_behavior_supervised_interface(
         "participant_identity_audit_columns_required": list(REQUIRED_IDENTITY_AUDIT_COLUMNS),
         "primary_probe_role_contract_checked": True,
         "rt_cv_handoff_contract_checked": True,
+        "omission_partition_handoff_contract_checked": True,
         "row_filter_applied": False,
         "imputation_applied": False,
         "scaling_applied": False,
