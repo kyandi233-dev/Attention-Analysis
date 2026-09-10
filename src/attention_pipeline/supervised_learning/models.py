@@ -70,8 +70,6 @@ def _binary_labels(y: Sequence[object] | np.ndarray, expected_n: int) -> np.ndar
 def _fit_logistic(x: pd.DataFrame, y: np.ndarray, *, c: float, max_iter: int, seed: int) -> LogisticRegression:
     if len(np.unique(y)) < 2:
         raise ModelSelectionError("training split contains only one binary class")
-    # LogisticRegression uses L2 regularization by default throughout the supported
-    # scikit-learn range. Omitting deprecated penalty="l2" keeps the same model.
     model = LogisticRegression(
         C=float(c),
         solver="lbfgs",
@@ -225,12 +223,7 @@ def refit_logistic_and_predict(
     max_iter: int = DEFAULT_MAX_ITER,
     seed: int = 20260910,
 ) -> dict[str, object]:
-    """Refit winner on complete outer training data and predict label-free test rows.
-
-    ``outer_test_features`` is deliberately required to exclude Q1 outcome columns.
-    This makes the zero-calibration boundary structural rather than relying only on
-    callers to ignore labels correctly.
-    """
+    """Refit winner on complete outer training data and predict label-free test rows."""
     leaked = sorted(_TEST_OUTCOME_COLUMNS & set(outer_test_features.columns))
     if leaked:
         raise SupervisedLearningContractError(
@@ -252,6 +245,16 @@ def refit_logistic_and_predict(
     raw_proba = model.predict_proba(x_test)
     p_positive = positive_class_probability(raw_proba, model.classes_)
     predicted = model.predict(x_test).astype(int)
+
+    if model.coef_.shape != (1, x_train.shape[1]) or model.intercept_.shape != (1,):
+        raise ModelSelectionError(
+            f"unexpected binary logistic coefficient shape coef={model.coef_.shape}, intercept={model.intercept_.shape}"
+        )
+    standardized_coefficients = {
+        str(column): float(value)
+        for column, value in zip(x_train.columns.tolist(), model.coef_[0].tolist(), strict=True)
+    }
+
     return {
         "feature_set_id": feature_scheme.feature_set_id,
         "selected_c": float(selected_c),
@@ -261,6 +264,9 @@ def refit_logistic_and_predict(
         "test_group_ids": sorted(outer_test_features[group_col].astype(str).unique().tolist()),
         "preprocessing": state.audit_dict(),
         "model_classes": [int(v) for v in model.classes_.tolist()],
+        "coefficient_scale": "post_imputation_standardized_predictors",
+        "standardized_coefficients": standardized_coefficients,
+        "intercept": float(model.intercept_[0]),
         "p_positive": p_positive,
         "predicted_label": predicted,
     }
