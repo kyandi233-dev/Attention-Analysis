@@ -12,14 +12,13 @@ from attention_pipeline.behavior_formal.behavior_supervised_interface import (
 )
 
 
-ROOT = Path(__file__).resolve().parents[1]
-
-
 def _minimal_probe() -> pd.DataFrame:
     return pd.DataFrame([
         {
             "participant_group_id": "P-01",
             "repeat_participant_id": "P-01",
+            "participant_identity_source": "questionnaire_repeat_registry",
+            "participant_identity_resolved_for_clustering": True,
             "session_id": "sub-031",
             "block_id": "B1",
             "probe_event_id": "sub-031|B1|probe|1",
@@ -73,6 +72,18 @@ def test_behavior_interface_rejects_session_id_as_participant_group() -> None:
     frame = _minimal_probe()
     frame["participant_group_id"] = frame["session_id"]
     frame["repeat_participant_id"] = frame["session_id"]
+    with pytest.raises(BehaviorSupervisedInterfaceError, match="participant identity contract"):
+        build_behavior_supervised_probe_table(frame)
+
+
+def test_behavior_interface_rejects_identity_alias_or_resolution_drift() -> None:
+    frame = _minimal_probe()
+    frame["repeat_participant_id"] = "P-OTHER"
+    with pytest.raises(BehaviorSupervisedInterfaceError, match="participant identity contract"):
+        build_behavior_supervised_probe_table(frame)
+
+    frame = _minimal_probe()
+    frame["participant_identity_resolved_for_clustering"] = False
     with pytest.raises(BehaviorSupervisedInterfaceError, match="participant identity contract"):
         build_behavior_supervised_probe_table(frame)
 
