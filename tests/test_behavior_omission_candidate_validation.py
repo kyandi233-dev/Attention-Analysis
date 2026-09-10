@@ -4,7 +4,8 @@ import numpy as np
 import pandas as pd
 
 from attention_pipeline.behavior_formal.behavior_error_taxonomy import (
-    FORMAL_OMISSION_ENDPOINT_METRICS,
+    CURRENT_PRIMARY_OMISSION_ENDPOINT_METRICS,
+    OMISSION_PARTITION_RATE_METRICS,
     OMISSION_QC_RATE_METRICS,
     TAXONOMY_RATE_METRICS,
 )
@@ -16,6 +17,7 @@ def _frame() -> pd.DataFrame:
     for participant, base in (("P1", 0.02), ("P2", 0.08), ("P3", 0.14)):
         for visit in (1, 2):
             row = {
+                "participant_group_id": participant,
                 "repeat_participant_id": participant,
                 "session_id": f"{participant}-s{visit}",
                 "block_id": "B1",
@@ -31,7 +33,7 @@ def _frame() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def test_omission_audit_preserves_roles_but_has_no_full_cohort_selection_authority() -> None:
+def test_omission_audit_preserves_current_roles_but_has_no_full_cohort_selection_authority() -> None:
     frame = _frame()
     validation, redundancy = validate_omission_candidates(
         {"session": frame, "block": frame.copy(), "cycle": frame.copy()},
@@ -44,9 +46,13 @@ def test_omission_audit_preserves_roles_but_has_no_full_cohort_selection_authori
     assert session["selection_authority"].eq("descriptive_only").all()
     assert session["automatic_drop_allowed"].eq(False).all()
 
-    formal = session[session["metric"].isin(FORMAL_OMISSION_ENDPOINT_METRICS)]
-    assert formal["endpoint_role"].eq("prespecified_formal_endpoint").all()
-    assert formal["endpoint_status"].eq("prespecified_not_pvalue_selected").all()
+    primary = session[session["metric"].isin(CURRENT_PRIMARY_OMISSION_ENDPOINT_METRICS)]
+    assert primary["endpoint_role"].eq("current_primary_omission_endpoint").all()
+    assert primary["endpoint_status"].eq("prespecified_not_pvalue_selected").all()
+
+    partition_qc = session[session["metric"].isin(OMISSION_PARTITION_RATE_METRICS[1:])]
+    assert partition_qc["endpoint_role"].eq("descriptive_qc_sensitivity_partition").all()
+    assert partition_qc["endpoint_status"].eq("not_a_primary_endpoint").all()
 
     qc = session[session["metric"].isin(OMISSION_QC_RATE_METRICS)]
     assert qc["endpoint_role"].eq("qc_or_timing_diagnostic").all()
@@ -57,17 +63,17 @@ def test_omission_audit_preserves_roles_but_has_no_full_cohort_selection_authori
     assert redundancy["selection_authority"].eq("descriptive_only").all()
 
 
-def test_formal_omission_redundancy_is_labeled_structural_not_drop_rule() -> None:
+def test_omission_partition_redundancy_is_labeled_structural_not_drop_rule() -> None:
     frame = _frame()
     _, redundancy = validate_omission_candidates({"session": frame}, frame.iloc[0:0].copy())
-    formal_pairs = redundancy[
-        redundancy["metric_a"].isin(FORMAL_OMISSION_ENDPOINT_METRICS)
-        & redundancy["metric_b"].isin(FORMAL_OMISSION_ENDPOINT_METRICS)
+    partition_pairs = redundancy[
+        redundancy["metric_a"].isin(OMISSION_PARTITION_RATE_METRICS)
+        & redundancy["metric_b"].isin(OMISSION_PARTITION_RATE_METRICS)
     ]
-    assert not formal_pairs.empty
-    assert formal_pairs["structural_same_denominator_pair"].eq(True).all()
-    assert formal_pairs["automatic_drop_allowed"].eq(False).all()
-    assert formal_pairs["redundancy_interpretation"].str.contains("structurally", regex=False).all()
+    assert not partition_pairs.empty
+    assert partition_pairs["structural_same_denominator_pair"].eq(True).all()
+    assert partition_pairs["automatic_drop_allowed"].eq(False).all()
+    assert partition_pairs["redundancy_interpretation"].str.contains("structurally", regex=False).all()
 
 
 def test_floor_effect_and_low_coverage_are_review_flags_not_admission_gates() -> None:
