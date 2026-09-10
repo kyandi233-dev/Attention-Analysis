@@ -38,6 +38,7 @@ validation:
   zero_individual_calibration: true
   forbid_test_participant_sequence_statistics: true
   forbid_test_participant_future_information: true
+  require_analysis_set_id: true
 
 preprocessing:
   median_imputation_fit_on_training_only: true
@@ -83,6 +84,6 @@ outputs:
   preserve_positive_probability: true
   preserve_outer_fold: true
   preserve_feature_set_id: true
-  preserve_analysis_set_id_if_supplied: true
+  preserve_analysis_set_id: true
   preserve_run_id: true
   preserve_failures: true
