@@ -51,6 +51,9 @@ feature_schemes:
   model_families: {}
   mainline_forbidden_columns:
     - q1_nominal_4class
+    - q1_binary
+    - p_q1_equals_1
+    - predicted_q1_binary
     - q2_ordinal_4level
     - omission_rate
     - clean_go_omission_rate
@@ -64,7 +67,7 @@ feature_schemes:
     - probe_id
     - window_name
   participant_specific_suffixes_forbidden: [_within, _between]
-  note: "Task A provides the nested selection interface; C/D supply or freeze model-family candidate schemes. Candidate schemes compete only within the same model family."
+  note: "Task A provides the nested selection interface; C/D supply or freeze model-family candidate schemes. Candidate schemes compete only within the same model family and must share the same modality_blocks within that family."
 
 models:
   primary:
