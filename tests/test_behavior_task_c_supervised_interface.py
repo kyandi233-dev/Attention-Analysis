@@ -33,6 +33,13 @@ def _primary_probe() -> pd.DataFrame:
     for i in range(3):
         n_rt = [12, 3, 10][i]
         participant = f"P-{i // 2}"
+        raw_n = i
+        clean_n = 0 if i == 0 else 1
+        timing_n = raw_n - clean_n
+        go_n = 16
+        raw_rate = raw_n / go_n
+        clean_rate = clean_n / go_n
+        timing_rate = timing_n / go_n
         rows.append({
             "participant_group_id": participant,
             "repeat_participant_id": participant,
@@ -58,9 +65,9 @@ def _primary_probe() -> pd.DataFrame:
             "go_correct_rt_mad_ms": 30.0 + i,
             "go_correct_rt_iqr_ms": 60.0 + i,
             "go_correct_rt_theilsen_slope_ms_per_s": 0.5 + i,
-            "raw_go_omission_rate": 0.05 * i,
-            "clean_go_omission_rate": 0.03 * i,
-            "timing_ambiguous_go_omission_rate": 0.02 * i,
+            "raw_go_omission_rate": raw_rate,
+            "clean_go_omission_rate": clean_rate,
+            "timing_ambiguous_go_omission_rate": timing_rate,
             "omission_prestimulus_only_ambiguity_rate": 0.0,
             "omission_carryover_only_ambiguity_rate": 0.0,
             "omission_prestimulus_and_carryover_ambiguity_rate": 0.0,
@@ -68,9 +75,9 @@ def _primary_probe() -> pd.DataFrame:
             "anticipatory_go_response_candidate_rate": 0.0,
             "commission_rate": 0.10 + 0.01 * i,
             "dprime_loglinear": 2.0 - 0.1 * i,
-            "omission_rate": 0.05 * i,
+            "omission_rate": raw_rate,
             "trial_opportunities": 20,
-            "go_opportunities": 16,
+            "go_opportunities": go_n,
             "nogo_opportunities": 4,
             "correct_go_rt_opportunities": n_rt,
             "rt_variability_valid_n": n_rt,
@@ -79,14 +86,14 @@ def _primary_probe() -> pd.DataFrame:
             "rt_slope_min_n": 5,
             "rt_slope_status": "estimable" if n_rt >= 5 else "not_estimable_low_rt_n",
             "sdt_status": "estimable",
-            "omission_numerator": i,
-            "omission_denominator": 16,
+            "omission_numerator": raw_n,
+            "omission_denominator": go_n,
             "commission_numerator": 0,
             "commission_denominator": 4,
-            "raw_go_omission_n": i,
-            "clean_go_omission_n": i,
-            "timing_ambiguous_go_omission_n": 0,
-            "omission_taxonomy_denominator": 16,
+            "raw_go_omission_n": raw_n,
+            "clean_go_omission_n": clean_n,
+            "timing_ambiguous_go_omission_n": timing_n,
+            "omission_taxonomy_denominator": go_n,
         })
     return pd.DataFrame(rows)
 
@@ -139,6 +146,7 @@ def test_materialized_interface_writes_probe_table_audit_and_manifest_without_an
     assert manifest["participant_identity_contract_checked"] is True
     assert manifest["primary_probe_role_contract_checked"] is True
     assert manifest["rt_cv_handoff_contract_checked"] is True
+    assert manifest["omission_partition_handoff_contract_checked"] is True
     assert (output_root / "behavior_supervised_probe_30s.csv").is_file()
     assert (output_root / "behavior_supervised_feature_audit.csv").is_file()
     saved = json.loads((output_root / "behavior_supervised_interface_manifest.json").read_text(encoding="utf-8"))
