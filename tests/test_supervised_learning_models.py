@@ -83,6 +83,10 @@ def test_complete_outer_training_refit_uses_all_training_groups_and_no_test_labe
     assert result["test_group_ids"] == ["HELD-OUT"]
     assert "HELD-OUT" not in result["train_group_ids"]
     assert result["preprocessing"]["fit_group_ids"] == result["train_group_ids"]
+    assert result["coefficient_scale"] == "post_imputation_standardized_predictors"
+    assert set(result["standardized_coefficients"]) == set(result["preprocessing"]["output_columns"])
+    assert result["standardized_coefficients"]["signal"] > 0
+    assert np.isfinite(result["intercept"])
     assert len(result["p_positive"]) == len(outer_test)
     assert len(result["predicted_label"]) == len(outer_test)
 
