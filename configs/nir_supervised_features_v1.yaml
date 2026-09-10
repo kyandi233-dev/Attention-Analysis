@@ -1,0 +1,56 @@
+version: nir-supervised-features-v1
+base_signal:
+  name: pupil_geom_mean_diameter
+  unit: px
+  source: analysis_ready_raw_eye_values
+  zero_calibration: true
+  forbidden_session_baselines: [centered, robust_z, participant_within_between]
+windows:
+  primary_sec: 30
+  sensitivity_sec: [10, 20]
+  interval: "[probe-window, probe)"
+candidates:
+  level:
+    columns: [pupil_level_mean, pupil_level_median]
+  variability:
+    columns: [pupil_variability_sd, pupil_variability_mad, pupil_variability_iqr]
+  trend:
+    columns: [pupil_trend_robust_binned_slope_per_sec]
+    algorithm: robust_binned_slope_per_sec
+feature_schemes:
+  nir_mean_sd_trend:
+    role: primary_candidate
+    columns: [pupil_level_mean, pupil_variability_sd, pupil_trend_robust_binned_slope_per_sec]
+  nir_median_sd_trend:
+    role: primary_candidate
+    columns: [pupil_level_median, pupil_variability_sd, pupil_trend_robust_binned_slope_per_sec]
+  nir_median_mad_trend:
+    role: robust_sensitivity_candidate
+    columns: [pupil_level_median, pupil_variability_mad, pupil_trend_robust_binned_slope_per_sec]
+  nir_median_iqr_trend:
+    role: robust_sensitivity_candidate
+    columns: [pupil_level_median, pupil_variability_iqr, pupil_trend_robust_binned_slope_per_sec]
+quality_policy:
+  automatic_coverage_drop: false
+  imputation_here: false
+  standardization_here: false
+  analysis_set_generation_here: false
+sensitivity_inputs:
+  head_motion:
+    status: not_validated
+    reason: no current accepted pupil-only producer field is validated as a head-motion scientific proxy
+  scale:
+    status: not_validated
+    reason: no current accepted pupil-only producer field is validated as a face/eye scale scientific proxy
+  qc_fields_not_promoted_to_scientific_covariates:
+    - pupil_center_x
+    - pupil_center_y
+    - center_jump
+    - roi_clipped
+    - temporal_flagged
+    - roi_valid_content_fraction
+  pupil_iris_ratio_allowed: false
+  iris_fraction_as_scale_allowed: false
+handoff:
+  task_a: consume feature_schemes inside inner_cross_validation only
+  task_b: consume probe-level source/alignment/qc/computability status; D does not create analysis_set_id
