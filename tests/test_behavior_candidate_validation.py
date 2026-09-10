@@ -32,7 +32,7 @@ def _frame() -> pd.DataFrame:
                     "go_correct_rt_iqr_ms": 50 + session_i,
                     "go_correct_rt_cv": (40 + session_i) / (base + session_i * 10),
                     "go_correct_rt_theilsen_slope_ms_per_s": float(session_i),
-                    "omission_rate": raw,  # compatibility alias only
+                    "omission_rate": raw,
                     "raw_go_omission_rate": raw,
                     "clean_go_omission_rate": clean,
                     "timing_ambiguous_go_omission_rate": ambiguous,
@@ -53,25 +53,38 @@ def test_within_between_decomposition_is_participant_centered() -> None:
     assert out["go_correct_rt_median_ms__participant_mean"].notna().all()
 
 
-def test_candidate_validation_emits_coverage_redundancy_and_pending_freeze() -> None:
+def test_candidate_validation_is_descriptive_and_never_authorizes_full_cohort_drop() -> None:
     frame = _frame()
     validation, redundancy, decisions = build_candidate_validation(
         {"session": frame, "block": frame.copy()}, frame.copy()
     )
     assert {"coverage", "between_participant_variance", "within_participant_variance"}.issubset(validation.columns)
+    assert validation["selection_authority"].eq("descriptive_only").all()
+    assert validation["automatic_drop_allowed"].eq(False).all()
+
     pair = redundancy[
         ((redundancy["metric_a"] == "go_correct_rt_mean_ms") & (redundancy["metric_b"] == "go_correct_rt_median_ms"))
         | ((redundancy["metric_b"] == "go_correct_rt_mean_ms") & (redundancy["metric_a"] == "go_correct_rt_median_ms"))
     ]
     assert not pair.empty
     assert pair["redundant_flag"].all()
-    assert decisions["selection_rule"].str.contains("never p-value", regex=False).all()
-    formal_omission = decisions[decisions["metric"].isin({
-        "raw_go_omission_rate", "clean_go_omission_rate", "timing_ambiguous_go_omission_rate"
-    })]
-    assert formal_omission["final_endpoint_freeze_status"].eq(
-        "prespecified_formal_endpoint_pending_real_data_stability_review"
-    ).all()
+    assert pair["automatic_drop_allowed"].eq(False).all()
+    assert redundancy["selection_authority"].eq("descriptive_only").all()
+    assert decisions["selection_authority"].eq("descriptive_only").all()
+    assert decisions["automatic_drop_allowed"].eq(False).all()
+    assert decisions["selection_rule"].str.contains("never selects", regex=False).all()
+
+
+def test_below_80pct_coverage_is_reference_only_not_scientific_rejection() -> None:
+    frame = _frame()
+    frame.loc[0:1, "go_correct_rt_cv"] = np.nan  # 4/6 valid = 66.7%
+    validation, _, _ = build_candidate_validation({"session": frame}, frame.iloc[0:0].copy())
+    row = validation[(validation["scale"] == "session") & (validation["metric"] == "go_correct_rt_cv")].iloc[0]
+    assert row["coverage"] < 0.80
+    assert bool(row["below_historical_80pct_coverage_reference"])
+    assert row["admission_status"] == "descriptive_audit_only"
+    assert row["selection_authority"] == "descriptive_only"
+    assert not bool(row["automatic_drop_allowed"])
 
 
 def test_legacy_omission_rate_is_compatibility_alias_not_second_formal_endpoint() -> None:

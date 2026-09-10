@@ -20,8 +20,6 @@ def _frame() -> pd.DataFrame:
                 "session_id": f"{participant}-s{visit}",
                 "block_id": "B1",
             }
-            # Make raw = clean + timing_ambiguous while still giving the other
-            # QC candidates nonconstant values.
             clean = base + 0.01 * visit
             ambiguous = base / 2 + 0.005 * visit
             row["clean_go_omission_rate"] = clean
@@ -33,7 +31,7 @@ def _frame() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def test_omission_endpoints_get_within_between_and_role_is_prespecified() -> None:
+def test_omission_audit_preserves_roles_but_has_no_full_cohort_selection_authority() -> None:
     frame = _frame()
     validation, redundancy = validate_omission_candidates(
         {"session": frame, "block": frame.copy(), "cycle": frame.copy()},
@@ -43,6 +41,8 @@ def test_omission_endpoints_get_within_between_and_role_is_prespecified() -> Non
     assert set(session["metric"]) == set(TAXONOMY_RATE_METRICS)
     assert session["between_participant_variance"].notna().all()
     assert session["within_participant_variance"].notna().all()
+    assert session["selection_authority"].eq("descriptive_only").all()
+    assert session["automatic_drop_allowed"].eq(False).all()
 
     formal = session[session["metric"].isin(FORMAL_OMISSION_ENDPOINT_METRICS)]
     assert formal["endpoint_role"].eq("prespecified_formal_endpoint").all()
@@ -51,9 +51,10 @@ def test_omission_endpoints_get_within_between_and_role_is_prespecified() -> Non
     qc = session[session["metric"].isin(OMISSION_QC_RATE_METRICS)]
     assert qc["endpoint_role"].eq("qc_or_timing_diagnostic").all()
     assert qc["endpoint_status"].eq("not_a_primary_endpoint").all()
-    assert session["selection_contract"].str.contains("never outcome p-value", regex=False).all()
+    assert session["selection_contract"].str.contains("descriptive only", regex=False).all()
     assert not redundancy.empty
     assert redundancy["automatic_drop_allowed"].eq(False).all()
+    assert redundancy["selection_authority"].eq("descriptive_only").all()
 
 
 def test_formal_omission_redundancy_is_labeled_structural_not_drop_rule() -> None:
@@ -69,17 +70,18 @@ def test_formal_omission_redundancy_is_labeled_structural_not_drop_rule() -> Non
     assert formal_pairs["redundancy_interpretation"].str.contains("structurally", regex=False).all()
 
 
-def test_floor_effect_is_review_flag_not_automatic_exclusion_for_formal_endpoint() -> None:
+def test_floor_effect_and_low_coverage_are_review_flags_not_admission_gates() -> None:
     frame = _frame()
     frame["clean_go_omission_rate"] = 0.0
-    frame["raw_go_omission_rate"] = frame["timing_ambiguous_go_omission_rate"]
+    frame.loc[0:1, "clean_go_omission_rate"] = np.nan
     validation, _ = validate_omission_candidates({"session": frame}, frame.iloc[0:0].copy())
     row = validation[
         (validation["scale"].eq("session"))
         & (validation["metric"].eq("clean_go_omission_rate"))
     ].iloc[0]
-    assert np.isclose(row["floor_fraction"], 1.0)
+    assert row["coverage"] < 0.80
+    assert bool(row["below_historical_80pct_coverage_reference"])
     assert "strong_floor_effect" in row["candidate_reasons"]
-    assert row["endpoint_role"] == "prespecified_formal_endpoint"
-    assert row["endpoint_status"] == "prespecified_not_pvalue_selected"
-    assert row["candidate_status"] == "formal_endpoint_needs_real_data_stability_review"
+    assert row["candidate_status"] == "descriptive_audit_only"
+    assert row["selection_authority"] == "descriptive_only"
+    assert not bool(row["automatic_drop_allowed"])

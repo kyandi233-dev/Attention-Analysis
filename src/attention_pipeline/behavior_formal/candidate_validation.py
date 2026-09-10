@@ -1,7 +1,9 @@
-"""Candidate validation for formal SART behavior endpoints.
+"""Descriptive audit for formal SART behavior candidate metrics.
 
-This module is intentionally descriptive/admission-oriented. It does not select
-endpoints by p-value and it does not infer visit order from session identifiers.
+This module reports full-cohort coverage, distribution, within/between variance,
+time association and pairwise redundancy. These summaries do not authorize
+full-cohort feature deletion or admission for supervised learning. Any empirical
+selection must occur inside the relevant training boundary.
 """
 from __future__ import annotations
 
@@ -26,6 +28,8 @@ FORMAL_BEHAVIOR_ENDPOINT_METRICS = tuple(dict.fromkeys(
 
 @dataclass(frozen=True)
 class CandidateValidationConfig:
+    # Historical/descriptive references only. They must never act as automatic
+    # scientific inclusion/exclusion gates on the full formal cohort.
     min_coverage: float = 0.80
     redundancy_abs_r: float = 0.90
     rate_floor_ceiling_threshold: float = 0.95
@@ -62,7 +66,7 @@ def decompose_within_between(
     *,
     participant_col: str = "repeat_participant_id",
 ) -> pd.DataFrame:
-    """Add participant mean and within-participant deviation for each metric."""
+    """Add participant mean and within-participant deviation for explanation/audit."""
     if participant_col not in frame:
         raise ValueError(f"missing participant column: {participant_col}")
     out = frame.copy()
@@ -124,17 +128,17 @@ def _metric_row(
             time_rho = float(x[mask].rank().corr(t[mask].rank()))
 
     coverage = float(n_valid / n_total) if n_total else 0.0
-    reasons: list[str] = []
+    review_flags: list[str] = []
     if coverage < cfg.min_coverage:
-        reasons.append("low_coverage")
+        review_flags.append("below_historical_80pct_coverage_reference")
     if unique_n < cfg.minimum_unique_values:
-        reasons.append("low_unique_values")
+        review_flags.append("low_unique_values")
     if np.isfinite(floor_fraction) and floor_fraction >= cfg.rate_floor_ceiling_threshold:
-        reasons.append("floor_dominated")
+        review_flags.append("floor_dominated")
     if np.isfinite(ceiling_fraction) and ceiling_fraction >= cfg.rate_floor_ceiling_threshold:
-        reasons.append("ceiling_dominated")
+        review_flags.append("ceiling_dominated")
     if n_valid == 0:
-        reasons.append("not_computable")
+        review_flags.append("not_computable")
 
     return {
         "scale": scale,
@@ -142,6 +146,7 @@ def _metric_row(
         "n_rows": n_total,
         "n_valid": n_valid,
         "coverage": coverage,
+        "below_historical_80pct_coverage_reference": bool(coverage < cfg.min_coverage),
         "participant_group_n": participants,
         "session_n": sessions,
         "unique_value_n": unique_n,
@@ -156,14 +161,20 @@ def _metric_row(
         "within_participant_variance": within_var,
         "time_axis": time_column,
         "spearman_like_time_rho": time_rho,
-        "admission_status": "eligible_candidate" if not reasons else "needs_review",
-        "admission_reasons": ";".join(reasons) if reasons else "",
+        "admission_status": "not_computable" if n_valid == 0 else "descriptive_audit_only",
+        "admission_reasons": ";".join(review_flags) if review_flags else "",
+        "review_flags": ";".join(review_flags) if review_flags else "",
+        "selection_authority": "descriptive_only",
+        "automatic_drop_allowed": False,
         "endpoint_role": (
             "prespecified_formal_omission_endpoint"
             if metric in FORMAL_OMISSION_ENDPOINT_METRICS
             else "formal_behavior_candidate"
         ),
-        "decision_basis": "prespecified role + coverage/distribution/within-between/time-trend; no p-value selection",
+        "decision_basis": (
+            "full-cohort coverage/distribution/within-between/time-trend are descriptive only; "
+            "empirical feature selection must occur inside the relevant training boundary"
+        ),
     }
 
 
@@ -173,7 +184,7 @@ def build_candidate_validation(
     *,
     config: CandidateValidationConfig | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Return candidate validation, redundancy, and endpoint decision tables."""
+    """Return descriptive validation, redundancy, and non-selecting decision records."""
     cfg = config or CandidateValidationConfig()
     frames: dict[str, pd.DataFrame] = {k: v for k, v in scale_tables.items() if v is not None}
     frames["probe"] = primary_probe
@@ -206,49 +217,38 @@ def build_candidate_validation(
                     "abs_r": abs(float(r)) if np.isfinite(r) else math.nan,
                     "redundant_flag": bool(np.isfinite(r) and abs(float(r)) >= cfg.redundancy_abs_r),
                     "threshold": cfg.redundancy_abs_r,
+                    "threshold_role": "historical_descriptive_reference_only",
                     "structural_omission_pair": structural_omission_pair,
-                    "automatic_drop_allowed": False if structural_omission_pair else True,
+                    "selection_authority": "descriptive_only",
+                    "automatic_drop_allowed": False,
                 })
 
         validation_by_metric = {r["metric"]: r for r in rows if r["scale"] == scale}
-        kept: list[str] = []
         for metric in [m for m in _PRIORITY if m in available]:
             v = validation_by_metric[metric]
-            if v["admission_status"] != "eligible_candidate":
-                role = "prespecified_endpoint_needs_review" if metric in FORMAL_OMISSION_ENDPOINT_METRICS else "not_admitted_pending_review"
-                reason = str(v["admission_reasons"])
-            elif metric in FORMAL_OMISSION_ENDPOINT_METRICS:
-                # The three omission rates are deliberately retained together.
-                # raw = clean + timing-ambiguous and all use the Go denominator,
-                # so redundancy cannot be used as an automatic drop rule.
-                role = "prespecified_formal_endpoint"
-                reason = "formal omission decomposition retained regardless of structural redundancy"
-                kept.append(metric)
-            else:
-                redundant_with = None
-                for earlier in kept:
-                    pair = next((r for r in redundancy_rows if r["scale"] == scale and {r["metric_a"], r["metric_b"]} == {metric, earlier}), None)
-                    if pair and pair["redundant_flag"] and not pair.get("structural_omission_pair", False):
-                        redundant_with = earlier
-                        break
-                if redundant_with:
-                    role = "secondary_redundant_candidate"
-                    reason = f"abs_spearman>={cfg.redundancy_abs_r} with {redundant_with}"
-                else:
-                    role = "nonredundant_candidate"
-                    reason = "passes descriptive admission gates"
-                    kept.append(metric)
             decisions.append({
                 "scale": scale,
                 "metric": metric,
-                "candidate_role_recommendation": role,
-                "reason": reason,
+                "candidate_role_recommendation": (
+                    "prespecified_behavior_endpoint_descriptive_audit"
+                    if metric in FORMAL_OMISSION_ENDPOINT_METRICS
+                    else "scientific_candidate_requires_prespecified_or_training_boundary_decision"
+                ),
+                "reason": (
+                    "full-cohort descriptive audit reports coverage/distribution/redundancy but does not select or drop this metric; "
+                    f"review_flags={v['review_flags']}"
+                ),
                 "final_endpoint_freeze_status": (
                     "prespecified_formal_endpoint_pending_real_data_stability_review"
                     if metric in FORMAL_OMISSION_ENDPOINT_METRICS
-                    else "pending_real_data_scientific_review"
+                    else "pending_scientific_or_training_boundary_decision"
                 ),
-                "selection_rule": "prespecified role + coverage/distribution/redundancy; never p-value screening",
+                "selection_authority": "descriptive_only",
+                "automatic_drop_allowed": False,
+                "selection_rule": (
+                    "full-cohort audit never selects by coverage, redundancy or p-value; "
+                    "data-dependent selection belongs inside training/inner-CV"
+                ),
             })
 
     return pd.DataFrame(rows), pd.DataFrame(redundancy_rows), pd.DataFrame(decisions)
