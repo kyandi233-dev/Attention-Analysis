@@ -18,6 +18,7 @@ from .task import Q1_BINARY_SPEC, SupervisedLearningContractError
 
 
 FORMAL_PARTICIPANT_GROUP_COLUMN = "participant_group_id"
+FORMAL_ANALYSIS_SET_COLUMN = "analysis_set_id"
 
 
 def _require_frozen_runtime_contract(config_data: Mapping[str, Any]) -> None:
@@ -59,6 +60,8 @@ def _require_frozen_runtime_contract(config_data: Mapping[str, Any]) -> None:
         raise SupervisedLearningContractError("test-participant sequence statistics must remain forbidden")
     if validation.get("forbid_test_participant_future_information") is not True:
         raise SupervisedLearningContractError("test-participant future information must remain forbidden")
+    if validation.get("require_analysis_set_id") is not True:
+        raise SupervisedLearningContractError("formal Task A runs must require analysis_set_id")
 
     preprocessing = config_data.get("preprocessing", {})
     required_training_only = (
@@ -138,6 +141,25 @@ def _read_probe_table(path: Path) -> pd.DataFrame:
     )
 
 
+def _require_single_analysis_set_id(frame: pd.DataFrame) -> str:
+    if FORMAL_ANALYSIS_SET_COLUMN not in frame.columns:
+        raise SupervisedLearningContractError(
+            "formal supervised input must contain analysis_set_id supplied by the B-layer analysis-set contract"
+        )
+    raw = frame[FORMAL_ANALYSIS_SET_COLUMN]
+    if raw.isna().any():
+        raise SupervisedLearningContractError("analysis_set_id contains missing values")
+    normalized = raw.astype(str).str.strip()
+    if normalized.eq("").any():
+        raise SupervisedLearningContractError("analysis_set_id contains blank values")
+    values = normalized.drop_duplicates().tolist()
+    if len(values) != 1:
+        raise SupervisedLearningContractError(
+            f"formal Task A run requires exactly one analysis_set_id; got {values}"
+        )
+    return values[0]
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -193,6 +215,7 @@ def run_supervised_from_config(
     resolved_run_id = run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
     frame = _read_probe_table(input_path)
+    analysis_set_id = _require_single_analysis_set_id(frame)
     result = run_nested_loso(
         frame,
         model_feature_schemes=families,
@@ -202,6 +225,7 @@ def run_supervised_from_config(
         max_iter=int(primary_model.get("max_iter", 2000)),
         seed=int(pipeline.get("random_seed", 20260910)),
         run_id=str(resolved_run_id),
+        analysis_set_id=analysis_set_id,
     )
 
     repo_root = Path(__file__).resolve().parents[3]
