@@ -56,6 +56,7 @@ def _config(input_path: Path, output_root: Path) -> tuple[dict, dict]:
             "zero_individual_calibration": True,
             "forbid_test_participant_sequence_statistics": True,
             "forbid_test_participant_future_information": True,
+            "require_analysis_set_id": True,
         },
         "preprocessing": {
             "median_imputation_fit_on_training_only": True,
@@ -186,3 +187,27 @@ def test_runtime_config_cannot_mix_modality_compositions_within_one_model_family
 
     with pytest.raises(SupervisedLearningContractError, match="same modality_blocks"):
         run_supervised_from_config(config_path, paths_config=paths_path, run_id="blocked")
+
+
+def test_formal_run_requires_one_nonblank_analysis_set_id(tmp_path) -> None:
+    output_root = tmp_path / "outputs"
+    config_data, paths_data = _config(tmp_path / "probe_table.csv", output_root)
+
+    cases = []
+    missing = _probe_table().drop(columns=["analysis_set_id"])
+    cases.append((missing, "contain analysis_set_id"))
+    blank = _probe_table()
+    blank["analysis_set_id"] = " "
+    cases.append((blank, "blank"))
+    multiple = _probe_table()
+    multiple.loc[multiple.index[-1], "analysis_set_id"] = "other-set"
+    cases.append((multiple, "exactly one analysis_set_id"))
+
+    for index, (frame, message) in enumerate(cases):
+        input_path = tmp_path / f"probe_table_{index}.csv"
+        frame.to_csv(input_path, index=False)
+        config_data["paths"]["input_table"] = {"path_key": "supervised_learning_input_probe_table"}
+        paths_data["paths"]["supervised_learning_input_probe_table"] = str(input_path)
+        config_path, paths_path = _write_configs(tmp_path, config_data, paths_data)
+        with pytest.raises(SupervisedLearningContractError, match=message):
+            run_supervised_from_config(config_path, paths_config=paths_path, run_id=f"blocked-{index}")
