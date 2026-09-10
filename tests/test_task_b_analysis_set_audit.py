@@ -45,7 +45,9 @@ def test_structural_missing_and_single_feature_missing_are_distinct():
     t = _tables()
     t["nir"] = t["nir"].iloc[:3].copy()
     result = audit_quality(t, {"behavior": ["b"], "nir": ["n"]})
-    status = result["probe_feature_status"].query("modality == 'nir'").sort_values(["session_id", "probe_index_in_block"])
+    status = result["probe_feature_status"].query("modality == 'nir'").sort_values(
+        ["session_id", "probe_index_in_block"]
+    )
     reasons = dict(zip(zip(status.session_id, status.probe_index_in_block), status.missing_kind))
     assert reasons[("s1", 2)] == "single_feature_missing"
     assert reasons[("s2", 2)] == "record_missing"
@@ -69,13 +71,20 @@ def test_analysis_set_is_comparison_specific_and_ignores_unrequested_modality():
             "required_features": {"behavior": ["b"], "rgb": ["r"]},
         },
     }
-    sets, summary = build_analysis_sets(result["formal_probe_identity"], result["probe_feature_status"], specs)
+    sets, summary = build_analysis_sets(
+        result["formal_probe_identity"], result["probe_feature_status"], specs
+    )
     nir_set = sets[sets.analysis_set_id == "M0_vs_M1_nir"]
     rgb_set = sets[sets.analysis_set_id == "M0_vs_rgb"]
     assert nir_set.included_complete.sum() == 3
     assert nir_set.included_missing_aware.sum() == 4
     assert rgb_set.included_complete.sum() == 1
-    assert summary.query("analysis_set_id == 'M0_vs_M1_nir' and membership == 'included_complete'").probe_n.iloc[0] == 3
+    assert (
+        summary.query(
+            "analysis_set_id == 'M0_vs_M1_nir' and membership == 'included_complete'"
+        ).probe_n.iloc[0]
+        == 3
+    )
 
 
 def test_alignment_failure_not_allowed_in_missing_aware_set():
@@ -114,13 +123,23 @@ def _prediction_rows(sets):
     return pd.DataFrame(rows)
 
 
-def test_prediction_archive_one_row_per_probe_and_complete_coverage():
+def _prediction_sets():
     result = audit_quality(_tables(), {"behavior": ["b"], "nir": ["n"]})
     sets, _ = build_analysis_sets(
         result["formal_probe_identity"],
         result["probe_feature_status"],
-        {"M0_vs_M1_nir": {"required_features": {"behavior": ["b"], "nir": ["n"]}}},
+        {
+            "M0_vs_M1_nir": {
+                "models": ["M0", "M1"],
+                "required_features": {"behavior": ["b"], "nir": ["n"]},
+            }
+        },
     )
+    return sets
+
+
+def test_prediction_archive_one_row_per_probe_and_complete_coverage():
+    sets = _prediction_sets()
     predictions = _prediction_rows(sets)
     audit = validate_prediction_archive(predictions, sets)
     assert audit["status"] == "PASS_PREDICTION_ARCHIVE"
@@ -130,13 +149,16 @@ def test_prediction_archive_one_row_per_probe_and_complete_coverage():
         validate_prediction_archive(bad, sets)
 
 
+def test_prediction_archive_rejects_entire_missing_declared_model():
+    sets = _prediction_sets()
+    predictions = _prediction_rows(sets)
+    only_m0 = predictions[predictions.model_id == "M0"].copy()
+    with pytest.raises(ValueError, match="incomplete prediction coverage"):
+        validate_prediction_archive(only_m0, sets)
+
+
 def test_prediction_archive_rejects_wrong_fold_duplicate_and_outside_set():
-    result = audit_quality(_tables(), {"behavior": ["b"], "nir": ["n"]})
-    sets, _ = build_analysis_sets(
-        result["formal_probe_identity"],
-        result["probe_feature_status"],
-        {"M0_vs_M1_nir": {"required_features": {"behavior": ["b"], "nir": ["n"]}}},
-    )
+    sets = _prediction_sets()
     predictions = _prediction_rows(sets)
     wrong = predictions.copy()
     wrong.loc[0, "outer_fold_group"] = "other"
@@ -147,7 +169,15 @@ def test_prediction_archive_rejects_wrong_fold_duplicate_and_outside_set():
         validate_prediction_archive(dup, sets)
     outside = predictions.copy()
     excluded = sets[~sets.included_complete].iloc[0]
-    outside.loc[0, ["session_id", "participant_group_id", "block_id", "probe_index_in_block"]] = [excluded.session_id, excluded.participant_group_id, excluded.block_id, excluded.probe_index_in_block]
+    outside.loc[
+        0,
+        ["session_id", "participant_group_id", "block_id", "probe_index_in_block"],
+    ] = [
+        excluded.session_id,
+        excluded.participant_group_id,
+        excluded.block_id,
+        excluded.probe_index_in_block,
+    ]
     with pytest.raises(ValueError, match="outside requested"):
         validate_prediction_archive(outside, sets, require_complete=False)
 
@@ -176,3 +206,67 @@ def test_native_qc_failure_is_not_imputation_scope():
     row = sets[(sets.session_id == "s1") & (sets.probe_index_in_block == 1)].iloc[0]
     assert not bool(row.included_missing_aware)
     assert "native_qc_invalid" in row.missing_aware_exclusion_reason
+
+
+def test_behavior_explicit_nonestimable_sdt_is_not_residual_missingness():
+    t = _tables()
+    t["behavior"]["dprime_loglinear"] = [np.nan, 0.2, 0.3, 0.4]
+    t["behavior"]["sdt_status"] = [
+        "not_estimable_low_opportunity",
+        "estimable",
+        "estimable",
+        "estimable",
+    ]
+    result = audit_quality(t, {"behavior": ["dprime_loglinear"]})
+    status = result["probe_feature_status"].query("modality == 'behavior'")
+    first = status[(status.session_id == "s1") & (status.probe_index_in_block == 1)].iloc[0]
+    assert first.missing_kind == "feature_support_invalid"
+    assert not bool(first.feature_support_valid)
+    assert not bool(first.eligible_for_missing_strategy)
+
+
+def test_behavior_rt_cv_support_does_not_reintroduce_n20_gate():
+    t = _tables()
+    t["behavior"]["correct_go_rt_opportunities"] = [2, 1, 2, 2]
+    t["behavior"]["go_correct_rt_cv"] = [0.1, np.nan, 0.2, 0.3]
+    result = audit_quality(t, {"behavior": ["go_correct_rt_cv"]})
+    status = result["probe_feature_status"].query("modality == 'behavior'")
+    two = status[(status.session_id == "s1") & (status.probe_index_in_block == 1)].iloc[0]
+    one = status[(status.session_id == "s1") & (status.probe_index_in_block == 2)].iloc[0]
+    assert bool(two.feature_support_valid)
+    assert bool(two.feature_computable)
+    assert two.feature_support_evidence == "correct_go_rt_opportunities>=2"
+    assert one.missing_kind == "feature_support_invalid"
+    assert not bool(one.eligible_for_missing_strategy)
+
+
+def test_mmwave_qc_fail_is_not_missing_strategy_scope():
+    t = _tables()
+    mmwave = t["behavior"][[
+        "session_id", "participant_group_id", "block_id", "probe_index_in_block"
+    ]].copy()
+    mmwave["mmwave_observed"] = True
+    mmwave["mmwave_loadable"] = True
+    mmwave["mmwave_state"] = ["QC_FAIL", "OBSERVED", "OBSERVED", "OBSERVED"]
+    mmwave["window_name"] = "pre_30s"
+    mmwave["m"] = [1.0, 2.0, 3.0, 4.0]
+    t["mmwave"] = mmwave
+    result = audit_quality(t, {"behavior": ["b"], "mmwave": ["m"]})
+    status = result["probe_feature_status"].query("modality == 'mmwave'")
+    first = status[(status.session_id == "s1") & (status.probe_index_in_block == 1)].iloc[0]
+    assert first.missing_kind == "native_qc_invalid"
+    assert not bool(first.native_qc_valid)
+    assert not bool(first.eligible_for_missing_strategy)
+
+
+def test_nir_no_valid_pupil_samples_are_explicit_support_failure():
+    t = _tables()
+    t["nir"]["n_nir_rows"] = [10, 10, 10, 10]
+    t["nir"]["n_pupil_valid"] = [0, 2, 3, 4]
+    t["nir"]["pupil_mean"] = [np.nan, 3.1, 3.2, 3.3]
+    result = audit_quality(t, {"behavior": ["b"], "nir": ["pupil_mean"]})
+    status = result["probe_feature_status"].query("modality == 'nir'")
+    first = status[(status.session_id == "s1") & (status.probe_index_in_block == 1)].iloc[0]
+    assert first.missing_kind == "feature_support_invalid"
+    assert first.feature_support_evidence == "n_pupil_valid>=1:producer_math_support"
+    assert not bool(first.eligible_for_missing_strategy)
