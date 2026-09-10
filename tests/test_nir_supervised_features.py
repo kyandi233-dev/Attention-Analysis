@@ -22,8 +22,6 @@ def _frame():
             "right_raw_pupil_diameter": [14.0, np.nan, 30.0, 101.0, 1001.0],
             "left_pupil_valid_primary": [True, True, False, True, True],
             "right_pupil_valid_primary": [True, False, True, True, True],
-            # Deliberately impossible centered values: supervised construction
-            # must ignore them.
             "binocular_pupil": [-500.0] * 5,
             "left_centered_pupil": [-700.0] * 5,
             "right_centered_pupil": [-900.0] * 5,
@@ -47,6 +45,28 @@ def test_raw_binocular_uses_canonical_eye_fusion_and_ignores_centered_values():
     ]
     assert "binocular_pupil" not in result
     assert "left_centered_pupil" not in result
+
+
+def test_formal_long_candidate_sidecar_is_the_production_input():
+    frame = pd.DataFrame(
+        {
+            "session_id": ["sub-001"] * 4,
+            "phase": ["block1"] * 4,
+            "frame_idx": [1, 1, 2, 2],
+            "unix_ms": [90000.0, 90000.0, 91000.0, 91000.0],
+            "eye": ["left", "right", "left", "right"],
+            "pupil_geom_mean_diameter__raw": [10.0, 14.0, 20.0, np.nan],
+            "pupil_geom_mean_diameter__valid_primary": [True, True, True, False],
+            "analysis_group_token": ["legacy"] * 4,
+        }
+    )
+
+    result = build_raw_binocular_timepoints(frame)
+    assert len(result) == 2
+    assert result["block"].tolist() == [1, 1]
+    assert result["raw_binocular_pupil"].tolist() == pytest.approx([12.0, 20.0])
+    assert result["raw_binocular_source_mode"].tolist() == ["binocular", "left_only"]
+    assert result["supervised_input_schema"].eq("formal_candidate_sidecar_long").all()
 
 
 def test_preprobe_window_is_end_exclusive_and_block_local():
