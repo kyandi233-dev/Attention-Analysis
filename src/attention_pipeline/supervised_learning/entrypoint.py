@@ -21,6 +21,7 @@ def _require_frozen_runtime_contract(config_data: Mapping[str, Any]) -> None:
     task = config_data.get("task", {})
     expected_task = {
         "name": Q1_BINARY_SPEC.name,
+        "analysis_unit": "probe_preceding_window",
         "source_column": Q1_BINARY_SPEC.source_column,
         "positive_values": [1],
         "negative_values": [2, 3, 4],
@@ -43,6 +44,12 @@ def _require_frozen_runtime_contract(config_data: Mapping[str, Any]) -> None:
         raise SupervisedLearningContractError("Task A outer validation must remain participant-disjoint LOSO")
     if inner.get("method") != "grouped_k_fold" or inner.get("refit_preprocessing_per_split") is not True:
         raise SupervisedLearningContractError("Task A inner validation must refit preprocessing within each grouped split")
+    outer_group = str(outer.get("group_column", ""))
+    inner_group = str(inner.get("group_column", ""))
+    if not outer_group or inner_group != outer_group:
+        raise SupervisedLearningContractError(
+            "Task A inner and outer validation must use the same participant grouping column"
+        )
     if validation.get("zero_individual_calibration") is not True:
         raise SupervisedLearningContractError("Task A mainline requires zero individual calibration")
     if validation.get("forbid_test_participant_sequence_statistics") is not True:
@@ -51,6 +58,16 @@ def _require_frozen_runtime_contract(config_data: Mapping[str, Any]) -> None:
         raise SupervisedLearningContractError("test-participant future information must remain forbidden")
 
     preprocessing = config_data.get("preprocessing", {})
+    required_training_only = (
+        "median_imputation_fit_on_training_only",
+        "standardization_fit_on_training_only",
+        "data_dependent_column_handling_fit_on_training_only",
+    )
+    for key in required_training_only:
+        if preprocessing.get(key) is not True:
+            raise SupervisedLearningContractError(
+                f"preprocessing.{key} must remain true for Task A"
+            )
     if preprocessing.get("unified_global_coverage_cutoff") is not None:
         raise SupervisedLearningContractError("Task A forbids a unified global coverage cutoff")
     if preprocessing.get("participant_specific_within_between_mainline") is not False:
@@ -60,6 +77,10 @@ def _require_frozen_runtime_contract(config_data: Mapping[str, Any]) -> None:
     primary = models.get("primary", {})
     if primary.get("kind") != "logistic_l2":
         raise SupervisedLearningContractError("Task A primary model must remain L2 logistic regression")
+    if models.get("selection_metric") != "mean_inner_log_loss":
+        raise SupervisedLearningContractError(
+            "Task A candidate selection metric must match the implemented mean_inner_log_loss contract"
+        )
 
 
 def _load_feature_families(section: Mapping[str, Any]) -> dict[str, list[FeatureScheme]]:

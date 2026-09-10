@@ -57,7 +57,13 @@ def _config(input_path: Path, output_root: Path) -> tuple[dict, dict]:
             "forbid_test_participant_sequence_statistics": True,
             "forbid_test_participant_future_information": True,
         },
-        "preprocessing": {"unified_global_coverage_cutoff": None, "participant_specific_within_between_mainline": False},
+        "preprocessing": {
+            "median_imputation_fit_on_training_only": True,
+            "standardization_fit_on_training_only": True,
+            "data_dependent_column_handling_fit_on_training_only": True,
+            "unified_global_coverage_cutoff": None,
+            "participant_specific_within_between_mainline": False,
+        },
         "feature_schemes": {
             "model_families": {
                 "behavior": {
@@ -67,7 +73,10 @@ def _config(input_path: Path, output_root: Path) -> tuple[dict, dict]:
                 }
             }
         },
-        "models": {"primary": {"kind": "logistic_l2", "C_candidates": [0.1, 1.0], "max_iter": 500}, "selection_metric": "mean_inner_log_loss"},
+        "models": {
+            "primary": {"kind": "logistic_l2", "C_candidates": [0.1, 1.0], "max_iter": 500},
+            "selection_metric": "mean_inner_log_loss",
+        },
         "outputs": {"preserve_failures": True},
     }
     paths = {
@@ -80,26 +89,28 @@ def _config(input_path: Path, output_root: Path) -> tuple[dict, dict]:
     return config, paths
 
 
+def _write_configs(tmp_path: Path, config_data: dict, paths_data: dict) -> tuple[Path, Path]:
+    config_path = tmp_path / "supervised.yaml"
+    paths_path = tmp_path / "paths.local.yaml"
+    config_path.write_text(yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8")
+    paths_path.write_text(yaml.safe_dump(paths_data, sort_keys=False), encoding="utf-8")
+    return config_path, paths_path
+
+
 def test_run_supervised_from_config_end_to_end(tmp_path) -> None:
     input_path = tmp_path / "probe_table.csv"
     output_root = tmp_path / "outputs"
     _probe_table().to_csv(input_path, index=False)
     config_data, paths_data = _config(input_path, output_root)
-    config_path = tmp_path / "supervised.yaml"
-    paths_path = tmp_path / "paths.local.yaml"
-    config_path.write_text(yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8")
-    paths_path.write_text(yaml.safe_dump(paths_data, sort_keys=False), encoding="utf-8")
+    config_path, paths_path = _write_configs(tmp_path, config_data, paths_data)
 
-    manifest = run_supervised_from_config(
-        config_path,
-        paths_config=paths_path,
-        run_id="synthetic-run",
-    )
+    manifest = run_supervised_from_config(config_path, paths_config=paths_path, run_id="synthetic-run")
 
     run_root = output_root / "synthetic-run"
     assert manifest["status"] == "complete"
     assert manifest["analysis_set_id"] == "synthetic-common-set"
     assert manifest["n_prediction_rows"] == len(_probe_table())
+    assert manifest["outer_test_outcomes_passed_to_model"] is False
     assert (run_root / "probe_predictions.csv").is_file()
     assert (run_root / "fold_audits.json").is_file()
     assert (run_root / "failures.csv").is_file()
@@ -114,10 +125,31 @@ def test_runtime_config_cannot_reenable_global_coverage_gate(tmp_path) -> None:
     _probe_table().to_csv(input_path, index=False)
     config_data, paths_data = _config(input_path, output_root)
     config_data["preprocessing"]["unified_global_coverage_cutoff"] = 0.8
-    config_path = tmp_path / "supervised.yaml"
-    paths_path = tmp_path / "paths.local.yaml"
-    config_path.write_text(yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8")
-    paths_path.write_text(yaml.safe_dump(paths_data, sort_keys=False), encoding="utf-8")
+    config_path, paths_path = _write_configs(tmp_path, config_data, paths_data)
 
     with pytest.raises(SupervisedLearningContractError, match="unified global coverage cutoff"):
+        run_supervised_from_config(config_path, paths_config=paths_path, run_id="blocked")
+
+
+def test_runtime_config_cannot_disable_training_only_preprocessing(tmp_path) -> None:
+    input_path = tmp_path / "probe_table.csv"
+    output_root = tmp_path / "outputs"
+    _probe_table().to_csv(input_path, index=False)
+    config_data, paths_data = _config(input_path, output_root)
+    config_data["preprocessing"]["median_imputation_fit_on_training_only"] = False
+    config_path, paths_path = _write_configs(tmp_path, config_data, paths_data)
+
+    with pytest.raises(SupervisedLearningContractError, match="must remain true"):
+        run_supervised_from_config(config_path, paths_config=paths_path, run_id="blocked")
+
+
+def test_runtime_config_cannot_split_inner_and_outer_participant_keys(tmp_path) -> None:
+    input_path = tmp_path / "probe_table.csv"
+    output_root = tmp_path / "outputs"
+    _probe_table().to_csv(input_path, index=False)
+    config_data, paths_data = _config(input_path, output_root)
+    config_data["validation"]["inner"]["group_column"] = "session_id"
+    config_path, paths_path = _write_configs(tmp_path, config_data, paths_data)
+
+    with pytest.raises(SupervisedLearningContractError, match="same participant grouping column"):
         run_supervised_from_config(config_path, paths_config=paths_path, run_id="blocked")
