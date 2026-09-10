@@ -1,7 +1,7 @@
 """Predeclared feature-scheme contracts for the current Q1 mainline.
 
 Feature schemes define scientifically allowed candidate representations before a
-model sees outer-test data.  They do not perform empirical filtering themselves;
+model sees outer-test data. They do not perform empirical filtering themselves;
 training-split-only column handling belongs to ``preprocessing.py``.
 """
 from __future__ import annotations
@@ -14,7 +14,6 @@ import pandas as pd
 from .task import Q1_BINARY_SPEC, SupervisedLearningContractError
 
 
-# Frozen first-round exclusions from the current 1.15.5/1.15.6 method state.
 _MAINLINE_FORBIDDEN_COLUMNS: dict[str, str] = {
     Q1_BINARY_SPEC.source_column: "outcome label cannot be used as a predictor",
     "q2_ordinal_4level": "Q2 is interpretation/construct validation, not a first-round Q1 predictor",
@@ -62,6 +61,15 @@ def validate_mainline_feature_scheme(scheme: FeatureScheme) -> None:
     if len(set(scheme.columns)) != len(scheme.columns):
         raise SupervisedLearningContractError(
             f"feature scheme {scheme.feature_set_id} contains duplicate columns"
+        )
+    normalized_blocks = tuple(str(block).strip() for block in scheme.modality_blocks)
+    if any(not block for block in normalized_blocks):
+        raise SupervisedLearningContractError(
+            f"feature scheme {scheme.feature_set_id} contains blank modality_blocks"
+        )
+    if len(set(normalized_blocks)) != len(normalized_blocks):
+        raise SupervisedLearningContractError(
+            f"feature scheme {scheme.feature_set_id} contains duplicate modality_blocks"
         )
 
     for col in scheme.columns:
