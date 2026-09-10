@@ -36,11 +36,14 @@ IDENTITY_LOCATOR_COLUMNS = (
     "probe_event_id",
 )
 
-OPTIONAL_IDENTITY_AUDIT_COLUMNS = (
+REQUIRED_IDENTITY_AUDIT_COLUMNS = (
     "repeat_participant_id",
-    "participant_key",
     "participant_identity_source",
     "participant_identity_resolved_for_clustering",
+)
+
+OPTIONAL_IDENTITY_AUDIT_COLUMNS = (
+    "participant_key",
     "legacy_repeat_participant_id",
 )
 
@@ -180,6 +183,7 @@ def build_behavior_supervised_probe_table(primary_probe: pd.DataFrame) -> pd.Dat
     """
     required = tuple(dict.fromkeys((
         *IDENTITY_LOCATOR_COLUMNS,
+        *REQUIRED_IDENTITY_AUDIT_COLUMNS,
         *OUTCOME_COLUMNS,
         *FIRST_ROUND_CANDIDATE_POOL,
         "window_seconds_nominal",
@@ -191,7 +195,7 @@ def build_behavior_supervised_probe_table(primary_probe: pd.DataFrame) -> pd.Dat
     _require_columns(primary_probe, required)
     if primary_probe.empty:
         raise BehaviorSupervisedInterfaceError("primary behavior probe table is empty")
-    for column in IDENTITY_LOCATOR_COLUMNS:
+    for column in (*IDENTITY_LOCATOR_COLUMNS, "repeat_participant_id", "participant_identity_source"):
         if not _nonempty_string(primary_probe[column]).all():
             raise BehaviorSupervisedInterfaceError(f"identity/locator column contains missing or blank values: {column}")
 
@@ -227,6 +231,7 @@ def build_behavior_supervised_probe_table(primary_probe: pd.DataFrame) -> pd.Dat
     _validate_rt_cv_handoff(primary_probe)
     validate_first_round_omission_predictors(FIRST_ROUND_CANDIDATE_POOL)
     ordered = list(IDENTITY_LOCATOR_COLUMNS)
+    ordered.extend(REQUIRED_IDENTITY_AUDIT_COLUMNS)
     ordered.extend(c for c in OPTIONAL_IDENTITY_AUDIT_COLUMNS if c in primary_probe.columns)
     ordered.extend(c for c in WINDOW_AUDIT_COLUMNS if c in primary_probe.columns)
     ordered.extend(OUTCOME_COLUMNS)
@@ -370,6 +375,7 @@ def materialize_behavior_supervised_interface(
         "n_sessions": int(interface["session_id"].astype(str).nunique()),
         "probe_event_id_unique": bool(interface["probe_event_id"].is_unique),
         "participant_identity_contract_checked": True,
+        "participant_identity_audit_columns_required": list(REQUIRED_IDENTITY_AUDIT_COLUMNS),
         "primary_probe_role_contract_checked": True,
         "rt_cv_handoff_contract_checked": True,
         "row_filter_applied": False,
