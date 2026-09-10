@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import attention_pipeline.supervised_learning.models as supervised_models
 from attention_pipeline.supervised_learning.feature_schemes import FeatureScheme
 from attention_pipeline.supervised_learning.models import (
     ModelSelectionError,
@@ -121,4 +122,21 @@ def test_inner_group_count_is_not_silently_reduced() -> None:
             feature_schemes=[FeatureScheme("signal", ("signal",))],
             c_candidates=[1.0],
             n_splits=5,
+        )
+
+
+def test_unexpected_programming_error_in_model_selection_propagates(monkeypatch) -> None:
+    frame, y = _frame()
+
+    def _programmer_defect(*args, **kwargs):
+        raise TypeError("simulated programmer defect")
+
+    monkeypatch.setattr(supervised_models, "_fit_logistic", _programmer_defect)
+    with pytest.raises(TypeError, match="simulated programmer defect"):
+        select_logistic_model(
+            frame,
+            y,
+            feature_schemes=[FeatureScheme("signal", ("signal",))],
+            c_candidates=[1.0],
+            n_splits=4,
         )
