@@ -63,6 +63,9 @@ def test_formal_probe_table_refuses_to_promote_analysis_group_token_to_participa
 def test_manifest_declares_zero_calibration_and_no_training_side_effects():
     manifest = supervised_nir_manifest()
     assert manifest["base_signal"] == "pupil_geom_mean_diameter"
+    assert manifest["production_input_schema"] == "formal_candidate_sidecar_long"
+    assert manifest["production_raw_column"] == "pupil_geom_mean_diameter__raw"
+    assert manifest["production_validity_column"] == "pupil_geom_mean_diameter__valid_primary"
     assert manifest["zero_calibration"] is True
     assert manifest["session_level_baseline_used"] is False
     assert manifest["participant_within_between_used"] is False
@@ -72,3 +75,49 @@ def test_manifest_declares_zero_calibration_and_no_training_side_effects():
     assert manifest["automatic_coverage_drop"] is False
     assert manifest["head_motion_sensitivity_status"] == "not_validated"
     assert manifest["scale_sensitivity_status"] == "not_validated"
+
+
+def test_probe_table_respects_behavior_defined_available_bounds():
+    probes = _probes().assign(
+        block_analysis_start_ms=95000.0,
+        block_analysis_end_ms=120000.0,
+        available_start_ms=95000.0,
+        available_end_ms=100000.0,
+    )
+    result = build_supervised_probe_table(
+        _analysis_ready(), probes, windows_sec=(30,)
+    )
+    row = result.iloc[0]
+    assert row["requested_duration_sec"] == pytest.approx(30.0)
+    assert row["available_duration_sec"] == pytest.approx(5.0)
+    assert row["available_duration_fraction"] == pytest.approx(1 / 6)
+    assert bool(row["window_truncated_by_available_start"]) is True
+
+
+def test_probe_table_rejects_participant_identity_mismatch_with_nir_session():
+    frame = _analysis_ready().assign(participant_group_id="P002")
+    with pytest.raises(ValueError, match="participant_group_id mismatch"):
+        build_supervised_probe_table(frame, _probes())
+
+
+def test_session_specific_participant_inference_works_across_multiple_sessions():
+    frame = pd.concat(
+        [
+            _analysis_ready(),
+            _analysis_ready().assign(session_id="sub-002", participant_group_id="P002"),
+        ],
+        ignore_index=True,
+    )
+    probes = pd.concat(
+        [
+            _probes().drop(columns=["participant_group_id"]),
+            _probes()
+            .drop(columns=["participant_group_id"])
+            .assign(session_id="sub-002", probe_index_global=8),
+        ],
+        ignore_index=True,
+    )
+    result = build_supervised_probe_table(frame, probes)
+    assert set(
+        result[["session_id", "participant_group_id"]].itertuples(index=False, name=None)
+    ) == {("sub-001", "P001"), ("sub-002", "P002")}
