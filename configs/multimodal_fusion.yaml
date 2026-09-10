@@ -60,8 +60,7 @@ feature_blocks:
   behavior:
     - go_correct_rt_median_ms     # 近期正确 Go RT 中位数
     - go_correct_rt_cv            # RT-CV（RT 数低于门槛时缺失，语义 QC 缺失）
-    - omission_rate               # Go 遗漏率（主）
-    - raw_go_omission_rate        # 真遗漏率
+    - clean_go_omission_rate      # 排除检测到的运动时序模糊后的遗漏率
     - timing_ambiguous_go_omission_rate  # 预判/时序模糊遗漏率
     - commission_rate             # No-Go 误按率
     - dprime_loglinear            # d'（loglinear 校正，机会数不足时不失效）
@@ -87,6 +86,23 @@ feature_blocks:
     - blink_event_rate_per_min                      # 眨眼候选
     - blink_frame_ratio                             # 眨眼候选
     - win_valid_frame_ratio                         # 窗口有效帧比例（质量）
+
+# Input readiness only; no physiological release or model fitting.
+quality_admission:
+  rule_version: formal-quality-admission-v1
+  proportion_features:
+    - clean_go_omission_rate
+    - timing_ambiguous_go_omission_rate
+    - commission_rate
+    - hard_pupil_fraction
+    - mmwave_hr_usable_window_fraction
+    - mmwave_hr_mean_confidence
+    - mmwave_timestamp_coverage_fraction
+    - blink_frame_ratio
+    - win_valid_frame_ratio
+  measurement_families:
+    go_omission_components: [clean_go_omission_rate, timing_ambiguous_go_omission_rate]
+    rgb_blink: [blink_event_rate_per_min, blink_frame_ratio]
 
 # ---- 八组合阶梯（规格第 4 节） ----
 combinations:

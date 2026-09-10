@@ -55,8 +55,8 @@ MMWAVE_MISSING_SESSIONS = {"s-09-1"}
 SPLIT_SESSIONS = {"s-00-0", "s-00-1"}
 
 BEHAVIOR_FEATURES = [
-    "go_correct_rt_median_ms", "go_correct_rt_cv", "omission_rate",
-    "raw_go_omission_rate", "timing_ambiguous_go_omission_rate",
+    "go_correct_rt_median_ms", "go_correct_rt_cv",
+    "clean_go_omission_rate", "timing_ambiguous_go_omission_rate",
     "commission_rate", "dprime_loglinear",
 ]
 NIR_METRICS = ["pupil_geom_mean_diameter", "hard_pupil_fraction"]
@@ -111,7 +111,7 @@ def _synthetic_data_root(tmp_path: Path, rng: np.random.Generator) -> Path:
                     "go_correct_rt_median_ms": 380 + 30 * group_index + 40 * (q2 - 1) + rng.normal(0, 20),
                     "go_correct_rt_cv": rt_cv + 0.02 * (q1 >= 3) + rng.normal(0, 0.01),
                     "omission_rate": np.clip(0.02 + 0.03 * (q1 == 3) + rng.normal(0, 0.02), 0, 1),
-                    "raw_go_omission_rate": np.clip(0.01 + 0.02 * (q1 == 3) + rng.normal(0, 0.01), 0, 1),
+                    "clean_go_omission_rate": np.clip(0.01 + 0.02 * (q1 == 3) + rng.normal(0, 0.01), 0, 1),
                     "timing_ambiguous_go_omission_rate": np.clip(rng.normal(0.01, 0.01), 0, 0.2),
                     "commission_rate": np.clip(0.02 + 0.03 * (q2 == 1) + rng.normal(0, 0.02), 0, 1),
                     "dprime_loglinear": 2.0 - 0.3 * (q1 >= 3) + rng.normal(0, 0.3),

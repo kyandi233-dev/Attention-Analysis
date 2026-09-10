@@ -110,6 +110,8 @@ def _feature_columns(feature_blocks: dict[str, Any], blocks: tuple[str, ...]) ->
     (columns, nir_metrics)：columns 为模型输入原始特征列（NIR 用原始指标名），
     nir_metrics 为需 within/between 分解的指标。
     """
+    from .quality_admission import validate_omission_inputs
+    validate_omission_inputs(feature_blocks.get("behavior", []))
     columns: list[str] = []
     nir_metrics: list[str] = []
     for block in blocks:

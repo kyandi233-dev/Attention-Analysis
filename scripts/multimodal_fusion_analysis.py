@@ -31,6 +31,7 @@ def main() -> int:
     parser.add_argument("--paths-config", default=None,
                         help="Machine-local path registry; otherwise ATTENTION_ANALYSIS_PATHS_CONFIG is used.")
     parser.add_argument("--run-id", default=None, help="Output run id; defaults to UTC timestamp.")
+    parser.add_argument("--quality-only", action="store_true", help="Audit existing probe products without importing or training models.")
     parser.add_argument("--jobs", type=int, default=8, help="Fold-level parallel workers (loky).")
     parser.add_argument("--fold-limit", type=int, default=None,
                         help="Run only the first N participant folds (smoke).")
@@ -40,6 +41,14 @@ def main() -> int:
     parser.add_argument("--models", default=None,
                         help="Comma-separated model subset, e.g. logistic.")
     args = parser.parse_args()
+
+    if args.quality_only:
+        if not args.run_id:
+            parser.error("--quality-only requires an explicit --run-id")
+        from attention_pipeline.multimodal_formal.quality_admission import run_quality_admission
+        manifest = run_quality_admission(args.config, paths_config=args.paths_config, run_id=args.run_id)
+        print(json.dumps(manifest, ensure_ascii=False, indent=2))
+        return 0
 
     from attention_pipeline.multimodal_formal.runner import run_multimodal_fusion
 

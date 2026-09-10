@@ -97,7 +97,7 @@ def _canonical_group(frame: pd.DataFrame, modality: str) -> pd.Series:
     return frame["participant_group_id"].astype(str)
 
 
-def load_modality_table(data_root: Path, modality: str, bridge: pd.DataFrame | None = None) -> tuple[pd.DataFrame, list[str]]:
+def load_modality_table(data_root: Path, modality: str, bridge: pd.DataFrame | None = None, *, input_paths: dict[str, str] | None = None) -> tuple[pd.DataFrame, list[str]]:
     """加载单个模态 probe 表并规范化为标准融合键。
 
     Parameters
@@ -111,10 +111,11 @@ def load_modality_table(data_root: Path, modality: str, bridge: pd.DataFrame | N
     (table, problems)：table 含标准键与标签列；problems 为审计问题清单。
     """
     problems: list[str] = []
+    input_paths = input_paths or _INPUT_PATHS
     if modality == "mmwave":
         parts = []
         for key in ("mmwave", "mmwave_e"):
-            path = data_root / _INPUT_PATHS[key]
+            path = data_root / input_paths[key]
             if not path.is_file():
                 problems.append(f"missing_input:{path}")
                 continue
@@ -134,7 +135,7 @@ def load_modality_table(data_root: Path, modality: str, bridge: pd.DataFrame | N
             if missing:
                 problems.append(f"mmwave_rows_without_bridge_identity:{missing}")
     else:
-        path = data_root / _INPUT_PATHS[modality]
+        path = data_root / input_paths[modality]
         if not path.is_file():
             problems.append(f"missing_input:{path}")
             return pd.DataFrame(), problems
@@ -158,7 +159,8 @@ def load_modality_table(data_root: Path, modality: str, bridge: pd.DataFrame | N
     out = frame.copy()
     out["block_id"] = normalize_block(out["block_id"] if "block_id" in out.columns else out["block_num"])
     out["probe_index_in_block"] = pd.to_numeric(out[index_col], errors="coerce").astype("Int64")
-    out["window_name"] = PRIMARY_WINDOW
+    if "window_name" not in out:
+        out["window_name"] = PRIMARY_WINDOW
     return out, problems
 
 
