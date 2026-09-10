@@ -4,8 +4,10 @@ import pytest
 
 from attention_pipeline.nir_formal_analysis.supervised_features import (
     BASE_SIGNAL,
+    TREND_ALGORITHM,
     build_raw_binocular_timepoints,
     select_preprobe_window,
+    summarize_supervised_window,
 )
 
 
@@ -94,3 +96,60 @@ def test_only_frozen_window_lengths_are_accepted():
             probe_onset_ms=100000.0,
             window_sec=60,
         )
+
+
+def test_supervised_summary_reuses_frozen_compact_candidate_family():
+    window = pd.DataFrame(
+        {
+            "unix_ms": [0.0, 1000.0, 2000.0, 3000.0],
+            "raw_binocular_pupil": [10.0, 12.0, 14.0, 16.0],
+        }
+    )
+    result = summarize_supervised_window(window)
+
+    assert result["base_signal"] == BASE_SIGNAL
+    assert result["trend_algorithm"] == TREND_ALGORITHM
+    assert result["n_valid_pupil_samples"] == 4
+    assert result["pupil_level_mean"] == pytest.approx(13.0)
+    assert result["pupil_level_median"] == pytest.approx(13.0)
+    assert result["pupil_variability_sd"] == pytest.approx(np.std([10, 12, 14, 16], ddof=1))
+    assert result["pupil_variability_mad"] == pytest.approx(2.0)
+    assert result["pupil_variability_iqr"] == pytest.approx(3.0)
+    assert result["pupil_trend_robust_binned_slope_per_sec"] == pytest.approx(2.0)
+    assert result["pupil_level_mean_status"] == "computable"
+    assert result["pupil_variability_sd_status"] == "computable"
+    assert result["pupil_trend_robust_binned_slope_per_sec_status"] == "computable"
+
+
+def test_single_valid_sample_is_not_misreported_as_zero_variability():
+    window = pd.DataFrame(
+        {
+            "unix_ms": [1000.0, 2000.0],
+            "raw_binocular_pupil": [15.0, np.nan],
+        }
+    )
+    result = summarize_supervised_window(window)
+
+    assert result["pupil_level_mean"] == pytest.approx(15.0)
+    assert result["pupil_level_mean_status"] == "computable"
+    assert result["pupil_variability_sd"] is None
+    assert result["pupil_variability_mad"] is None
+    assert result["pupil_variability_iqr"] is None
+    assert result["pupil_variability_sd_status"] == "not_estimable_low_valid_samples"
+    assert result["pupil_trend_robust_binned_slope_per_sec"] is None
+    assert result["pupil_trend_robust_binned_slope_per_sec_status"] == "not_estimable_low_valid_samples"
+
+
+def test_trend_requires_actual_time_support_not_just_three_values():
+    window = pd.DataFrame(
+        {
+            "unix_ms": [1000.0, 1000.0, 1000.0],
+            "raw_binocular_pupil": [10.0, 11.0, 12.0],
+        }
+    )
+    result = summarize_supervised_window(window)
+
+    assert result["pupil_level_mean_status"] == "computable"
+    assert result["pupil_variability_sd_status"] == "computable"
+    assert result["pupil_trend_robust_binned_slope_per_sec"] is None
+    assert result["pupil_trend_robust_binned_slope_per_sec_status"] == "not_estimable_time_support"
