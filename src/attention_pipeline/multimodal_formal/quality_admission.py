@@ -18,6 +18,13 @@ VERSION = "task-b-analysis-set-audit-v1.1.0"
 KEYS = list(KEY_COLUMNS)
 GROUP = "participant_group_id"
 REVIEW_COVERAGE_REFERENCE = 0.80
+FORMAL_METADATA_COLUMNS = (
+    "probe_event_id",
+    "probe_order_in_block",
+    "q1_nominal_4class",
+    "q2_ordinal_4level",
+    "window_name",
+)
 
 
 def _true(series: pd.Series) -> pd.Series:
@@ -161,9 +168,6 @@ def _native_qc_state(
         valid &= _true(frame[feature_qc])
         evidence.append(feature_qc)
 
-    # The current authoritative merge-ready producer explicitly marks QC_FAIL
-    # while still reporting observed/loadable=True. Treat that as native QC failure,
-    # not as residual feature missingness that could later be imputed.
     if modality == "mmwave" and "mmwave_state" in frame.columns:
         state = frame["mmwave_state"].astype("string")
         known = state.notna()
@@ -238,8 +242,6 @@ def _feature_support_state(
         }:
             minimum = 2
         elif feature == "pupil_slope_per_sec":
-            # Mirrors summarize_signal/robust_binned_slope_per_sec mathematical support,
-            # not a new scientific stability threshold.
             minimum = 3
         valid &= n_valid.ge(minimum)
         evidence.append(f"n_pupil_valid>={minimum}:producer_math_support")
@@ -264,7 +266,10 @@ def audit_quality(
 
     behavior = tables["behavior"].reset_index(drop=True).copy()
     validate_probe_keys(behavior, "behavior")
-    identity = behavior[KEYS + [GROUP]].copy()
+    identity_columns = KEYS + [GROUP] + [
+        column for column in FORMAL_METADATA_COLUMNS if column in behavior.columns
+    ]
+    identity = behavior[identity_columns].copy()
 
     feature_rows: list[pd.DataFrame] = []
     modality_rows: list[pd.DataFrame] = []
@@ -279,7 +284,7 @@ def audit_quality(
         else:
             validate_probe_keys(source, modality)
             identity_check = source.merge(
-                identity,
+                identity[KEYS + [GROUP]],
                 on=KEYS,
                 how="left",
                 suffixes=("", "_formal"),
@@ -293,7 +298,7 @@ def audit_quality(
                 raise ValueError(f"{modality}: identity disagrees with behavior")
 
         merge_source = source.drop(columns=[GROUP], errors="ignore")
-        frame = identity.merge(
+        frame = identity[KEYS + [GROUP]].merge(
             merge_source, on=KEYS, how="left", indicator=True, validate="one_to_one"
         )
         matched = frame["_merge"].eq("both")
