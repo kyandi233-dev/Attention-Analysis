@@ -11,6 +11,11 @@ import pandas as pd
 
 from attention_pipeline.config import load_config
 
+from .evaluation import (
+    DEFAULT_BOOTSTRAP_REPLICATES,
+    DEFAULT_BOOTSTRAP_SEED,
+    DEFAULT_CONFIDENCE_LEVEL,
+)
 from .feature_schemes import FeatureScheme, load_feature_schemes
 from .models import SELECTION_METRIC
 from .reporting import write_supervised_run
@@ -106,6 +111,23 @@ def _require_frozen_runtime_contract(config_data: Mapping[str, Any]) -> None:
         raise SupervisedLearningContractError(
             f"Task A candidate selection metric must be {SELECTION_METRIC}"
         )
+
+    uncertainty = config_data.get("uncertainty", {})
+    participant_bootstrap = uncertainty.get("participant_cluster_bootstrap", {})
+    expected_bootstrap = {
+        "method": "fixed_oof_participant_cluster_percentile",
+        "replicates": DEFAULT_BOOTSTRAP_REPLICATES,
+        "seed": DEFAULT_BOOTSTRAP_SEED,
+        "confidence_level": DEFAULT_CONFIDENCE_LEVEL,
+        "paired_model_resampling": True,
+        "retrain_within_bootstrap": False,
+    }
+    for key, expected in expected_bootstrap.items():
+        if participant_bootstrap.get(key) != expected:
+            raise SupervisedLearningContractError(
+                f"uncertainty.participant_cluster_bootstrap.{key}={participant_bootstrap.get(key)!r} "
+                f"conflicts with frozen D10 value {expected!r}"
+            )
 
 
 def _load_feature_families(section: Mapping[str, Any]) -> dict[str, list[FeatureScheme]]:
