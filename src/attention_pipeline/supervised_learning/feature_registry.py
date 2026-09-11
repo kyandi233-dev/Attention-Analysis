@@ -1,7 +1,7 @@
 """Frozen feature registry and comparison-plan generation for Q1 supervision.
 
 This module deliberately does *not* decide which real FocusWave features are
-scientifically qualified.  Upstream Task C/D work must freeze those choices.
+scientifically qualified. Upstream Task C/D work must freeze those choices.
 Once frozen, the registry records what each concrete feature measures and which
 devices are actually required to produce that representation, then generates a
 single consistent model plan for standalone, Behavior-conditioned, full-model
@@ -160,8 +160,11 @@ def validate_registered_features(features: Sequence[RegisteredFeature]) -> tuple
     for feature in frozen:
         feature_id = feature.feature_id.strip()
         scientific_id = feature.scientific_feature_id.strip()
-        if not feature_id or not scientific_id:
-            raise FeatureRegistryContractError("feature_id and scientific_feature_id must be non-empty")
+        raw_source = feature.raw_source.strip()
+        if not feature_id or not scientific_id or not raw_source:
+            raise FeatureRegistryContractError(
+                "feature_id, scientific_feature_id and raw_source must be non-empty"
+            )
         if feature_id in feature_ids:
             raise FeatureRegistryContractError(f"duplicate feature_id: {feature_id}")
         feature_ids.add(feature_id)
@@ -170,7 +173,14 @@ def validate_registered_features(features: Sequence[RegisteredFeature]) -> tuple
         if not feature.columns:
             raise FeatureRegistryContractError(f"{feature_id}: columns must be non-empty")
         columns = _clean_tuple(feature.columns, field_name="columns", feature_id=feature_id)
-        devices = frozenset(_clean_tuple(feature.required_devices, field_name="required_devices", feature_id=feature_id))
+        devices = frozenset(
+            _clean_tuple(feature.required_devices, field_name="required_devices", feature_id=feature_id)
+        )
+        _clean_tuple(
+            feature.preprocessing_dependencies,
+            field_name="preprocessing_dependencies",
+            feature_id=feature_id,
+        ) if feature.preprocessing_dependencies else ()
         if not devices:
             raise FeatureRegistryContractError(f"{feature_id}: required_devices must be non-empty")
         unknown_devices = sorted(devices - ALLOWED_DEVICE_KEYS)
@@ -222,11 +232,15 @@ def validate_registered_features(features: Sequence[RegisteredFeature]) -> tuple
                 f"{feature_id}: only sensor features may request Behavior-conditioned increments"
             )
 
-        packages = _clean_tuple(
-            feature.allowed_device_packages,
-            field_name="allowed_device_packages",
-            feature_id=feature_id,
-        ) if feature.allowed_device_packages else ()
+        packages = (
+            _clean_tuple(
+                feature.allowed_device_packages,
+                field_name="allowed_device_packages",
+                feature_id=feature_id,
+            )
+            if feature.allowed_device_packages
+            else ()
+        )
         if feature.role == "behavior" and not packages:
             packages = tuple(DEVICE_PACKAGES)
         for package_id in packages:
@@ -246,8 +260,6 @@ def validate_registered_features(features: Sequence[RegisteredFeature]) -> tuple
                 )
             package_scientific_owner[key] = feature_id
 
-        # Also validate that this exact predictor representation does not violate
-        # the mainline forbidden-column contract.
         validate_mainline_feature_scheme(
             FeatureScheme(
                 feature_set_id=f"registry::{feature_id}",
@@ -264,7 +276,14 @@ def validate_registered_features(features: Sequence[RegisteredFeature]) -> tuple
 
 
 def registered_feature_from_mapping(raw: Mapping[str, Any]) -> RegisteredFeature:
-    required = {"feature_id", "scientific_feature_id", "columns", "role", "raw_source", "required_devices"}
+    required = {
+        "feature_id",
+        "scientific_feature_id",
+        "columns",
+        "role",
+        "raw_source",
+        "required_devices",
+    }
     missing = sorted(required - set(raw))
     if missing:
         raise FeatureRegistryContractError(f"feature registry entry missing required fields: {missing}")
@@ -316,12 +335,10 @@ def _unique_columns(features: Sequence[RegisteredFeature]) -> tuple[str, ...]:
     return tuple(columns)
 
 
-def _required_devices(features: Sequence[RegisteredFeature], *, include_behavior_reference: bool = False) -> tuple[str, ...]:
+def _required_devices(features: Sequence[RegisteredFeature]) -> tuple[str, ...]:
     devices: set[str] = set()
     for feature in features:
         devices.update(feature.required_devices)
-    if include_behavior_reference:
-        devices.add("behavior")
     return tuple(sorted(devices))
 
 
@@ -450,6 +467,17 @@ def build_feature_comparison_plan(features: Sequence[RegisteredFeature]) -> Feat
             selected.append(feature)
         if not selected:
             raise FeatureRegistryContractError(f"device package {package_id} has no registered features")
+
+        covered_devices: set[str] = set()
+        for feature in selected:
+            covered_devices.update(feature.required_devices)
+        missing_sensor_information = sorted((package_devices - {"behavior"}) - covered_devices)
+        if missing_sensor_information:
+            raise FeatureRegistryContractError(
+                f"device package {package_id} declares sensor devices without registered scientific information: "
+                f"{missing_sensor_information}"
+            )
+
         model_id = package_id
         add(
             _planned_model(
