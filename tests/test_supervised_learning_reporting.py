@@ -62,6 +62,69 @@ def _complete_result() -> SupervisedRunResult:
     )
 
 
+def _paired_result() -> SupervisedRunResult:
+    rows = []
+    audits = []
+    for model_id, probabilities in {
+        "behavior_reference": [0.6, 0.4],
+        "behavior_plus::blink_rate": [0.9, 0.1],
+    }.items():
+        for participant, session, q1, probability in zip(
+            ["P01", "P02"], ["S01", "S02"], [1, 2], probabilities, strict=True
+        ):
+            rows.append(
+                {
+                    "run_id": "run-paired",
+                    "analysis_set_id": "set-a",
+                    "participant_group_id": participant,
+                    "model_id": model_id,
+                    "outer_fold_group": participant,
+                    "session_id": session,
+                    "block_id": "B1",
+                    "probe_event_id": f"{session}|B1|P1",
+                    "q1_nominal_4class": q1,
+                    "q1_binary": 1 if q1 == 1 else 0,
+                    "feature_set_id": model_id,
+                    "selected_c": 1.0,
+                    "p_q1_equals_1": probability,
+                    "predicted_q1_binary": 1 if probability >= 0.5 else 0,
+                    "model_failed": False,
+                    "failure_reason": "",
+                }
+            )
+            audits.append(
+                {
+                    "run_id": "run-paired",
+                    "analysis_set_id": "set-a",
+                    "model_id": model_id,
+                    "outer_fold_group": participant,
+                    "failed": False,
+                    "reason": "",
+                }
+            )
+    return SupervisedRunResult(
+        predictions=pd.DataFrame(rows),
+        fold_audits=audits,
+        failures=pd.DataFrame(),
+        metadata={
+            "run_id": "run-paired",
+            "analysis_set_id": "set-a",
+            "task": "q1_equals_1_vs_2_3_4",
+            "n_input_rows": 2,
+            "n_participant_groups": 2,
+            "n_models": 2,
+            "paired_comparisons": [
+                {
+                    "comparison_type": "behavior_increment",
+                    "feature_id": "blink_rate",
+                    "baseline_model_id": "behavior_reference",
+                    "added_model_id": "behavior_plus::blink_rate",
+                }
+            ],
+        },
+    )
+
+
 def test_write_supervised_run_is_immutable_and_auditable(tmp_path) -> None:
     result = _complete_result()
     manifest = write_supervised_run(
@@ -86,6 +149,9 @@ def test_write_supervised_run_is_immutable_and_auditable(tmp_path) -> None:
     assert (run_root / "participant_log_loss.csv").is_file()
     assert (run_root / "model_evaluation.csv").is_file()
     assert (run_root / "participant_bootstrap.json").is_file()
+    assert (run_root / "paired_participant_increments.csv").is_file()
+    assert (run_root / "paired_model_increments.csv").is_file()
+    assert (run_root / "paired_increment_bootstrap.json").is_file()
     assert (run_root / "run_manifest.json").is_file()
 
     participant = pd.read_csv(run_root / "participant_log_loss.csv")
@@ -101,9 +167,29 @@ def test_write_supervised_run_is_immutable_and_auditable(tmp_path) -> None:
     saved = json.loads((run_root / "run_manifest.json").read_text(encoding="utf-8"))
     assert saved["analysis_set_id"] == "set-a"
     assert saved["provenance"]["input_sha256"] == "abc"
+    assert saved["n_declared_paired_comparisons"] == 0
 
     with pytest.raises(FileExistsError, match="refusing to overwrite"):
         write_supervised_run(result, output_root=tmp_path)
+
+
+def test_declared_paired_increment_is_written_from_same_oof_archive(tmp_path) -> None:
+    result = _paired_result()
+    manifest = write_supervised_run(result, output_root=tmp_path)
+    run_root = tmp_path / "run-paired"
+
+    summary = pd.read_csv(run_root / "paired_model_increments.csv")
+    participants = pd.read_csv(run_root / "paired_participant_increments.csv")
+    bootstrap = json.loads((run_root / "paired_increment_bootstrap.json").read_text(encoding="utf-8"))
+
+    assert manifest["n_declared_paired_comparisons"] == 1
+    assert manifest["n_estimable_paired_comparisons"] == 1
+    assert summary.loc[0, "status"] == "estimable"
+    assert summary.loc[0, "feature_id"] == "blink_rate"
+    assert summary.loc[0, "overall_log_loss_increment"] > 0
+    assert set(participants["participant_group_id"]) == {"P01", "P02"}
+    assert bootstrap[0]["paired_model_resampling"] is True
+    assert bootstrap[0]["point_estimate"] == pytest.approx(summary.loc[0, "overall_log_loss_increment"])
 
 
 def test_write_supervised_run_rejects_prediction_row_loss(tmp_path) -> None:
