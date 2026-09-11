@@ -13,7 +13,7 @@ from attention_pipeline.supervised_learning.task import SupervisedLearningContra
 
 def _probe_table() -> pd.DataFrame:
     rows = []
-    for group_index in range(5):
+    for group_index in range(6):
         group = f"P{group_index:02d}"
         session = f"S{group_index:02d}"
         for probe, q1 in enumerate((1, 2, 1, 3), start=1):
@@ -52,16 +52,17 @@ def _config(input_path: Path, output_root: Path) -> tuple[dict, dict]:
         },
         "validation": {
             "outer": {"method": "leave_one_participant_out", "group_column": "participant_group_id", "participant_disjoint": True},
-            "inner": {"method": "grouped_k_fold", "n_splits": 2, "group_column": "participant_group_id", "refit_preprocessing_per_split": True},
+            "inner": {"method": "grouped_k_fold", "n_splits": 5, "group_column": "participant_group_id", "refit_preprocessing_per_split": True},
             "zero_individual_calibration": True,
             "forbid_test_participant_sequence_statistics": True,
             "forbid_test_participant_future_information": True,
             "require_analysis_set_id": True,
         },
         "preprocessing": {
-            "median_imputation_fit_on_training_only": True,
-            "standardization_fit_on_training_only": True,
+            "participant_equal_weighted_median_imputation_fit_on_training_only": True,
+            "participant_equal_standardization_fit_on_training_only": True,
             "data_dependent_column_handling_fit_on_training_only": True,
+            "participant_equal_training_weights_normalized_to_mean_one": True,
             "unified_global_coverage_cutoff": None,
             "participant_specific_within_between_mainline": False,
         },
@@ -76,7 +77,7 @@ def _config(input_path: Path, output_root: Path) -> tuple[dict, dict]:
         },
         "models": {
             "primary": {"kind": "logistic_l2", "C_candidates": [0.1, 1.0], "max_iter": 500},
-            "selection_metric": "mean_inner_log_loss",
+            "selection_metric": "participant_macro_log_loss",
         },
         "outputs": {"preserve_failures": True},
     }
@@ -132,15 +133,51 @@ def test_runtime_config_cannot_reenable_global_coverage_gate(tmp_path) -> None:
         run_supervised_from_config(config_path, paths_config=paths_path, run_id="blocked")
 
 
-def test_runtime_config_cannot_disable_training_only_preprocessing(tmp_path) -> None:
+def test_runtime_config_cannot_disable_participant_equal_preprocessing(tmp_path) -> None:
     input_path = tmp_path / "probe_table.csv"
     output_root = tmp_path / "outputs"
     _probe_table().to_csv(input_path, index=False)
     config_data, paths_data = _config(input_path, output_root)
-    config_data["preprocessing"]["median_imputation_fit_on_training_only"] = False
+    config_data["preprocessing"]["participant_equal_weighted_median_imputation_fit_on_training_only"] = False
     config_path, paths_path = _write_configs(tmp_path, config_data, paths_data)
 
     with pytest.raises(SupervisedLearningContractError, match="must remain true"):
+        run_supervised_from_config(config_path, paths_config=paths_path, run_id="blocked")
+
+
+def test_runtime_config_requires_five_inner_participant_folds(tmp_path) -> None:
+    input_path = tmp_path / "probe_table.csv"
+    output_root = tmp_path / "outputs"
+    _probe_table().to_csv(input_path, index=False)
+    config_data, paths_data = _config(input_path, output_root)
+    config_data["validation"]["inner"]["n_splits"] = 2
+    config_path, paths_path = _write_configs(tmp_path, config_data, paths_data)
+
+    with pytest.raises(SupervisedLearningContractError, match="exactly 5 participant-grouped folds"):
+        run_supervised_from_config(config_path, paths_config=paths_path, run_id="blocked")
+
+
+def test_runtime_config_rejects_legacy_prediction_folds(tmp_path) -> None:
+    input_path = tmp_path / "probe_table.csv"
+    output_root = tmp_path / "outputs"
+    _probe_table().to_csv(input_path, index=False)
+    config_data, paths_data = _config(input_path, output_root)
+    config_data["validation"]["prediction_folds"] = 5
+    config_path, paths_path = _write_configs(tmp_path, config_data, paths_data)
+
+    with pytest.raises(SupervisedLearningContractError, match="prediction_folds is deprecated"):
+        run_supervised_from_config(config_path, paths_config=paths_path, run_id="blocked")
+
+
+def test_runtime_config_rejects_old_probe_or_fold_mean_selection_metric(tmp_path) -> None:
+    input_path = tmp_path / "probe_table.csv"
+    output_root = tmp_path / "outputs"
+    _probe_table().to_csv(input_path, index=False)
+    config_data, paths_data = _config(input_path, output_root)
+    config_data["models"]["selection_metric"] = "mean_inner_log_loss"
+    config_path, paths_path = _write_configs(tmp_path, config_data, paths_data)
+
+    with pytest.raises(SupervisedLearningContractError, match="participant_macro_log_loss"):
         run_supervised_from_config(config_path, paths_config=paths_path, run_id="blocked")
 
 
