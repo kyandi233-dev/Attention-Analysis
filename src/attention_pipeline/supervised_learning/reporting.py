@@ -9,7 +9,7 @@ from typing import Any, Mapping
 import numpy as np
 import pandas as pd
 
-from .evaluation import evaluate_prediction_archive
+from .evaluation import EvaluationContractError, evaluate_prediction_archive, paired_log_loss_increment
 from .runner import SupervisedRunResult
 from .task import SupervisedLearningContractError
 
@@ -20,6 +20,9 @@ FAILURES_FILENAME = "failures.csv"
 PARTICIPANT_SCORES_FILENAME = "participant_log_loss.csv"
 MODEL_SCORES_FILENAME = "model_evaluation.csv"
 BOOTSTRAP_FILENAME = "participant_bootstrap.json"
+PAIRED_PARTICIPANT_INCREMENTS_FILENAME = "paired_participant_increments.csv"
+PAIRED_MODEL_INCREMENTS_FILENAME = "paired_model_increments.csv"
+PAIRED_BOOTSTRAP_FILENAME = "paired_increment_bootstrap.json"
 MANIFEST_FILENAME = "run_manifest.json"
 
 _FAILURE_COLUMNS = (
@@ -166,6 +169,129 @@ def _validate_prediction_contract(result: SupervisedRunResult) -> None:
             )
 
 
+def _paired_comparison_outputs(
+    predictions: pd.DataFrame,
+    paired_specs: object,
+) -> tuple[pd.DataFrame, pd.DataFrame, list[dict[str, object]]]:
+    """Evaluate declared comparison pairs without silently dropping invalid pairs."""
+    participant_frames: list[pd.DataFrame] = []
+    summary_rows: list[dict[str, object]] = []
+    bootstrap_records: list[dict[str, object]] = []
+    if paired_specs in (None, []):
+        return (
+            pd.DataFrame(
+                columns=[
+                    "comparison_type",
+                    "feature_id",
+                    "baseline_model_id",
+                    "added_model_id",
+                    "analysis_set_id",
+                    "participant_group_id",
+                    "n_probes",
+                    "mean_log_loss_increment",
+                ]
+            ),
+            pd.DataFrame(
+                columns=[
+                    "comparison_type",
+                    "feature_id",
+                    "baseline_model_id",
+                    "added_model_id",
+                    "analysis_set_id",
+                    "overall_log_loss_increment",
+                    "status",
+                    "reason",
+                ]
+            ),
+            [],
+        )
+    if not isinstance(paired_specs, list):
+        raise SupervisedLearningContractError("paired_comparisons metadata must be a list")
+
+    known_models = set(predictions["model_id"].astype(str).unique().tolist())
+    for raw in paired_specs:
+        if not isinstance(raw, Mapping):
+            raise SupervisedLearningContractError("each paired comparison must be a mapping")
+        comparison_type = str(raw.get("comparison_type", "")).strip()
+        feature_id = str(raw.get("feature_id", "")).strip()
+        baseline_model_id = str(raw.get("baseline_model_id", "")).strip()
+        added_model_id = str(raw.get("added_model_id", "")).strip()
+        if not comparison_type or not baseline_model_id or not added_model_id:
+            raise SupervisedLearningContractError(
+                "paired comparison requires comparison_type, baseline_model_id and added_model_id"
+            )
+        missing_models = sorted({baseline_model_id, added_model_id} - known_models)
+        if missing_models:
+            raise SupervisedLearningContractError(
+                f"paired comparison references model IDs absent from OOF archive: {missing_models}"
+            )
+        baseline = predictions.loc[predictions["model_id"].astype(str).eq(baseline_model_id)].copy()
+        added = predictions.loc[predictions["model_id"].astype(str).eq(added_model_id)].copy()
+        try:
+            paired = paired_log_loss_increment(baseline, added)
+            participant = paired.participant_increments.copy()
+            participant.insert(0, "feature_id", feature_id)
+            participant.insert(0, "comparison_type", comparison_type)
+            participant_frames.append(participant)
+            summary_rows.append(
+                {
+                    "comparison_type": comparison_type,
+                    "feature_id": feature_id,
+                    "baseline_model_id": paired.baseline_model_id,
+                    "added_model_id": paired.added_model_id,
+                    "analysis_set_id": paired.analysis_set_id,
+                    "overall_log_loss_increment": paired.overall_increment,
+                    "status": "estimable",
+                    "reason": "",
+                }
+            )
+            bootstrap_records.append(
+                {
+                    "comparison_type": comparison_type,
+                    "feature_id": feature_id,
+                    "baseline_model_id": paired.baseline_model_id,
+                    "added_model_id": paired.added_model_id,
+                    "analysis_set_id": paired.analysis_set_id,
+                    **paired.bootstrap,
+                }
+            )
+        except EvaluationContractError as exc:
+            analysis_values = predictions.loc[
+                predictions["model_id"].astype(str).isin([baseline_model_id, added_model_id]),
+                "analysis_set_id",
+            ].dropna().astype(str).str.strip().drop_duplicates().tolist()
+            summary_rows.append(
+                {
+                    "comparison_type": comparison_type,
+                    "feature_id": feature_id,
+                    "baseline_model_id": baseline_model_id,
+                    "added_model_id": added_model_id,
+                    "analysis_set_id": analysis_values[0] if len(analysis_values) == 1 else None,
+                    "overall_log_loss_increment": np.nan,
+                    "status": "not_estimable",
+                    "reason": str(exc),
+                }
+            )
+
+    participant_output = (
+        pd.concat(participant_frames, ignore_index=True)
+        if participant_frames
+        else pd.DataFrame(
+            columns=[
+                "comparison_type",
+                "feature_id",
+                "baseline_model_id",
+                "added_model_id",
+                "analysis_set_id",
+                "participant_group_id",
+                "n_probes",
+                "mean_log_loss_increment",
+            ]
+        )
+    )
+    return participant_output, pd.DataFrame(summary_rows), bootstrap_records
+
+
 def write_supervised_run(
     result: SupervisedRunResult,
     *,
@@ -180,10 +306,11 @@ def write_supervised_run(
             "result metadata must contain a non-empty run_id"
         )
 
-    # Evaluation is reconstructed from the same immutable OOF archive that is
-    # written below. Models with any failed OOF fold are recorded as not
-    # estimable rather than silently dropping participants/probes.
     evaluation = evaluate_prediction_archive(result.predictions)
+    paired_participant, paired_summary, paired_bootstrap = _paired_comparison_outputs(
+        result.predictions,
+        result.metadata.get("paired_comparisons"),
+    )
 
     run_root = Path(output_root) / run_id
     if run_root.exists():
@@ -198,6 +325,9 @@ def write_supervised_run(
     participant_scores_path = run_root / PARTICIPANT_SCORES_FILENAME
     model_scores_path = run_root / MODEL_SCORES_FILENAME
     bootstrap_path = run_root / BOOTSTRAP_FILENAME
+    paired_participant_path = run_root / PAIRED_PARTICIPANT_INCREMENTS_FILENAME
+    paired_summary_path = run_root / PAIRED_MODEL_INCREMENTS_FILENAME
+    paired_bootstrap_path = run_root / PAIRED_BOOTSTRAP_FILENAME
     manifest_path = run_root / MANIFEST_FILENAME
 
     result.predictions.to_csv(predictions_path, index=False, encoding="utf-8-sig")
@@ -210,28 +340,26 @@ def write_supervised_run(
     evaluation.participant_scores.to_csv(participant_scores_path, index=False, encoding="utf-8-sig")
     evaluation.model_scores.to_csv(model_scores_path, index=False, encoding="utf-8-sig")
     bootstrap_path.write_text(
-        json.dumps(
-            evaluation.bootstrap_records,
-            ensure_ascii=False,
-            indent=2,
-            default=_json_default,
-        ),
+        json.dumps(evaluation.bootstrap_records, ensure_ascii=False, indent=2, default=_json_default),
+        encoding="utf-8",
+    )
+    paired_participant.to_csv(paired_participant_path, index=False, encoding="utf-8-sig")
+    paired_summary.to_csv(paired_summary_path, index=False, encoding="utf-8-sig")
+    paired_bootstrap_path.write_text(
+        json.dumps(paired_bootstrap, ensure_ascii=False, indent=2, default=_json_default),
         encoding="utf-8",
     )
 
     audits_path.write_text(
-        json.dumps(
-            result.fold_audits,
-            ensure_ascii=False,
-            indent=2,
-            default=_json_default,
-        ),
+        json.dumps(result.fold_audits, ensure_ascii=False, indent=2, default=_json_default),
         encoding="utf-8",
     )
 
     n_failed_rows = int(result.predictions["model_failed"].astype(bool).sum())
     n_failed_folds = int(len(failures))
     n_estimable_models = int(evaluation.model_scores["status"].eq("estimable").sum())
+    n_declared_comparisons = int(len(paired_summary))
+    n_estimable_comparisons = int(paired_summary["status"].eq("estimable").sum()) if not paired_summary.empty else 0
     manifest: dict[str, object] = {
         **result.metadata,
         "status": "complete" if n_failed_folds == 0 else "partial_with_failures",
@@ -240,6 +368,8 @@ def write_supervised_run(
         "n_failed_prediction_rows": n_failed_rows,
         "n_failed_folds": n_failed_folds,
         "n_estimable_models": n_estimable_models,
+        "n_declared_paired_comparisons": n_declared_comparisons,
+        "n_estimable_paired_comparisons": n_estimable_comparisons,
         "outer_evaluation": {
             "primary_probability_metric": "log_loss",
             "aggregation": "participant_equal_within_participant_probe_equal",
@@ -249,6 +379,8 @@ def write_supervised_run(
             "bootstrap_seed": 20260830,
             "bootstrap_confidence_level": 0.95,
             "bootstrap_retrain_models": False,
+            "paired_increment_definition": "baseline_log_loss_minus_added_log_loss",
+            "positive_increment_interpretation": "added_model_has_lower_loss",
         },
         "outputs": {
             "probe_predictions": PREDICTIONS_FILENAME,
@@ -257,6 +389,9 @@ def write_supervised_run(
             "participant_log_loss": PARTICIPANT_SCORES_FILENAME,
             "model_evaluation": MODEL_SCORES_FILENAME,
             "participant_bootstrap": BOOTSTRAP_FILENAME,
+            "paired_participant_increments": PAIRED_PARTICIPANT_INCREMENTS_FILENAME,
+            "paired_model_increments": PAIRED_MODEL_INCREMENTS_FILENAME,
+            "paired_increment_bootstrap": PAIRED_BOOTSTRAP_FILENAME,
             "manifest": MANIFEST_FILENAME,
         },
     }
