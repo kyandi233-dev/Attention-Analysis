@@ -12,6 +12,7 @@ import pandas as pd
 from attention_pipeline.config import load_config
 
 from .feature_schemes import FeatureScheme, load_feature_schemes
+from .models import SELECTION_METRIC
 from .reporting import write_supervised_run
 from .runner import run_nested_loso
 from .task import Q1_BINARY_SPEC, SupervisedLearningContractError
@@ -19,6 +20,7 @@ from .task import Q1_BINARY_SPEC, SupervisedLearningContractError
 
 FORMAL_PARTICIPANT_GROUP_COLUMN = "participant_group_id"
 FORMAL_ANALYSIS_SET_COLUMN = "analysis_set_id"
+FORMAL_INNER_SPLITS = 5
 
 
 def _require_frozen_runtime_contract(config_data: Mapping[str, Any]) -> None:
@@ -48,6 +50,10 @@ def _require_frozen_runtime_contract(config_data: Mapping[str, Any]) -> None:
         raise SupervisedLearningContractError("Task A outer validation must remain participant-disjoint LOSO")
     if inner.get("method") != "grouped_k_fold" or inner.get("refit_preprocessing_per_split") is not True:
         raise SupervisedLearningContractError("Task A inner validation must refit preprocessing within each grouped split")
+    if int(inner.get("n_splits", -1)) != FORMAL_INNER_SPLITS:
+        raise SupervisedLearningContractError(
+            f"formal Task A inner validation must use exactly {FORMAL_INNER_SPLITS} participant-grouped folds"
+        )
     outer_group = str(outer.get("group_column", ""))
     inner_group = str(inner.get("group_column", ""))
     if outer_group != FORMAL_PARTICIPANT_GROUP_COLUMN or inner_group != outer_group:
@@ -63,11 +69,24 @@ def _require_frozen_runtime_contract(config_data: Mapping[str, Any]) -> None:
     if validation.get("require_analysis_set_id") is not True:
         raise SupervisedLearningContractError("formal Task A runs must require analysis_set_id")
 
+    legacy_prediction_folds = (
+        config_data.get("prediction_folds"),
+        validation.get("prediction_folds"),
+        config_data.get("science", {}).get("prediction_folds")
+        if isinstance(config_data.get("science", {}), Mapping)
+        else None,
+    )
+    if any(value is not None for value in legacy_prediction_folds):
+        raise SupervisedLearningContractError(
+            "standalone prediction_folds is deprecated; formal Task A uses outer LOSO plus inner GroupKFold only"
+        )
+
     preprocessing = config_data.get("preprocessing", {})
     required_training_only = (
-        "median_imputation_fit_on_training_only",
-        "standardization_fit_on_training_only",
+        "participant_equal_weighted_median_imputation_fit_on_training_only",
+        "participant_equal_standardization_fit_on_training_only",
         "data_dependent_column_handling_fit_on_training_only",
+        "participant_equal_training_weights_normalized_to_mean_one",
     )
     for key in required_training_only:
         if preprocessing.get(key) is not True:
@@ -83,9 +102,9 @@ def _require_frozen_runtime_contract(config_data: Mapping[str, Any]) -> None:
     primary = models.get("primary", {})
     if primary.get("kind") != "logistic_l2":
         raise SupervisedLearningContractError("Task A primary model must remain L2 logistic regression")
-    if models.get("selection_metric") != "mean_inner_log_loss":
+    if models.get("selection_metric") != SELECTION_METRIC:
         raise SupervisedLearningContractError(
-            "Task A candidate selection metric must match the implemented mean_inner_log_loss contract"
+            f"Task A candidate selection metric must be {SELECTION_METRIC}"
         )
 
 
@@ -221,7 +240,7 @@ def run_supervised_from_config(
         model_feature_schemes=families,
         group_col=str(validation.get("outer", {}).get("group_column", FORMAL_PARTICIPANT_GROUP_COLUMN)),
         c_candidates=primary_model.get("C_candidates", (0.01, 0.1, 1.0, 10.0)),
-        inner_splits=int(inner.get("n_splits", 5)),
+        inner_splits=int(inner.get("n_splits", FORMAL_INNER_SPLITS)),
         max_iter=int(primary_model.get("max_iter", 2000)),
         seed=int(pipeline.get("random_seed", 20260910)),
         run_id=str(resolved_run_id),
