@@ -74,10 +74,29 @@ def test_write_supervised_run_is_immutable_and_auditable(tmp_path) -> None:
     assert manifest["status"] == "complete"
     assert manifest["n_prediction_rows"] == 2
     assert manifest["n_failed_folds"] == 0
+    assert manifest["n_estimable_models"] == 1
+    assert manifest["outer_evaluation"]["aggregation"] == "participant_equal_within_participant_probe_equal"
+    assert manifest["outer_evaluation"]["bootstrap_replicates"] == 1000
+    assert manifest["outer_evaluation"]["bootstrap_seed"] == 20260830
+    assert manifest["outer_evaluation"]["bootstrap_retrain_models"] is False
+
     assert (run_root / "probe_predictions.csv").is_file()
     assert (run_root / "fold_audits.json").is_file()
     assert (run_root / "failures.csv").is_file()
+    assert (run_root / "participant_log_loss.csv").is_file()
+    assert (run_root / "model_evaluation.csv").is_file()
+    assert (run_root / "participant_bootstrap.json").is_file()
     assert (run_root / "run_manifest.json").is_file()
+
+    participant = pd.read_csv(run_root / "participant_log_loss.csv")
+    model = pd.read_csv(run_root / "model_evaluation.csv")
+    bootstrap = json.loads((run_root / "participant_bootstrap.json").read_text(encoding="utf-8"))
+    assert set(participant["participant_group_id"]) == {"P01", "P02"}
+    assert model.loc[0, "status"] == "estimable"
+    assert model.loc[0, "participant_equal_log_loss"] == pytest.approx(participant["mean_log_loss"].mean())
+    assert bootstrap[0]["method"] == "fixed_oof_participant_cluster_percentile"
+    assert bootstrap[0]["replicates"] == 1000
+    assert bootstrap[0]["seed"] == 20260830
 
     saved = json.loads((run_root / "run_manifest.json").read_text(encoding="utf-8"))
     assert saved["analysis_set_id"] == "set-a"
