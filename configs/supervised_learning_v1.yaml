@@ -1,10 +1,10 @@
 pipeline:
   name: focuswave-supervised-learning-v1
-  version: 1.0.0-dev
+  version: 1.1.0-dev
   evidence_repo: kyandi233-dev/FocusWave-Formal-Analysis
-  evidence_branch: codex/code-fix-ledger
-  evidence_method_entry: 分析设计/1.15.5-监督学习三代方案总对比与当前正式口径_20260910.md
-  implementation_plan: 分析设计/1.15.7-监督学习并行实施计划_20260910.md
+  evidence_branch: codex/1.16.1-supervised-interpretation-review
+  evidence_method_entry: 分析设计/1.16.1-监督学习心理意义、训练权重与多层评价修订_20260911.md
+  implementation_plan: https://github.com/kyandi233-dev/Attention-Analysis/issues/43
   random_seed: 20260910
 
 paths:
@@ -41,9 +41,10 @@ validation:
   require_analysis_set_id: true
 
 preprocessing:
-  median_imputation_fit_on_training_only: true
-  standardization_fit_on_training_only: true
+  participant_equal_weighted_median_imputation_fit_on_training_only: true
+  participant_equal_standardization_fit_on_training_only: true
   data_dependent_column_handling_fit_on_training_only: true
+  participant_equal_training_weights_normalized_to_mean_one: true
   unified_global_coverage_cutoff: null
   participant_specific_within_between_mainline: false
 
@@ -80,14 +81,23 @@ feature_schemes:
     - model_id
     - outer_fold_group
   participant_specific_suffixes_forbidden: [_within, _between]
-  note: "Task A provides the nested selection interface; C/D supply or freeze model-family candidate schemes. Candidate schemes compete only within the same model family and must share the same modality_blocks within that family. Probe/window locators and audit identifiers are preserved for reporting but never used as first-round predictors."
+  note: "Task A provides the shared nested training core. Formal feature registries may request standalone x->Q1, Behavior+x, Full-x and M0-M7 device-package models, but every direct comparison must use the same analysis_set_id, participant/probe membership, outer folds and training contract. Probe/window locators and audit identifiers are preserved for reporting and never used as predictors."
 
 models:
   primary:
     kind: logistic_l2
     C_candidates: [0.01, 0.1, 1.0, 10.0]
     max_iter: 2000
-  selection_metric: mean_inner_log_loss
+  selection_metric: participant_macro_log_loss
+
+uncertainty:
+  participant_cluster_bootstrap:
+    method: fixed_oof_participant_cluster_percentile
+    replicates: 1000
+    seed: 20260830
+    confidence_level: 0.95
+    paired_model_resampling: true
+    retrain_within_bootstrap: false
 
 outputs:
   preserve_probe_keys: true
