@@ -22,6 +22,14 @@ def main() -> None:
     parser.add_argument("--paths-config", default=None)
     parser.add_argument("--rgb-blink-events", required=True)
     parser.add_argument("--probe-table", required=True)
+    parser.add_argument(
+        "--rgb-blink-frames-root",
+        default=None,
+        help=(
+            "Optional RGB analysis-ready root containing "
+            "<session>/<session>_blink_candidate_frames.parquet for full time-axis sync audit."
+        ),
+    )
     parser.add_argument("--output-root", required=True)
     parser.add_argument("--subjects", nargs="*", default=None)
     args = parser.parse_args()
@@ -32,6 +40,9 @@ def main() -> None:
         rgb_blink_events_path=Path(args.rgb_blink_events),
         probe_table_path=Path(args.probe_table),
         output_root=Path(args.output_root),
+        rgb_blink_frames_root=(
+            Path(args.rgb_blink_frames_root) if args.rgb_blink_frames_root else None
+        ),
         paths_config=Path(args.paths_config) if args.paths_config else None,
         subjects=args.subjects,
     )

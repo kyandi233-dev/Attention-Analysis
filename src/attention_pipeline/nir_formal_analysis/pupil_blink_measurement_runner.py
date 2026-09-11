@@ -27,7 +27,6 @@ from attention_pipeline.nir_formal_analysis.pupil_blink_measurement import (
     RSEG_HARD_SIGNAL,
     add_rgb_blink_mask,
     audit_buffer_loss,
-    audit_rgb_nir_sync,
     audit_rseg_quality_associations,
     audit_signal_availability,
     build_blink_recovery_bins,
@@ -35,6 +34,10 @@ from attention_pipeline.nir_formal_analysis.pupil_blink_measurement import (
 )
 from attention_pipeline.nir_formal_analysis.pupil_blink_binocular import (
     build_binocular_measurement_timepoints,
+)
+from attention_pipeline.nir_formal_analysis.pupil_blink_sync import (
+    audit_rgb_nir_sync_with_frames,
+    load_session_rgb_blink_frames,
 )
 
 RUNNER_VERSION = "nir-pupil-blink-measurement-audit-runner-v1"
@@ -102,6 +105,7 @@ def run_pupil_blink_measurement_audit(
     rgb_blink_events_path: str | Path,
     probe_table_path: str | Path,
     output_root: str | Path,
+    rgb_blink_frames_root: str | Path | None = None,
     paths_config: str | Path | None = None,
     subjects: Iterable[str] | None = None,
 ) -> dict[str, Any]:
@@ -155,8 +159,9 @@ def run_pupil_blink_measurement_audit(
             eye = derive_eye_measurements(adapted)
             timepoints = build_binocular_measurement_timepoints(adapted)
             events = _session_events(blinks, session_id)
+            rgb_frames = load_session_rgb_blink_frames(rgb_blink_frames_root, session_id)
 
-            sync_parts.append(audit_rgb_nir_sync(timepoints, events))
+            sync_parts.append(audit_rgb_nir_sync_with_frames(timepoints, events, rgb_frames))
             availability_parts.append(audit_signal_availability(eye))
             rseg_parts.append(audit_rseg_quality_associations(eye))
             buffer_loss_parts.append(audit_buffer_loss(timepoints, events, buffers=buffers))
@@ -261,6 +266,7 @@ def run_pupil_blink_measurement_audit(
         "source_session_n_requested": int(len(records)),
         "source_session_n_processed": int(len(processed_sessions)),
         "source_session_n_failed": int(len(failure_rows)),
+        "rgb_frame_axis_requested": rgb_blink_frames_root is not None,
         "processed_sessions": processed_sessions,
         "output_tables": {name: int(len(table)) for name, table in tables.items()},
     }
