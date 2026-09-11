@@ -48,6 +48,14 @@ preprocessing:
   unified_global_coverage_cutoff: null
   participant_specific_within_between_mainline: false
 
+# Task C/D must populate this registry only after scientific feature qualification is frozen.
+# Task A consumes it; Task A does not decide which real features are scientifically eligible.
+feature_registry:
+  status: pending_upstream_feature_freeze
+  features: []
+  note: "Each exact representation records scientific_feature_id, predictor column(s), Behavior/sensor role, raw source, actual required devices, preprocessing dependencies, standalone / Behavior+x / Full eligibility, and explicit M0-M7 package eligibility. Cross-device cleaning dependencies must be represented here."
+
+# Compatibility/manual-test interface. A non-empty feature_registry takes precedence.
 feature_schemes:
   status: interface_only_pending_task_c_d
   model_families: {}
