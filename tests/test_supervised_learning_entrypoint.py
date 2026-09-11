@@ -79,6 +79,16 @@ def _config(input_path: Path, output_root: Path) -> tuple[dict, dict]:
             "primary": {"kind": "logistic_l2", "C_candidates": [0.1, 1.0], "max_iter": 500},
             "selection_metric": "participant_macro_log_loss",
         },
+        "uncertainty": {
+            "participant_cluster_bootstrap": {
+                "method": "fixed_oof_participant_cluster_percentile",
+                "replicates": 1000,
+                "seed": 20260830,
+                "confidence_level": 0.95,
+                "paired_model_resampling": True,
+                "retrain_within_bootstrap": False,
+            }
+        },
         "outputs": {"preserve_failures": True},
     }
     paths = {
@@ -113,7 +123,12 @@ def test_run_supervised_from_config_end_to_end(tmp_path) -> None:
     assert manifest["analysis_set_id"] == "synthetic-common-set"
     assert manifest["n_prediction_rows"] == len(_probe_table())
     assert manifest["outer_test_outcomes_passed_to_model"] is False
+    assert manifest["outer_evaluation"]["bootstrap_replicates"] == 1000
+    assert manifest["outer_evaluation"]["bootstrap_seed"] == 20260830
     assert (run_root / "probe_predictions.csv").is_file()
+    assert (run_root / "participant_log_loss.csv").is_file()
+    assert (run_root / "model_evaluation.csv").is_file()
+    assert (run_root / "participant_bootstrap.json").is_file()
     assert (run_root / "fold_audits.json").is_file()
     assert (run_root / "failures.csv").is_file()
     saved = json.loads((run_root / "run_manifest.json").read_text(encoding="utf-8"))
@@ -178,6 +193,18 @@ def test_runtime_config_rejects_old_probe_or_fold_mean_selection_metric(tmp_path
     config_path, paths_path = _write_configs(tmp_path, config_data, paths_data)
 
     with pytest.raises(SupervisedLearningContractError, match="participant_macro_log_loss"):
+        run_supervised_from_config(config_path, paths_config=paths_path, run_id="blocked")
+
+
+def test_runtime_config_rejects_bootstrap_contract_drift(tmp_path) -> None:
+    input_path = tmp_path / "probe_table.csv"
+    output_root = tmp_path / "outputs"
+    _probe_table().to_csv(input_path, index=False)
+    config_data, paths_data = _config(input_path, output_root)
+    config_data["uncertainty"]["participant_cluster_bootstrap"]["replicates"] = 2000
+    config_path, paths_path = _write_configs(tmp_path, config_data, paths_data)
+
+    with pytest.raises(SupervisedLearningContractError, match="frozen D10 value 1000"):
         run_supervised_from_config(config_path, paths_config=paths_path, run_id="blocked")
 
 
