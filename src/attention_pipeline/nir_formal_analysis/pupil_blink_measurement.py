@@ -290,9 +290,14 @@ def build_binocular_measurement_timepoints(frame: pd.DataFrame) -> pd.DataFrame:
 def _normalize_blink_events(events: pd.DataFrame, session_ids: Sequence[str]) -> pd.DataFrame:
     required = {"start_unix_ms", "end_unix_ms"}
     missing = sorted(required - set(events.columns))
-    if missing:
+    if events.empty and missing:
+        out = events.copy()
+        for name in missing:
+            out[name] = pd.Series(dtype=float)
+    elif missing:
         raise ValueError(f"RGB blink events missing fields: {missing}")
-    out = events.copy()
+    else:
+        out = events.copy()
     out["start_unix_ms"] = pd.to_numeric(out["start_unix_ms"], errors="coerce")
     out["end_unix_ms"] = pd.to_numeric(out["end_unix_ms"], errors="coerce")
     if out[["start_unix_ms", "end_unix_ms"]].isna().any(axis=1).any():
@@ -474,10 +479,11 @@ def fixed_probe_bins(
     rel = pd.to_numeric(window["probe_relative_sec"], errors="coerce")
     values, valid = signal_values_and_mask(window, signal, cleaning_track)
     valid = valid & rel.ge(-window_sec) & rel.lt(0)
-    edges = np.arange(-float(window_sec), 0.0 + float(bin_width_sec), float(bin_width_sec))
-    if edges[-1] < 0:
+    edges = np.arange(-float(window_sec), 0.0, float(bin_width_sec))
+    if edges.size == 0 or not np.isclose(edges[0], -float(window_sec)):
+        edges = np.insert(edges, 0, -float(window_sec))
+    if not np.isclose(edges[-1], 0.0):
         edges = np.append(edges, 0.0)
-    edges[-1] = 0.0
     rows: list[dict[str, object]] = []
     for i in range(len(edges) - 1):
         lo, hi = float(edges[i]), float(edges[i + 1])
@@ -657,7 +663,7 @@ def audit_rseg_quality_associations(eye_measurements: pd.DataFrame) -> pd.DataFr
             x = pd.to_numeric(group[predictor], errors="coerce")
             mask = np.isfinite(rseg) & np.isfinite(x)
             n = int(mask.sum())
-            rho = float(pd.Series(rseg[mask]).corr(pd.Series(x[mask]), method="spearman")) if n >= 3 else np.nan
+            rho = float(rseg[mask].corr(x[mask], method="spearman")) if n >= 3 else np.nan
             rows.append(
                 {
                     "session_id": str(session_id),
