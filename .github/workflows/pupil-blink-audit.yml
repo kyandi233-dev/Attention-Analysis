@@ -1,0 +1,47 @@
+name: Pupil Blink Measurement Audit
+
+on:
+  pull_request:
+    paths:
+      - "src/attention_pipeline/nir_formal_analysis/pupil_blink_*.py"
+      - "scripts/nir_pupil_blink_measurement_audit.py"
+      - "configs/nir_pupil_blink_measurement_audit_v1.yaml"
+      - "tests/test_pupil_blink_*.py"
+      - ".github/workflows/pupil-blink-audit.yml"
+  workflow_dispatch:
+
+jobs:
+  pupil-blink-audit-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install package and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+
+      - name: Compile pupil-blink audit modules
+        run: |
+          python -m py_compile \
+            scripts/nir_pupil_blink_measurement_audit.py \
+            src/attention_pipeline/nir_formal_analysis/pupil_blink_measurement.py \
+            src/attention_pipeline/nir_formal_analysis/pupil_blink_audit_config.py \
+            src/attention_pipeline/nir_formal_analysis/pupil_blink_audit_probe.py \
+            src/attention_pipeline/nir_formal_analysis/pupil_blink_binocular.py \
+            src/attention_pipeline/nir_formal_analysis/pupil_blink_sync.py \
+            src/attention_pipeline/nir_formal_analysis/pupil_blink_measurement_runner.py
+
+      - name: Run pupil-blink measurement audit contracts
+        run: |
+          python -m pytest -q \
+            tests/test_pupil_blink_measurement.py \
+            tests/test_pupil_blink_binocular.py \
+            tests/test_pupil_blink_sync.py
