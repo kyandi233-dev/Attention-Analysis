@@ -9,6 +9,7 @@ from typing import Any, Mapping
 import numpy as np
 import pandas as pd
 
+from .evaluation import evaluate_prediction_archive
 from .runner import SupervisedRunResult
 from .task import SupervisedLearningContractError
 
@@ -16,6 +17,9 @@ from .task import SupervisedLearningContractError
 PREDICTIONS_FILENAME = "probe_predictions.csv"
 FOLD_AUDITS_FILENAME = "fold_audits.json"
 FAILURES_FILENAME = "failures.csv"
+PARTICIPANT_SCORES_FILENAME = "participant_log_loss.csv"
+MODEL_SCORES_FILENAME = "model_evaluation.csv"
+BOOTSTRAP_FILENAME = "participant_bootstrap.json"
 MANIFEST_FILENAME = "run_manifest.json"
 
 _FAILURE_COLUMNS = (
@@ -176,6 +180,11 @@ def write_supervised_run(
             "result metadata must contain a non-empty run_id"
         )
 
+    # Evaluation is reconstructed from the same immutable OOF archive that is
+    # written below. Models with any failed OOF fold are recorded as not
+    # estimable rather than silently dropping participants/probes.
+    evaluation = evaluate_prediction_archive(result.predictions)
+
     run_root = Path(output_root) / run_id
     if run_root.exists():
         raise FileExistsError(
@@ -186,6 +195,9 @@ def write_supervised_run(
     predictions_path = run_root / PREDICTIONS_FILENAME
     audits_path = run_root / FOLD_AUDITS_FILENAME
     failures_path = run_root / FAILURES_FILENAME
+    participant_scores_path = run_root / PARTICIPANT_SCORES_FILENAME
+    model_scores_path = run_root / MODEL_SCORES_FILENAME
+    bootstrap_path = run_root / BOOTSTRAP_FILENAME
     manifest_path = run_root / MANIFEST_FILENAME
 
     result.predictions.to_csv(predictions_path, index=False, encoding="utf-8-sig")
@@ -194,6 +206,18 @@ def write_supervised_run(
     if failures.empty and len(failures.columns) == 0:
         failures = pd.DataFrame(columns=list(_FAILURE_COLUMNS))
     failures.to_csv(failures_path, index=False, encoding="utf-8-sig")
+
+    evaluation.participant_scores.to_csv(participant_scores_path, index=False, encoding="utf-8-sig")
+    evaluation.model_scores.to_csv(model_scores_path, index=False, encoding="utf-8-sig")
+    bootstrap_path.write_text(
+        json.dumps(
+            evaluation.bootstrap_records,
+            ensure_ascii=False,
+            indent=2,
+            default=_json_default,
+        ),
+        encoding="utf-8",
+    )
 
     audits_path.write_text(
         json.dumps(
@@ -207,6 +231,7 @@ def write_supervised_run(
 
     n_failed_rows = int(result.predictions["model_failed"].astype(bool).sum())
     n_failed_folds = int(len(failures))
+    n_estimable_models = int(evaluation.model_scores["status"].eq("estimable").sum())
     manifest: dict[str, object] = {
         **result.metadata,
         "status": "complete" if n_failed_folds == 0 else "partial_with_failures",
@@ -214,10 +239,24 @@ def write_supervised_run(
         "n_prediction_rows": int(len(result.predictions)),
         "n_failed_prediction_rows": n_failed_rows,
         "n_failed_folds": n_failed_folds,
+        "n_estimable_models": n_estimable_models,
+        "outer_evaluation": {
+            "primary_probability_metric": "log_loss",
+            "aggregation": "participant_equal_within_participant_probe_equal",
+            "pooled_probe_metric_role": "descriptive_only",
+            "bootstrap_method": "fixed_oof_participant_cluster_percentile",
+            "bootstrap_replicates": 1000,
+            "bootstrap_seed": 20260830,
+            "bootstrap_confidence_level": 0.95,
+            "bootstrap_retrain_models": False,
+        },
         "outputs": {
             "probe_predictions": PREDICTIONS_FILENAME,
             "fold_audits": FOLD_AUDITS_FILENAME,
             "failures": FAILURES_FILENAME,
+            "participant_log_loss": PARTICIPANT_SCORES_FILENAME,
+            "model_evaluation": MODEL_SCORES_FILENAME,
+            "participant_bootstrap": BOOTSTRAP_FILENAME,
             "manifest": MANIFEST_FILENAME,
         },
     }
