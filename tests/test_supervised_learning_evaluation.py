@@ -70,8 +70,8 @@ def test_fixed_oof_bootstrap_is_reproducible_and_does_not_retrain() -> None:
 
 
 def test_archive_evaluation_marks_failed_model_not_estimable_without_dropping_rows() -> None:
-    good = _model_archive("good", {"A": [0.2, 0.8], "B": [0.3, 0.7]})
-    bad = _model_archive("bad", {"A": [0.2, 0.8], "B": [0.3, 0.7]})
+    good = _model_archive("good", {"A": [0.8, 0.2], "B": [0.7, 0.3]})
+    bad = _model_archive("bad", {"A": [0.8, 0.2], "B": [0.7, 0.3]})
     bad.loc[bad["participant_group_id"].eq("B"), "model_failed"] = True
     bad.loc[bad["participant_group_id"].eq("B"), "p_q1_equals_1"] = np.nan
     combined = pd.concat([good, bad], ignore_index=True)
@@ -90,17 +90,17 @@ def test_paired_increment_uses_exact_common_probe_set_and_positive_means_improve
     baseline = _model_archive(
         "behavior",
         {
-            "A": [0.4, 0.6, 0.4, 0.6],
-            "B": [0.4, 0.6],
-            "C": [0.4, 0.6, 0.4],
+            "A": [0.6, 0.4, 0.6, 0.4],
+            "B": [0.6, 0.4],
+            "C": [0.6, 0.4, 0.6],
         },
     )
     added = _model_archive(
         "behavior_plus_x",
         {
-            "A": [0.1, 0.9, 0.1, 0.9],
-            "B": [0.1, 0.9],
-            "C": [0.1, 0.9, 0.1],
+            "A": [0.9, 0.1, 0.9, 0.1],
+            "B": [0.9, 0.1],
+            "C": [0.9, 0.1, 0.9],
         },
     )
     result = paired_log_loss_increment(baseline, added, replicates=200, seed=20260830)
@@ -113,8 +113,8 @@ def test_paired_increment_uses_exact_common_probe_set_and_positive_means_improve
 
 
 def test_paired_increment_rejects_different_analysis_set_or_probe_membership() -> None:
-    baseline = _model_archive("behavior", {"A": [0.4, 0.6], "B": [0.4, 0.6]})
-    added = _model_archive("behavior_plus_x", {"A": [0.2, 0.8], "B": [0.2, 0.8]})
+    baseline = _model_archive("behavior", {"A": [0.6, 0.4], "B": [0.6, 0.4]})
+    added = _model_archive("behavior_plus_x", {"A": [0.8, 0.2], "B": [0.8, 0.2]})
 
     wrong_set = added.copy()
     wrong_set["analysis_set_id"] = "other-set"
@@ -127,8 +127,8 @@ def test_paired_increment_rejects_different_analysis_set_or_probe_membership() -
 
 
 def test_paired_increment_rejects_outer_fold_or_label_mismatch() -> None:
-    baseline = _model_archive("behavior", {"A": [0.4, 0.6], "B": [0.4, 0.6]})
-    added = _model_archive("behavior_plus_x", {"A": [0.2, 0.8], "B": [0.2, 0.8]})
+    baseline = _model_archive("behavior", {"A": [0.6, 0.4], "B": [0.6, 0.4]})
+    added = _model_archive("behavior_plus_x", {"A": [0.8, 0.2], "B": [0.8, 0.2]})
 
     wrong_fold = added.copy()
     wrong_fold.loc[0, "outer_fold_group"] = "B"
