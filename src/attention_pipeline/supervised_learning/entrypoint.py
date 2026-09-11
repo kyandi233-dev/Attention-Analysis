@@ -16,6 +16,7 @@ from .evaluation import (
     DEFAULT_BOOTSTRAP_SEED,
     DEFAULT_CONFIDENCE_LEVEL,
 )
+from .feature_registry import FeatureComparisonPlan, build_feature_comparison_plan, load_registered_features
 from .feature_schemes import FeatureScheme, load_feature_schemes
 from .models import SELECTION_METRIC
 from .reporting import write_supervised_run
@@ -95,13 +96,13 @@ def _require_frozen_runtime_contract(config_data: Mapping[str, Any]) -> None:
     )
     for key in required_training_only:
         if preprocessing.get(key) is not True:
-            raise SupervisedLearningContractError(
-                f"preprocessing.{key} must remain true for Task A"
-            )
+            raise SupervisedLearningContractError(f"preprocessing.{key} must remain true for Task A")
     if preprocessing.get("unified_global_coverage_cutoff") is not None:
         raise SupervisedLearningContractError("Task A forbids a unified global coverage cutoff")
     if preprocessing.get("participant_specific_within_between_mainline") is not False:
-        raise SupervisedLearningContractError("participant-specific within/between decomposition is disabled in the zero-calibration mainline")
+        raise SupervisedLearningContractError(
+            "participant-specific within/between decomposition is disabled in the zero-calibration mainline"
+        )
 
     models = config_data.get("models", {})
     primary = models.get("primary", {})
@@ -131,6 +132,7 @@ def _require_frozen_runtime_contract(config_data: Mapping[str, Any]) -> None:
 
 
 def _load_feature_families(section: Mapping[str, Any]) -> dict[str, list[FeatureScheme]]:
+    """Compatibility loader for manually declared model families."""
     raw_families = section.get("model_families")
     if raw_families is None:
         schemes = load_feature_schemes(section)
@@ -169,6 +171,25 @@ def _load_feature_families(section: Mapping[str, Any]) -> dict[str, list[Feature
         seen_feature_ids.update(ids)
         families[name] = schemes
     return families
+
+
+def _resolve_model_plan(config_data: Mapping[str, Any]) -> tuple[dict[str, list[FeatureScheme]], FeatureComparisonPlan | None]:
+    """Prefer the frozen provenance registry; retain manual families for compatibility/tests."""
+    registry_section = config_data.get("feature_registry", {})
+    if registry_section is None:
+        registry_section = {}
+    if not isinstance(registry_section, Mapping):
+        raise SupervisedLearningContractError("feature_registry must be a mapping")
+    registry_entries = registry_section.get("features", [])
+    if registry_entries:
+        registry = load_registered_features(registry_section)
+        plan = build_feature_comparison_plan(registry)
+        return plan.to_runner_feature_schemes(), plan
+
+    feature_section = config_data.get("feature_schemes", {})
+    if not isinstance(feature_section, Mapping):
+        raise SupervisedLearningContractError("feature_schemes must be a mapping")
+    return _load_feature_families(feature_section), None
 
 
 def _read_probe_table(path: Path) -> pd.DataFrame:
@@ -243,10 +264,10 @@ def run_supervised_from_config(
     if not input_path.is_file():
         raise FileNotFoundError(f"supervised input probe table not found: {input_path}")
 
-    families = _load_feature_families(config.section("feature_schemes"))
+    families, comparison_plan = _resolve_model_plan(config.data)
     if not families:
         raise SupervisedLearningContractError(
-            "no supervised feature families are configured; Task C/D must supply or freeze candidate schemes before a formal real-data run"
+            "no supervised feature families are configured; Task C/D must freeze a feature registry or candidate schemes before a formal real-data run"
         )
 
     validation = config.section("validation")
@@ -268,6 +289,25 @@ def run_supervised_from_config(
         run_id=str(resolved_run_id),
         analysis_set_id=analysis_set_id,
     )
+    if comparison_plan is not None:
+        result.metadata["feature_comparison_plan"] = comparison_plan.audit_dict()
+        result.metadata["paired_comparisons"] = [
+            {
+                "comparison_type": "behavior_increment",
+                "baseline_model_id": baseline,
+                "added_model_id": added,
+                "feature_id": feature_id,
+            }
+            for baseline, added, feature_id in comparison_plan.behavior_increment_pairs
+        ] + [
+            {
+                "comparison_type": "full_leave_one_out",
+                "baseline_model_id": reduced,
+                "added_model_id": full,
+                "feature_id": feature_id,
+            }
+            for reduced, full, feature_id in comparison_plan.full_leave_one_out_pairs
+        ]
 
     repo_root = Path(__file__).resolve().parents[3]
     return write_supervised_run(
