@@ -30,9 +30,11 @@ from attention_pipeline.nir_formal_analysis.pupil_blink_measurement import (
     audit_rgb_nir_sync,
     audit_rseg_quality_associations,
     audit_signal_availability,
-    build_binocular_measurement_timepoints,
     build_blink_recovery_bins,
     derive_eye_measurements,
+)
+from attention_pipeline.nir_formal_analysis.pupil_blink_binocular import (
+    build_binocular_measurement_timepoints,
 )
 
 RUNNER_VERSION = "nir-pupil-blink-measurement-audit-runner-v1"
