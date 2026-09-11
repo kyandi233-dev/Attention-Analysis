@@ -33,6 +33,24 @@ def _frame(seed: int = 7) -> tuple[pd.DataFrame, np.ndarray]:
     return pd.DataFrame(rows), np.asarray(labels, dtype=int)
 
 
+def _unequal_frame(seed: int = 19) -> tuple[pd.DataFrame, np.ndarray]:
+    rng = np.random.default_rng(seed)
+    rows: list[dict[str, object]] = []
+    labels: list[int] = []
+    for group_index, n_rows in enumerate((2, 4, 6, 8, 10, 12)):
+        for row_index in range(n_rows):
+            y = row_index % 2
+            rows.append(
+                {
+                    "participant_group_id": f"U-{group_index:02d}",
+                    "signal": 2.5 * y + rng.normal(0, 0.2),
+                    "noise": rng.normal(0, 1.0),
+                }
+            )
+            labels.append(y)
+    return pd.DataFrame(rows), np.asarray(labels, dtype=int)
+
+
 def test_nested_selection_prefers_predeclared_predictive_scheme() -> None:
     frame, y = _frame()
     result = select_logistic_model(
@@ -46,6 +64,54 @@ def test_nested_selection_prefers_predeclared_predictive_scheme() -> None:
     assert result.feature_scheme.feature_set_id == "signal"
     assert result.selected_c in {0.1, 1.0}
     assert len(result.inner_fold_audits) == 8
+    assert result.audit_dict()["selection_metric"] == "participant_macro_log_loss"
+
+
+def test_inner_selection_aggregates_participant_losses_not_equal_fold_means() -> None:
+    frame, y = _frame()
+    result = select_logistic_model(
+        frame,
+        y,
+        feature_schemes=[FeatureScheme("signal", ("signal",))],
+        c_candidates=[1.0],
+        n_splits=3,
+        seed=17,
+    )
+
+    participant_losses: list[float] = []
+    fold_macro: list[float] = []
+    fold_n_participants: list[int] = []
+    for audit in result.inner_fold_audits:
+        losses = audit["participant_loss_by_c"]["1.0"]
+        participant_losses.extend(float(value) for value in losses.values())
+        fold_macro.append(float(audit["loss_by_c"]["1.0"]))
+        fold_n_participants.append(len(audit["validation_group_ids"]))
+
+    assert sorted(fold_n_participants) == [2, 3, 3]
+    expected_participant_macro = float(np.mean(participant_losses))
+    expected_from_weighted_fold_macro = float(np.average(fold_macro, weights=fold_n_participants))
+    score = result.candidate_participant_macro_log_loss["signal|C=1"]
+    assert score == pytest.approx(expected_participant_macro)
+    assert score == pytest.approx(expected_from_weighted_fold_macro)
+
+
+def test_inner_training_weights_are_recomputed_and_participant_equal() -> None:
+    frame, y = _unequal_frame()
+    result = select_logistic_model(
+        frame,
+        y,
+        feature_schemes=[FeatureScheme("signal", ("signal",))],
+        c_candidates=[1.0],
+        n_splits=3,
+    )
+
+    for audit in result.inner_fold_audits:
+        weights = audit["training_weights"]
+        assert weights["mean_row_weight"] == pytest.approx(1.0)
+        assert weights["participant_total_weight_min"] == pytest.approx(
+            weights["participant_total_weight_max"]
+        )
+        assert set(weights["participant_total_weight"]) == set(audit["train_group_ids"])
 
 
 def test_inner_validation_participant_cannot_change_its_inner_training_preprocessing() -> None:
@@ -65,31 +131,34 @@ def test_inner_validation_participant_cannot_change_its_inner_training_preproces
     assert target_group not in base_audit["train_group_ids"]
     assert base_audit["train_group_ids"] == changed_audit["train_group_ids"]
     assert base_audit["preprocessing"] == changed_audit["preprocessing"]
+    assert base_audit["training_weights"] == changed_audit["training_weights"]
 
 
-def test_complete_outer_training_refit_uses_all_training_groups_and_no_test_labels() -> None:
-    frame, y = _frame()
+def test_complete_outer_training_refit_uses_all_training_groups_and_participant_equal_weights() -> None:
+    frame, y = _unequal_frame()
     outer_test = pd.DataFrame(
         {
             "participant_group_id": ["HELD-OUT", "HELD-OUT"],
-            "signal": [0.0, 4.0],
+            "signal": [0.0, 2.5],
             "noise": [0.0, 0.0],
-            "sparse": [np.nan, 1.0],
         }
     )
-    scheme = FeatureScheme("signal", ("signal", "sparse"))
+    scheme = FeatureScheme("signal", ("signal",))
     result = refit_logistic_and_predict(frame, y, outer_test, feature_scheme=scheme, selected_c=1.0)
 
     assert set(result["train_group_ids"]) == set(frame["participant_group_id"].unique())
     assert result["test_group_ids"] == ["HELD-OUT"]
     assert "HELD-OUT" not in result["train_group_ids"]
     assert result["preprocessing"]["fit_group_ids"] == result["train_group_ids"]
-    assert result["coefficient_scale"] == "post_imputation_standardized_predictors"
+    assert result["coefficient_scale"] == "post_imputation_participant_equal_standardized_predictors"
     assert set(result["standardized_coefficients"]) == set(result["preprocessing"]["output_columns"])
     assert result["standardized_coefficients"]["signal"] > 0
     assert np.isfinite(result["intercept"])
     assert len(result["p_positive"]) == len(outer_test)
     assert len(result["predicted_label"]) == len(outer_test)
+    weights = result["training_weights"]
+    assert weights["mean_row_weight"] == pytest.approx(1.0)
+    assert weights["participant_total_weight_min"] == pytest.approx(weights["participant_total_weight_max"])
 
 
 def test_final_predict_interface_rejects_test_outcome_columns() -> None:
