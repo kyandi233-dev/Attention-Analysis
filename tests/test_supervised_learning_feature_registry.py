@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from attention_pipeline.supervised_learning.entrypoint import _resolve_model_plan
 from attention_pipeline.supervised_learning.feature_registry import (
     DEVICE_PACKAGES,
     FeatureRegistryContractError,
@@ -101,19 +102,15 @@ def test_plan_generates_standalone_behavior_increment_full_minus_and_m0_m7() -> 
     assert "full_minus::pupil_variability_rgb_assisted" in models
     assert set(plan.device_package_model_ids) == set(DEVICE_PACKAGES)
 
-    # Behavior is decomposed into concrete features for interpretation but is
-    # also retained together as the B reference model.
     assert set(models["behavior_reference"].feature_ids) == {"rt_variability", "omission"}
     assert models["standalone::rt_variability"].feature_ids == ("rt_variability",)
 
-    # B+x really contains the complete frozen Behavior reference plus x.
     assert set(models["behavior_plus::blink_rate"].feature_ids) == {
         "rt_variability",
         "omission",
         "blink_rate",
     }
 
-    # Full-x removes only the requested exact scientific representation.
     assert "pupil_variability_rgb_assisted" in models["full"].feature_ids
     assert "pupil_variability_rgb_assisted" not in models["full_minus::pupil_variability_rgb_assisted"].feature_ids
 
@@ -122,17 +119,14 @@ def test_cross_device_pupil_provenance_controls_m0_m7_membership() -> None:
     plan = build_feature_comparison_plan(_registry())
     models = plan.model_map()
 
-    # NIR-only packages can use only the NIR-only pupil representation.
     assert "pupil_variability_nir_only" in models["M1"].feature_ids
     assert "pupil_variability_rgb_assisted" not in models["M1"].feature_ids
     assert "pupil_variability_nir_only" in models["M4"].feature_ids
 
-    # NIR+RGB packages use the explicitly registered RGB-assisted representation.
     assert "pupil_variability_rgb_assisted" in models["M5"].feature_ids
     assert "pupil_variability_nir_only" not in models["M5"].feature_ids
     assert "pupil_variability_rgb_assisted" in models["M7"].feature_ids
 
-    # Required device metadata follows the representation actually used.
     assert set(models["standalone::pupil_variability_rgb_assisted"].required_devices) == {"nir", "rgb"}
     assert set(models["M5"].required_devices) == {"behavior", "nir", "rgb"}
 
@@ -147,16 +141,50 @@ def test_plan_converts_to_existing_runner_feature_scheme_interface() -> None:
     assert set(families["M7"][0].modality_blocks) == {"behavior", "mmwave", "nir", "rgb"}
 
 
+def test_entrypoint_prefers_nonempty_frozen_registry_over_manual_feature_families() -> None:
+    config = {
+        "feature_registry": {
+            "features": [feature.audit_dict() for feature in _registry()],
+        },
+        "feature_schemes": {
+            "model_families": {
+                "manual_should_not_win": {
+                    "candidates": [
+                        {
+                            "feature_set_id": "manual",
+                            "columns": ["go_correct_rt_cv"],
+                            "modality_blocks": ["behavior"],
+                        }
+                    ]
+                }
+            }
+        },
+    }
+    families, plan = _resolve_model_plan(config)
+
+    assert plan is not None
+    assert "manual_should_not_win" not in families
+    assert "behavior_reference" in families
+    assert set(plan.device_package_model_ids) == set(DEVICE_PACKAGES)
+
+
 def test_registry_rejects_impossible_cross_device_package_claim() -> None:
     features = _registry()
     features[3] = RegisteredFeature(
         **{
             **features[3].__dict__,
-            "allowed_device_packages": ("M1",),  # NIR-only package cannot produce RGB-assisted pupil.
+            "allowed_device_packages": ("M1",),
         }
     )
     with pytest.raises(FeatureRegistryContractError, match="lacks required devices"):
         validate_registered_features(features)
+
+
+def test_plan_rejects_named_device_package_with_no_information_from_declared_device() -> None:
+    features = _registry()
+    features = [feature for feature in features if feature.feature_id != "breathing_rate"]
+    with pytest.raises(FeatureRegistryContractError, match="declares sensor devices without registered scientific information"):
+        build_feature_comparison_plan(features)
 
 
 def test_registry_rejects_two_full_representations_of_same_scientific_feature() -> None:
