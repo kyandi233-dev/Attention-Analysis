@@ -32,17 +32,12 @@ def test_valid_predeclared_behavior_scheme_uses_raw_omission() -> None:
     assert "raw_go_omission_rate" in scheme.columns
 
 
-def test_current_mainline_forbidden_inputs_fail_closed() -> None:
+def test_structural_leakage_and_audit_columns_fail_closed() -> None:
     forbidden = [
         "q1_nominal_4class",
         "q1_binary",
         "p_q1_equals_1",
         "predicted_q1_binary",
-        "q2_ordinal_4level",
-        "omission_rate",
-        "clean_go_omission_rate",
-        "timing_ambiguous_go_omission_rate",
-        "hard_pupil_fraction",
         "participant_group_id",
         "session_id",
         "probe_event_id",
@@ -65,6 +60,19 @@ def test_current_mainline_forbidden_inputs_fail_closed() -> None:
     for column in forbidden:
         with pytest.raises(SupervisedLearningContractError):
             validate_mainline_feature_scheme(FeatureScheme("bad", (column,)))
+
+
+def test_task_a_does_not_hardcode_scientific_feature_eligibility() -> None:
+    # Scientific inclusion/exclusion belongs to the frozen upstream feature registry.
+    # Task A only enforces structural leakage rules.
+    for column in (
+        "q2_ordinal_4level",
+        "omission_rate",
+        "clean_go_omission_rate",
+        "timing_ambiguous_go_omission_rate",
+        "hard_pupil_fraction",
+    ):
+        validate_mainline_feature_scheme(FeatureScheme(f"science::{column}", (column,)))
 
 
 def test_duplicate_features_duplicate_modality_blocks_and_duplicate_scheme_ids_are_rejected() -> None:
