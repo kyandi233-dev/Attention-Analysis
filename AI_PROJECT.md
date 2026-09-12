@@ -9,4 +9,10 @@
 - local_startup_files: `AGENTS.md`, root `README.md`, `docs/060-formal-analysis/001-正式多模态V2路径与分析契约.md`, `configs/formal_multimodal_v2.yaml`, then the current producer/module README, manifests, tests and evidence required by the task
 - related_repository_roles: `FocusWave@formaltest` owns experiment/acquisition implementation; `FocusWave-Formal-Analysis` owns analysis plans/report/evidence records; `focuswave-multimodal-attention-analysis@main` owns canonical mmWave/multimodal integration and cross-modal inference
 
+## Current integration hygiene
+
+For the current 1.16 supervised-analysis integration surface, PR #62 / `codex/1.16-abcd-integration-review` is the single integration hub. PR #64 / `codex/nir-g1-summary-hardening` and PR #68 / `codex/1.16.10-modality-device-separation` are the active child lines. Older Task A/B/C/D, P0 repair, historical NIR validation, and hardware-performance branches remain provenance unless a current task explicitly reactivates one; they are not competing current baselines.
+
+Closing or retaining a historical PR does not by itself change scientific authority. Before any write, verify the current integration-hub/child status in GitHub and the owning Formal handoff.
+
 This file is navigation only. Current scientific/engineering truth remains in the active branch/ref, `AGENTS.md`, configs, producer documentation, manifests, tests and generated evidence. Do not infer a producer branch from an old workspace name; verify the task-specific branch/ref before writes.
