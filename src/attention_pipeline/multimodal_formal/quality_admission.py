@@ -321,14 +321,27 @@ def audit_quality(
             qc_valid, qc_basis = _native_qc_state(frame, modality, feature)
             support_valid, support_basis = _feature_support_state(frame, modality, feature)
             column_present = feature in frame.columns
-            raw = (
-                pd.to_numeric(frame[feature], errors="coerce")
+            raw_source = (
+                frame[feature]
                 if column_present
                 else pd.Series(np.nan, index=frame.index, dtype=float)
             )
+            raw = pd.to_numeric(raw_source, errors="coerce")
+            raw_missing = raw_source.isna()
+            invalid_non_numeric = column_present & raw_source.notna() & raw.isna()
+            invalid_nonfinite = raw.notna() & ~pd.Series(np.isfinite(raw), index=frame.index)
             finite = pd.Series(np.isfinite(raw), index=frame.index)
+            residual_missing = pd.Series(column_present, index=frame.index) & raw_missing
             computable = opportunity & qc_valid & support_valid & finite
-            missing_strategy_eligible = opportunity & qc_valid & support_valid & column_present
+            missing_strategy_eligible = (
+                opportunity
+                & qc_valid
+                & support_valid
+                & column_present
+                & (finite | residual_missing)
+                & ~invalid_non_numeric
+                & ~invalid_nonfinite
+            )
 
             reason = np.select(
                 [
@@ -339,7 +352,9 @@ def audit_quality(
                     ~qc_valid,
                     ~support_valid,
                     pd.Series(not column_present, index=frame.index),
-                    ~finite,
+                    invalid_non_numeric,
+                    invalid_nonfinite,
+                    residual_missing,
                 ],
                 [
                     "record_missing",
@@ -349,6 +364,8 @@ def audit_quality(
                     "native_qc_invalid",
                     "feature_support_invalid",
                     "feature_column_missing",
+                    "feature_value_invalid_non_numeric",
+                    "feature_value_invalid_nonfinite",
                     "single_feature_missing",
                 ],
                 default="available",
