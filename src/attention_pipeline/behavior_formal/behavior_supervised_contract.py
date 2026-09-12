@@ -32,6 +32,30 @@ class BehaviorSupervisedContractError(ValueError):
     """Raised when a proposed supervised behavior scheme violates frozen roles."""
 
 
+BEHAVIOR_REFERENCE_FIXED_COLUMNS = (
+    "go_correct_rt_cv",
+    "go_correct_rt_theilsen_slope_ms_per_s",
+    "raw_go_omission_rate",
+    "commission_rate",
+)
+BEHAVIOR_REFERENCE_LEVEL_CHOICES = (
+    "go_correct_rt_mean_ms", "go_correct_rt_median_ms",
+)
+
+
+def frozen_behavior_reference_columns(rt_level: str) -> tuple[str, ...]:
+    """Apply the upstream G0 decision without selecting it from Q1 or coverage.
+
+    This returns the five-dimensional 1.16.4 reference, not the larger table of
+    measurements preserved by Task C for descriptive/sensitivity analyses.
+    """
+    if rt_level not in BEHAVIOR_REFERENCE_LEVEL_CHOICES:
+        raise BehaviorSupervisedContractError(
+            "RT level requires an explicit mean/median measurement-freeze decision"
+        )
+    return (rt_level, *BEHAVIOR_REFERENCE_FIXED_COLUMNS)
+
+
 def omission_supervised_role(metric: str) -> str:
     name = str(metric)
     if name in FIRST_ROUND_SUPERVISED_OMISSION_PREDICTORS:

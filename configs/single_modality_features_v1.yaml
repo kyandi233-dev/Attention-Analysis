@@ -1,0 +1,138 @@
+schema_version: 1
+method_authority: FocusWave-Formal-Analysis/1.16.4-1.16.10
+# This is a measurement-review catalog, not an automatically approved predictor
+# registry. Empty candidates intentionally await the final producer/schema freeze.
+# Finite values do not certify source/QC/estimability. No Q1-based selection here.
+dimensions:
+  - scientific_feature_id: behavior_rt_level
+    modality: behavior
+    feature_type: reaction_time
+    report_name: 反应时水平
+    primary_candidates: [go_correct_rt_mean_ms, go_correct_rt_median_ms]
+    comparison_pairs: [[go_correct_rt_mean_ms, go_correct_rt_median_ms]]
+    descriptive_candidates: []
+    required_for_modality: true
+    required_devices: []
+    raw_source: behavior_formal/probe_primary_30s
+    preprocessing_dependencies: [behavior_authoritative_probe_time]
+  - scientific_feature_id: behavior_rt_variability
+    modality: behavior
+    feature_type: reaction_time_variability
+    report_name: 反应时波动
+    primary_candidates: [go_correct_rt_cv]
+    comparison_pairs: [[go_correct_rt_sd_ms, go_correct_rt_mad_ms], [go_correct_rt_sd_ms, go_correct_rt_iqr_ms]]
+    descriptive_candidates: [go_correct_rt_sd_ms, go_correct_rt_mad_ms, go_correct_rt_iqr_ms]
+    required_for_modality: true
+    required_devices: []
+    raw_source: behavior_formal/probe_primary_30s
+    preprocessing_dependencies: [behavior_authoritative_probe_time]
+  - scientific_feature_id: behavior_rt_trend
+    modality: behavior
+    feature_type: reaction_time_trend
+    report_name: 反应时变化趋势
+    primary_candidates: [go_correct_rt_theilsen_slope_ms_per_s]
+    descriptive_candidates: []
+    required_for_modality: true
+    required_devices: []
+    raw_source: behavior_formal/probe_primary_30s
+    preprocessing_dependencies: [behavior_authoritative_probe_time, rt_slope_estimability_status]
+  - scientific_feature_id: behavior_go_omission
+    modality: behavior
+    feature_type: omission
+    report_name: Go遗漏率
+    primary_candidates: [raw_go_omission_rate]
+    descriptive_candidates: [clean_go_omission_rate, timing_ambiguous_go_omission_rate]
+    required_for_modality: true
+    required_devices: []
+    raw_source: behavior_formal/probe_primary_30s
+    preprocessing_dependencies: [behavior_authoritative_probe_time, go_opportunity_denominator]
+  - scientific_feature_id: behavior_nogo_error
+    modality: behavior
+    feature_type: commission
+    report_name: No-Go误按率
+    primary_candidates: [commission_rate]
+    descriptive_candidates: [dprime_loglinear]
+    required_for_modality: true
+    required_devices: []
+    raw_source: behavior_formal/probe_primary_30s
+    preprocessing_dependencies: [behavior_authoritative_probe_time, nogo_opportunity_denominator]
+  - scientific_feature_id: ocular_pupil_level
+    modality: ocular
+    feature_type: pupil
+    report_name: 瞳孔水平
+    primary_candidates: []
+    descriptive_candidates: []
+    required_for_modality: true
+    required_devices: null
+    raw_source: nir_1.16.3_measurement_audit_pending_final_wide_schema
+    preprocessing_dependencies: [final_pupil_representation_and_cleaning_track]
+  - scientific_feature_id: ocular_pupil_variability
+    modality: ocular
+    feature_type: pupil
+    report_name: 瞳孔波动
+    primary_candidates: []
+    descriptive_candidates: []
+    required_for_modality: true
+    required_devices: null
+    raw_source: nir_1.16.3_measurement_audit_pending_final_wide_schema
+    preprocessing_dependencies: [final_pupil_representation_and_cleaning_track]
+  - scientific_feature_id: ocular_pupil_linear_trend
+    modality: ocular
+    feature_type: pupil
+    report_name: 瞳孔线性变化
+    primary_candidates: []
+    descriptive_candidates: []
+    required_for_modality: true
+    required_devices: null
+    raw_source: nir_1.16.3_measurement_audit_pending_final_wide_schema
+    preprocessing_dependencies: [final_pupil_representation_and_cleaning_track, frozen_bin_and_time_support]
+  - scientific_feature_id: ocular_pupil_curvature
+    modality: ocular
+    feature_type: pupil
+    report_name: 瞳孔曲线变化
+    primary_candidates: []
+    descriptive_candidates: []
+    required_for_modality: true
+    required_devices: null
+    raw_source: nir_1.16.3_measurement_audit_pending_final_wide_schema
+    preprocessing_dependencies: [final_pupil_representation_and_cleaning_track, frozen_bin_and_time_support]
+  - scientific_feature_id: ocular_blink_frequency
+    modality: ocular
+    feature_type: blink
+    report_name: 眨眼事件频率
+    primary_candidates: [blink_event_rate_per_min]
+    descriptive_candidates: [blink_event_n, blink_event_duration_median_ms, blink_event_duration_total_ms, blink_ibi_median_ms, blink_frame_ratio]
+    required_for_modality: true
+    required_devices: [rgb]
+    raw_source: rgb_formal/blink_candidate_events
+    preprocessing_dependencies: [rgb_bilateral_observation_and_event_quality]
+  - scientific_feature_id: movement_visible_level
+    modality: movement
+    feature_type: body_motion
+    report_name: 可见运动水平
+    primary_candidates: [body_motion_energy_median]
+    descriptive_candidates: [exposure_change_abs_median, pose_lateral_right_per_sec_median, pose_vertical_up_per_sec_median, pose_radial_proximity_direction_score_median]
+    required_for_modality: true
+    required_devices: [rgb]
+    raw_source: rgb_formal/temporal_motion_validity_filtered_global_motion
+    preprocessing_dependencies: [rgb_motion_temporal_validity]
+  - scientific_feature_id: cardiopulmonary_heart_rate
+    modality: cardiopulmonary
+    feature_type: heart_rate
+    report_name: 心率
+    primary_candidates: []
+    descriptive_candidates: []
+    required_for_modality: true
+    required_devices: null
+    raw_source: external_mmwave_producer_pending_scientific_qualification
+    preprocessing_dependencies: [external_physiological_validation]
+  - scientific_feature_id: cardiopulmonary_respiration_rate
+    modality: cardiopulmonary
+    feature_type: respiration_rate
+    report_name: 呼吸率
+    primary_candidates: []
+    descriptive_candidates: []
+    required_for_modality: true
+    required_devices: null
+    raw_source: external_mmwave_producer_pending_scientific_qualification
+    preprocessing_dependencies: [external_physiological_validation]

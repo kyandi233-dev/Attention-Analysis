@@ -1,7 +1,7 @@
 pipeline:
   name: focuswave-behavior-supervised-candidates-v1
-  version: 1.0.0
-  authority: FocusWave-Formal-Analysis/analysis-design-1.15.5-1.15.7
+  version: 1.1.0
+  authority: FocusWave-Formal-Analysis/analysis-design-1.16.4
 
 source:
   table: behavior_supervised_probe_30s.csv
@@ -27,12 +27,13 @@ candidate_dimensions:
   rt_level:
     columns: [go_correct_rt_mean_ms, go_correct_rt_median_ms]
     one_representative_per_feature_scheme: true
-    final_choice: pending
+    final_choice: pending_q1_blind_measurement_review
   rt_variability:
     preferred_current: go_correct_rt_cv
     limited_alternatives: [go_correct_rt_sd_ms, go_correct_rt_mad_ms, go_correct_rt_iqr_ms]
     one_representative_per_feature_scheme: true
-    final_choice: pending
+    final_choice: frozen_cv
+    alternative_role: descriptive_sensitivity_only
   rt_trend:
     columns: [go_correct_rt_theilsen_slope_ms_per_s]
     final_choice: frozen_behavior_producer_definition
@@ -41,7 +42,10 @@ candidate_dimensions:
     final_choice: frozen_raw_only
   error_control:
     columns: [commission_rate, dprime_loglinear]
-    final_choice: pending_whether_both_retained
+    primary: commission_rate
+    alternative: dprime_loglinear
+    final_choice: frozen_commission
+    alternative_role: descriptive_sensitivity_only
 
 descriptive_qc_sensitivity_only:
   - clean_go_omission_rate
@@ -67,4 +71,6 @@ policies:
   all_nonraw_omission_rates_not_first_round_predictors: true
   rt_cv_empirical_minimum_n_gate: false
   rt_level_choice_not_frozen_here: true
-  commission_dprime_joint_retention_not_frozen_here: true
+  commission_dprime_joint_retention_not_frozen_here: false
+  dprime_not_added_to_raw_omission_plus_commission: true
+  main_reference_dimensions: [rt_level, rt_variability, rt_trend, omission, error_control]

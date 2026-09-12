@@ -18,6 +18,7 @@ import pandas as pd
 from attention_pipeline.formal_analysis.identity_contract import assert_participant_group_contract
 
 from .behavior_supervised_contract import (
+    BEHAVIOR_REFERENCE_FIXED_COLUMNS,
     FIRST_ROUND_OMISSION_DESCRIPTIVE_QC_ONLY,
     FIRST_ROUND_SUPERVISED_OMISSION_PREDICTORS,
     validate_first_round_omission_predictors,
@@ -25,6 +26,7 @@ from .behavior_supervised_contract import (
 
 
 INTERFACE_VERSION = "behavior-supervised-probe-v1"
+FEATURE_ROLE_CONTRACT_VERSION = "behavior-feature-roles-1.16.4"
 PRIMARY_WINDOW_SECONDS = 30
 RT_CV_MATHEMATICAL_MIN_N = 2
 OMISSION_PARTITION_TOLERANCE = 1e-12
@@ -361,14 +363,18 @@ def _field_role(field: str) -> tuple[str, str]:
         return "interpretation_construct_only", "not a first-round Q1 predictor"
     if field in RT_LEVEL_CANDIDATES:
         return "candidate_scheme_rt_level", "mean vs median remains unresolved; do not enter both by default"
-    if field in RT_VARIABILITY_CANDIDATES:
-        return "candidate_scheme_rt_variability", "CV currently preferred; alternatives remain limited candidate representations"
+    if field == "go_correct_rt_cv":
+        return "first_round_reference_member", "CV is the frozen variability representation; audit does not reselect it"
+    if field in RT_VARIABILITY_CANDIDATES[1:]:
+        return "descriptive_qc_sensitivity_only", "SD/MAD/IQR remain measurement comparisons, not extra main-reference inputs"
     if field in RT_TREND_CANDIDATES:
         return "first_round_rt_trend_candidate", "behavior producer uses Theil-Sen slope"
     if field in FIRST_ROUND_SUPERVISED_OMISSION_PREDICTORS:
         return "first_round_supervised_omission_candidate", "raw program omission only"
-    if field in ("commission_rate", "dprime_loglinear"):
-        return "candidate_pending_final_scientific_freeze", "commission vs dprime joint retention remains unresolved"
+    if field == "commission_rate":
+        return "first_round_reference_member", "No-Go error rate is frozen in the five-dimensional Behavior reference"
+    if field == "dprime_loglinear":
+        return "descriptive_qc_sensitivity_only", "alternative error representation; not added to raw omission plus commission"
     if field in DESCRIPTIVE_QC_COLUMNS:
         return "descriptive_qc_sensitivity_only", "not a first-round supervised predictor"
     return "audit_only", "identity/window/opportunity/computability provenance"
@@ -402,6 +408,9 @@ def build_behavior_supervised_feature_audit(interface: pd.DataFrame) -> pd.DataF
             "coverage": float(valid.mean()) if len(interface) else 0.0,
             "selection_authority": "prespecified_role_or_training_boundary_only",
             "automatic_drop_allowed": False,
+            "main_reference_fixed_member": field in BEHAVIOR_REFERENCE_FIXED_COLUMNS,
+            "main_reference_pending_choice": field in RT_LEVEL_CANDIDATES,
+            "feature_role_contract": FEATURE_ROLE_CONTRACT_VERSION,
             "note": note,
         })
     return pd.DataFrame(rows)
@@ -494,6 +503,10 @@ def materialize_behavior_supervised_interface(
         "q1_role": "supervised_target_source",
         "q2_role": "interpretation_construct_only_not_predictor",
         "first_round_candidate_pool": list(FIRST_ROUND_CANDIDATE_POOL),
+        "candidate_pool_role": "measurement_inventory_not_automatic_predictor_list",
+        "feature_role_contract": FEATURE_ROLE_CONTRACT_VERSION,
+        "main_reference_fixed_columns": list(BEHAVIOR_REFERENCE_FIXED_COLUMNS),
+        "pending_main_reference_decision": "RT level mean versus median, Q1-blind G0 review",
         "descriptive_qc_only": list(DESCRIPTIVE_QC_COLUMNS),
         "computability_audit_fields": [c for c in COMPUTABILITY_AUDIT_COLUMNS if c in interface.columns],
         "files": {
