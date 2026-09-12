@@ -142,15 +142,36 @@ def summarize_session_discrimination(predictions: pd.DataFrame) -> pd.DataFrame:
 
 
 def session_discrimination_audit(summary: pd.DataFrame) -> dict[str, object]:
-    """Return denominator-aware counts for session-level AUROC availability."""
-    _require_columns(summary, ["status", "model_id", "session_id"], context="session discrimination summary")
+    """Return denominator-aware session and participant counts for AUROC availability."""
+    _require_columns(
+        summary,
+        ["status", "model_id", "participant_group_id", "session_id"],
+        context="session discrimination summary",
+    )
     total = int(len(summary))
-    estimable = int(summary["status"].eq("estimable").sum())
+    estimable_mask = summary["status"].eq("estimable")
+    estimable = int(estimable_mask.sum())
     single_class = int(summary["status"].eq("not_estimable_single_class").sum())
+
+    participant_model_total = int(
+        summary[["model_id", "participant_group_id"]].drop_duplicates().shape[0]
+    )
+    participant_model_estimable = int(
+        summary.loc[estimable_mask, ["model_id", "participant_group_id"]]
+        .drop_duplicates()
+        .shape[0]
+    )
+    participant_total = int(summary["participant_group_id"].nunique())
+    participant_estimable = int(summary.loc[estimable_mask, "participant_group_id"].nunique())
+
     return {
         "interpretation": "within_session_state_discrimination_not_dynamic_tracking",
         "session_model_rows_total": total,
         "session_model_rows_estimable": estimable,
         "session_model_rows_not_estimable_single_class": single_class,
-        "estimable_fraction": float(estimable / total) if total else np.nan,
+        "session_model_estimable_fraction": float(estimable / total) if total else np.nan,
+        "participant_model_rows_total": participant_model_total,
+        "participant_model_rows_with_estimable_session": participant_model_estimable,
+        "participants_total": participant_total,
+        "participants_with_estimable_session": participant_estimable,
     }
