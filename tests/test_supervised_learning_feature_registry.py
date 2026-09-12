@@ -195,6 +195,53 @@ def test_plan_marks_packages_unavailable_when_a_sensor_has_no_frozen_feature() -
     assert "behavior_plus::pupil_variability_rgb_assisted" in plan.model_map()
 
 
+def test_nonreference_behavior_feature_does_not_silently_change_m0_m7() -> None:
+    features = _registry()
+    features.append(
+        RegisteredFeature(
+            feature_id="criterion_c_extra",
+            scientific_feature_id="criterion_c_extra",
+            columns=("criterion_c_extra",),
+            role="behavior",
+            raw_source="SART behavior",
+            required_devices=("behavior",),
+            behavior_reference_eligible=False,
+            behavior_increment_eligible=False,
+            standalone_eligible=True,
+            full_model_eligible=True,
+            full_leave_one_out_eligible=True,
+            allowed_device_packages=(),
+        )
+    )
+    plan = build_feature_comparison_plan(features)
+    models = plan.model_map()
+
+    assert "standalone::criterion_c_extra" in models
+    assert "criterion_c_extra" in models["full"].feature_ids
+    assert "criterion_c_extra" not in models["behavior_reference"].feature_ids
+    assert "criterion_c_extra" not in models["M0"].feature_ids
+    assert "criterion_c_extra" not in models["M7"].feature_ids
+    assert set(models["M0"].feature_ids) == set(models["behavior_reference"].feature_ids)
+
+
+def test_registry_rejects_nonreference_behavior_feature_claiming_device_packages() -> None:
+    features = _registry()
+    features.append(
+        RegisteredFeature(
+            feature_id="behavior_extra",
+            scientific_feature_id="behavior_extra",
+            columns=("behavior_extra",),
+            role="behavior",
+            raw_source="SART behavior",
+            required_devices=("behavior",),
+            behavior_reference_eligible=False,
+            allowed_device_packages=("M0",),
+        )
+    )
+    with pytest.raises(FeatureRegistryContractError, match="non-reference Behavior feature"):
+        validate_registered_features(features)
+
+
 def test_registry_rejects_two_full_representations_of_same_scientific_feature() -> None:
     features = _registry()
     nir_only = features[2]
