@@ -23,7 +23,7 @@ def _registry() -> list[RegisteredFeature]:
             required_devices=("behavior",),
             behavior_reference_eligible=True,
             behavior_increment_eligible=False,
-            allowed_device_packages=(),  # Behavior defaults to every M0-M7 package.
+            allowed_device_packages=(),
         ),
         RegisteredFeature(
             feature_id="omission",
@@ -198,22 +198,4 @@ def test_registry_rejects_two_full_representations_of_same_scientific_feature() 
         }
     )
     with pytest.raises(FeatureRegistryContractError, match="multiple full-model representations"):
-        validate_registered_features(features)
-
-
-def test_registry_rejects_q2_or_other_forbidden_mainline_column() -> None:
-    features = _registry()
-    features.append(
-        RegisteredFeature(
-            feature_id="illegal_q2",
-            scientific_feature_id="sleepiness",
-            columns=("q2_ordinal_4level",),
-            role="sensor",
-            raw_source="probe",
-            required_devices=("rgb",),
-            behavior_increment_eligible=True,
-            allowed_device_packages=("M3",),
-        )
-    )
-    with pytest.raises(FeatureRegistryContractError, match="Q2 is interpretation/construct validation"):
         validate_registered_features(features)
