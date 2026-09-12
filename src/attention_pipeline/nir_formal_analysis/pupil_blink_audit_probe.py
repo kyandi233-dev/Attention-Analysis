@@ -29,8 +29,8 @@ def probe_identity(row: pd.Series) -> dict[str, object]:
     }
     for name in (
         "participant_group_id", "analysis_group_token", "probe_index_global",
-        "probe_index_in_block", "probe_event_id", "probe_response", "probe_vigilance",
-        "q1_nominal_4class", "q2_ordinal_4level",
+        "probe_index_in_block", "probe_order_in_block", "probe_event_id",
+        "probe_response", "probe_vigilance", "q1_nominal_4class", "q2_ordinal_4level",
     ):
         if name in row.index:
             result[name] = row[name]
