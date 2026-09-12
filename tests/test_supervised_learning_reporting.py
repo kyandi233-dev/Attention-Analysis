@@ -21,8 +21,10 @@ def _complete_result() -> SupervisedRunResult:
             "session_id": ["S01", "S02"],
             "block_id": ["B1", "B1"],
             "probe_event_id": ["S01|B1|P1", "S02|B1|P1"],
+            "probe_time_ms": [1000, 1000],
             "q1_nominal_4class": [1, 2],
             "q1_binary": [1, 0],
+            "q2_ordinal_4level": [4, 2],
             "feature_set_id": ["behavior-a", "behavior-a"],
             "selected_c": [1.0, 1.0],
             "p_q1_equals_1": [0.8, 0.2],
@@ -150,6 +152,10 @@ def test_write_supervised_run_is_immutable_and_auditable(tmp_path) -> None:
     assert manifest["outer_evaluation"]["bootstrap_replicates"] == 1000
     assert manifest["outer_evaluation"]["bootstrap_seed"] == 20260830
     assert manifest["outer_evaluation"]["bootstrap_retrain_models"] is False
+    assert manifest["trajectory_reporting"]["role"] == "exploratory_probe_sampled_reporting"
+    assert manifest["trajectory_reporting"]["continuous_real_time_tracking_claim"] is False
+    assert manifest["trajectory_reporting"]["q2_context_available"] is True
+    assert manifest["trajectory_reporting"]["questionnaire_join_performed"] is False
 
     assert (run_root / "probe_predictions.csv").is_file()
     assert (run_root / "fold_audits.json").is_file()
@@ -160,15 +166,21 @@ def test_write_supervised_run_is_immutable_and_auditable(tmp_path) -> None:
     assert (run_root / "paired_participant_increments.csv").is_file()
     assert (run_root / "paired_model_increments.csv").is_file()
     assert (run_root / "paired_increment_bootstrap.json").is_file()
+    assert (run_root / "probe_trajectory.csv").is_file()
+    assert (run_root / "session_discrimination.csv").is_file()
     assert (run_root / "run_manifest.json").is_file()
 
     participant = pd.read_csv(run_root / "participant_log_loss.csv")
     model = pd.read_csv(run_root / "model_evaluation.csv")
     predictions = pd.read_csv(run_root / "probe_predictions.csv")
+    trajectory = pd.read_csv(run_root / "probe_trajectory.csv")
+    session = pd.read_csv(run_root / "session_discrimination.csv")
     bootstrap = json.loads((run_root / "participant_bootstrap.json").read_text(encoding="utf-8"))
     assert set(participant["participant_group_id"]) == {"P01", "P02"}
     assert set(participant["membership_type"]) == {"included_complete"}
     assert set(predictions["membership_type"]) == {"included_complete"}
+    assert set(trajectory["q2_ordinal_4level"]) == {2, 4}
+    assert set(session["status"]) == {"not_estimable_single_class"}
     assert model.loc[0, "status"] == "estimable"
     assert model.loc[0, "membership_type"] == "included_complete"
     assert model.loc[0, "participant_equal_log_loss"] == pytest.approx(participant["mean_log_loss"].mean())
