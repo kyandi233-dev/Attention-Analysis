@@ -1,8 +1,10 @@
 import numpy as np
 import pandas as pd
 import pytest
+from types import SimpleNamespace
 
 from attention_pipeline.nir_formal_analysis import pupil_blink_measurement as pbm
+from attention_pipeline.nir_formal_analysis import pupil_blink_measurement_runner as pbr
 
 
 def eye_frame():
@@ -182,3 +184,148 @@ def test_fixed_bins_support_nondivisible_candidate_width_without_crossing_zero()
     assert bins.iloc[0]["bin_start_sec"] == pytest.approx(-10)
     assert bins.iloc[-1]["bin_end_sec"] == pytest.approx(0)
     assert (bins["bin_start_sec"] < bins["bin_end_sec"]).all()
+
+
+def _run_runner_with_rgb_loader(monkeypatch, tmp_path, rgb_loader):
+    source = tmp_path / "nir.csv"
+    pd.DataFrame({"placeholder": [1]}).to_csv(source, index=False)
+    events_path = tmp_path / "events.csv"
+    pd.DataFrame(columns=["session_id", "start_unix_ms", "end_unix_ms"]).to_csv(events_path, index=False)
+    probes_path = tmp_path / "probes.csv"
+    pd.DataFrame({"session_id": ["s1"]}).to_csv(probes_path, index=False)
+    out = tmp_path / "out"
+    records = [{"session_id": "s1", "source_csv": str(source)}]
+
+    monkeypatch.setattr(pbr, "load_config", lambda *args, **kwargs: object())
+    monkeypatch.setattr(pbr, "load_source_manifest", lambda cfg: (None, records))
+    monkeypatch.setattr(pbr, "selected_records", lambda rows, subjects: rows)
+    monkeypatch.setattr(
+        pbr,
+        "load_audit_config",
+        lambda *args, **kwargs: {
+            "probe_window_sec": 30.0,
+            "include_soft_sensitivity": False,
+            "blink_recovery": {},
+        },
+    )
+    monkeypatch.setattr(
+        pbr,
+        "blink_buffers",
+        lambda cfg: [SimpleNamespace(name="b100_300", pre_ms=100.0, post_ms=300.0)],
+    )
+    monkeypatch.setattr(pbr, "fixed_bin_widths", lambda cfg: (2.0,))
+    monkeypatch.setattr(
+        pbr,
+        "cleaning_tracks",
+        lambda cfg: ("original_nir", "nir_qc_only", "rgb_blink_only", "rgb_plus_nir_qc"),
+    )
+    monkeypatch.setattr(pbr, "read_table", lambda path: pd.read_csv(path))
+    monkeypatch.setattr(pbr, "resolve_source", lambda cfg, path: source)
+    monkeypatch.setattr(
+        pbr,
+        "adapt_session_rows",
+        lambda raw, record: pd.DataFrame({"phase": ["block1"]}),
+    )
+    monkeypatch.setattr(
+        pbr,
+        "derive_eye_measurements",
+        lambda adapted: pd.DataFrame({"session_id": ["s1"]}),
+    )
+    monkeypatch.setattr(
+        pbr,
+        "build_binocular_measurement_timepoints",
+        lambda adapted: pd.DataFrame({"session_id": ["s1"], "unix_ms": [1000.0]}),
+    )
+    monkeypatch.setattr(pbr, "load_session_rgb_blink_frames", rgb_loader)
+    monkeypatch.setattr(
+        pbr,
+        "audit_rgb_nir_sync_with_frames",
+        lambda tp, events, frames: pd.DataFrame({"session_id": ["s1"], "sync_status": ["no_blink_events"]}),
+    )
+    monkeypatch.setattr(
+        pbr,
+        "audit_signal_availability",
+        lambda eye: pd.DataFrame({"session_id": ["s1"]}),
+    )
+    monkeypatch.setattr(
+        pbr,
+        "audit_binocular_source_modes",
+        lambda tp: pd.DataFrame({"session_id": ["s1"]}),
+    )
+    monkeypatch.setattr(
+        pbr,
+        "audit_rseg_quality_associations",
+        lambda eye: pd.DataFrame({"session_id": ["s1"]}),
+    )
+    monkeypatch.setattr(
+        pbr,
+        "audit_signals",
+        lambda tp, include_soft: ("pupil_geom_mean_diameter",),
+    )
+
+    def fake_append_probe_track(**kwargs):
+        for track in kwargs["tracks"]:
+            kwargs["out_rows"].append({"session_id": "s1", "cleaning_track": track})
+
+    monkeypatch.setattr(pbr, "append_probe_track", fake_append_probe_track)
+
+    def rgb_assisted_must_not_run(*args, **kwargs):
+        raise AssertionError("RGB-assisted audit must not run when RGB source is unavailable")
+
+    monkeypatch.setattr(pbr, "audit_buffer_loss", rgb_assisted_must_not_run)
+    monkeypatch.setattr(pbr, "build_blink_recovery_bins", rgb_assisted_must_not_run)
+    monkeypatch.setattr(pbr, "add_rgb_blink_mask", rgb_assisted_must_not_run)
+
+    manifest = pbr.run_pupil_blink_measurement_audit(
+        nir_config_path=tmp_path / "nir.yaml",
+        audit_config_path=tmp_path / "audit.yaml",
+        rgb_blink_events_path=events_path,
+        probe_table_path=probes_path,
+        output_root=out,
+        rgb_blink_frames_root=tmp_path / "rgb",
+    )
+    candidates = pd.read_csv(out / "probe_measurement_candidates.csv")
+    warnings = pd.read_csv(out / "measurement_audit_warnings.csv")
+    failures = pd.read_csv(out / "measurement_audit_failures.csv")
+    return manifest, candidates, warnings, failures
+
+
+def test_runner_missing_rgb_keeps_nir_only_tracks(monkeypatch, tmp_path):
+    manifest, candidates, warnings, failures = _run_runner_with_rgb_loader(
+        monkeypatch,
+        tmp_path,
+        lambda root, session_id: None,
+    )
+    assert manifest["source_session_n_requested"] == 1
+    assert manifest["source_session_n_processed"] == 1
+    assert manifest["source_session_n_failed"] == 0
+    assert manifest["source_session_n_warning"] == 0
+    assert manifest["rgb_blink_source_unavailable_sessions"] == ["s1"]
+    assert manifest["rgb_missing_is_zero_blinks"] is False
+    assert set(candidates["cleaning_track"]) == {"original_nir", "nir_qc_only"}
+    assert warnings.empty
+    assert failures.empty
+
+
+def test_runner_corrupt_rgb_is_nonfatal_and_keeps_nir_only_tracks(monkeypatch, tmp_path):
+    def corrupt_loader(root, session_id):
+        raise OSError("truncated parquet")
+
+    manifest, candidates, warnings, failures = _run_runner_with_rgb_loader(
+        monkeypatch,
+        tmp_path,
+        corrupt_loader,
+    )
+    assert manifest["source_session_n_requested"] == 1
+    assert manifest["source_session_n_processed"] == 1
+    assert manifest["source_session_n_failed"] == 0
+    assert manifest["source_session_n_warning"] == 1
+    assert manifest["source_warning_sessions"] == ["s1"]
+    assert manifest["rgb_blink_source_unavailable_sessions"] == ["s1"]
+    assert set(candidates["cleaning_track"]) == {"original_nir", "nir_qc_only"}
+    assert len(warnings) == 1
+    assert warnings.iloc[0]["session_id"] == "s1"
+    assert warnings.iloc[0]["stage"] == "rgb_blink_frame_source"
+    assert warnings.iloc[0]["warning_type"] == "OSError"
+    assert "truncated parquet" in warnings.iloc[0]["warning"]
+    assert failures.empty
