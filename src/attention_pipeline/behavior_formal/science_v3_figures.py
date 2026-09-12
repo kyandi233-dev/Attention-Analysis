@@ -1,7 +1,7 @@
-"""Backward-compatible concise Behavior figure entrypoint.
+"""Backward-compatible Behavior figure entrypoint routed to the science layer.
 
-The old metric-by-scale Cartesian figure pack remains available in historical
-modules for audit/reproduction, but the formal runner no longer calls it.
+Historical metric-by-scale figure generators remain importable for reproduction,
+but current formal runs and redraws share one organized scientific-output path.
 """
 from __future__ import annotations
 
@@ -9,12 +9,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from .science_output import (
-    _coverage_figure,
-    _feature_ecdf,
-    _rt_level_figures,
-    build_behavior_feature_handoff,
-)
+from .science_output import build_behavior_science_output
 from .science_v3_figures_formal import BEHAVIOR_FIGURE_CONTRACT, formal_figure_contract_is_english
 
 
@@ -28,6 +23,7 @@ def publication_figure_contract() -> dict[str, object]:
         "question_driven_allowlist_required": True,
         "cartesian_metric_by_scale_pack_allowed": False,
         "metric_scale_coverage_audit_required": False,
+        "current_output_layer": "FormalScience/Behavior",
     }
 
 
@@ -38,44 +34,29 @@ def generate_behavior_figures(
     *,
     error_summary: pd.DataFrame | None = None,
 ) -> list[str]:
-    """Generate only the compact qualification/QC figures available at this stage.
+    """Build the current Behavior science package after producer tables exist.
 
-    Full main scientific figures (Q1/Q2 coefficients and participant-clustered
-    B1/B2 estimates) are assembled by ``build_behavior_science_output.py`` after
-    producer tables exist. ``block`` and ``error_summary`` remain accepted for
-    API compatibility but do not trigger automatic plot proliferation.
+    ``block``, ``primary_probe`` and ``error_summary`` remain accepted only for
+    API compatibility. The authoritative source is the already-written producer
+    directory so main figures, qualification figures, QC and handoff metadata
+    are built from exactly the same saved tables.
     """
-    del block, error_summary
-    root = Path(output_dir).parent
-    for rel in ("figures/qualification", "figures/qc"):
-        (root / rel).mkdir(parents=True, exist_ok=True)
-
-    handoff = build_behavior_feature_handoff(primary_probe)
-    rows = _rt_level_figures(primary_probe, root)
-    for item in (
-        _feature_ecdf(
-            primary_probe, root, "go_correct_rt_cv", "behavior_rt_cv_ecdf",
-            "Correct-Go RT CV", "ratio", "探针前30秒反应时变异系数的经验累积分布。",
-        ),
-        _feature_ecdf(
-            primary_probe, root, "go_correct_rt_theilsen_slope_ms_per_s", "behavior_rt_slope_ecdf",
-            "Theil-Sen RT slope (ms/s)", "ms/s", "探针前30秒Theil–Sen反应时斜率的经验累积分布。",
-        ),
-        _coverage_figure(handoff, root),
-    ):
-        if item is not None:
-            rows.append(item)
-
-    manifest = pd.DataFrame(rows)
-    manifest.to_csv(root / "behavior_figure_manifest.csv", index=False, encoding="utf-8-sig")
-    handoff[["predictor_column", "display_name", "report_role", "coverage_summary"]].to_csv(
-        root / "behavior_figure_coverage_audit.csv", index=False, encoding="utf-8-sig"
+    del block, primary_probe, error_summary
+    producer_root = Path(output_dir).parent.resolve()
+    authoritative = producer_root.name == "formal_v3"
+    science_root = (
+        producer_root.parent.parent / "FormalScience"
+        if authoritative
+        else producer_root / "science_output"
     )
-    files: list[str] = []
-    if not manifest.empty:
-        for column in ("png_path", "svg_path"):
-            files.extend(str(root / path) for path in manifest[column].dropna().astype(str))
-    return files
+    result = build_behavior_science_output(
+        producer_root,
+        science_root,
+        authoritative=authoritative,
+        replace=True,
+    )
+    root = Path(result["science_output_root"])
+    return [str(root / rel) for rel in result["figure_files"]]
 
 
 __all__ = [
