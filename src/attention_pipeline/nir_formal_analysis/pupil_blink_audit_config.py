@@ -77,7 +77,9 @@ def cleaning_tracks(config: Mapping[str, Any]) -> tuple[str, ...]:
 
 
 def probe_onset_ms(row: pd.Series) -> float:
-    for name in ("probe_onset_ms", "window_end_ms", "absolute_onset_time"):
+    # ``probe_time_ms`` is the authoritative current Behavior formal-v3 field.
+    # The remaining names are retained for compatible historical/audit tables.
+    for name in ("probe_time_ms", "probe_onset_ms", "window_end_ms", "absolute_onset_time"):
         if name in row.index:
             value = pd.to_numeric(pd.Series([row[name]]), errors="coerce").iloc[0]
             if np.isfinite(value):
@@ -91,7 +93,14 @@ def probe_block(row: pd.Series) -> int:
             value = pd.to_numeric(pd.Series([row[name]]), errors="coerce").iloc[0]
             if np.isfinite(value):
                 return int(value)
-    raise ValueError("probe row missing block_num/block")
+    if "block_id" in row.index:
+        text = str(row["block_id"]).strip()
+        if text.upper().startswith("B"):
+            text = text[1:]
+        value = pd.to_numeric(pd.Series([text]), errors="coerce").iloc[0]
+        if np.isfinite(value):
+            return int(value)
+    raise ValueError("probe row missing block_num/block/block_id")
 
 
 def selected_records(records: list[dict[str, Any]], subjects: Iterable[str] | None) -> list[dict[str, Any]]:
