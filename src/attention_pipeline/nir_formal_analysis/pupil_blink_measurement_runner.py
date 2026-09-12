@@ -33,6 +33,7 @@ from attention_pipeline.nir_formal_analysis.pupil_blink_measurement import (
     derive_eye_measurements,
 )
 from attention_pipeline.nir_formal_analysis.pupil_blink_binocular import (
+    audit_binocular_source_modes,
     build_binocular_measurement_timepoints,
 )
 from attention_pipeline.nir_formal_analysis.pupil_blink_sync import (
@@ -77,6 +78,7 @@ def _tables(
     *,
     sync_parts: list[pd.DataFrame],
     availability_parts: list[pd.DataFrame],
+    source_mode_parts: list[pd.DataFrame],
     rseg_parts: list[pd.DataFrame],
     buffer_loss_parts: list[pd.DataFrame],
     recovery_parts: list[pd.DataFrame],
@@ -88,6 +90,7 @@ def _tables(
     return {
         "rgb_nir_sync_audit.csv": concat(sync_parts),
         "signal_availability_audit.csv": concat(availability_parts),
+        "binocular_source_mode_audit.csv": concat(source_mode_parts),
         "rseg_measurement_sensitivity_audit.csv": concat(rseg_parts),
         "blink_buffer_loss_audit.csv": concat(buffer_loss_parts),
         "blink_recovery_bins.csv": concat(recovery_parts),
@@ -137,6 +140,7 @@ def run_pupil_blink_measurement_audit(
 
     sync_parts: list[pd.DataFrame] = []
     availability_parts: list[pd.DataFrame] = []
+    source_mode_parts: list[pd.DataFrame] = []
     rseg_parts: list[pd.DataFrame] = []
     buffer_loss_parts: list[pd.DataFrame] = []
     recovery_parts: list[pd.DataFrame] = []
@@ -182,6 +186,7 @@ def run_pupil_blink_measurement_audit(
             sync_parts.append(sync)
 
             availability_parts.append(audit_signal_availability(eye))
+            source_mode_parts.append(audit_binocular_source_modes(timepoints))
             rseg_parts.append(audit_rseg_quality_associations(eye))
             if rgb_blink_available:
                 buffer_loss_parts.append(audit_buffer_loss(timepoints, events, buffers=buffers))
@@ -253,6 +258,7 @@ def run_pupil_blink_measurement_audit(
     tables = _tables(
         sync_parts=sync_parts,
         availability_parts=availability_parts,
+        source_mode_parts=source_mode_parts,
         rseg_parts=rseg_parts,
         buffer_loss_parts=buffer_loss_parts,
         recovery_parts=recovery_parts,
