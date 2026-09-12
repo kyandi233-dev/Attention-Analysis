@@ -25,6 +25,13 @@ TASK_A_Q1_OUTCOME = "q1_equals_1_vs_2_3_4"
 TASK_A_Q1_PROBABILITY_COLUMN = "p_q1_equals_1"
 Q1_AUTHORITY_COLUMN = "q1_nominal_4class"
 MEMBERSHIP_TYPE_COLUMN = "membership_type"
+REQUIRED_TASK_A_AUDIT_COLUMNS = (
+    "run_id",
+    "feature_set_id",
+    MEMBERSHIP_TYPE_COLUMN,
+    "model_failed",
+    "failure_reason",
+)
 _ALLOWED_MEMBERSHIP_COLUMNS = frozenset({"included_complete", "included_missing_aware"})
 
 
@@ -101,6 +108,12 @@ def _probe_index_from_task_a(frame: pd.DataFrame) -> pd.Series:
     return pd.Series(pd.NA, index=frame.index, dtype="Int64")
 
 
+def _require_nonblank(frame: pd.DataFrame, column: str, *, mask: pd.Series | None = None) -> None:
+    values = frame[column] if mask is None else frame.loc[mask, column]
+    if values.isna().any() or values.astype("string").str.strip().eq("").any():
+        raise ValueError(f"prediction archive requires nonblank {column}")
+
+
 def normalize_task_a_predictions(
     predictions: pd.DataFrame,
     *,
@@ -110,8 +123,8 @@ def normalize_task_a_predictions(
     """Normalize current Task-A runner output into the Task-B archive schema.
 
     This is a schema adapter only. It does not recompute labels/probabilities, alter folds,
-    discard failed model rows, or perform any training/model selection. Additional Task-A
-    audit fields such as ``run_id``, ``feature_set_id`` and ``membership_type`` are retained.
+    discard failed model rows, or perform any training/model selection. Formal Task-A
+    audit fields are required rather than silently synthesized by the adapter.
     """
     required = {
         "session_id",
@@ -123,6 +136,7 @@ def normalize_task_a_predictions(
         "q1_binary",
         "predicted_q1_binary",
         probability_column,
+        *REQUIRED_TASK_A_AUDIT_COLUMNS,
     }
     missing = sorted(required - set(predictions.columns))
     if missing:
@@ -139,10 +153,6 @@ def normalize_task_a_predictions(
     out["y_true"] = pd.to_numeric(out["q1_binary"], errors="coerce").astype("Int64")
     out["y_pred"] = pd.to_numeric(out["predicted_q1_binary"], errors="coerce").astype("Int64")
     out["probability_positive"] = pd.to_numeric(out[probability_column], errors="coerce")
-    if "model_failed" not in out.columns:
-        out["model_failed"] = False
-    if "failure_reason" not in out.columns:
-        out["failure_reason"] = ""
     return out
 
 
@@ -207,7 +217,10 @@ def validate_prediction_archive(
             f"unsupported membership_column={membership_column!r}; expected one of {sorted(_ALLOWED_MEMBERSHIP_COLUMNS)}"
         )
 
-    required_prediction_columns = set(REQUIRED_IDENTITY_COLUMNS + ["y_pred", "probability_positive"])
+    required_prediction_columns = set(
+        REQUIRED_IDENTITY_COLUMNS
+        + ["y_pred", "probability_positive", *REQUIRED_TASK_A_AUDIT_COLUMNS]
+    )
     missing = sorted(required_prediction_columns - set(predictions.columns))
     if missing:
         raise ValueError(f"predictions missing columns: {missing}")
@@ -223,6 +236,14 @@ def validate_prediction_archive(
     if analysis_sets.duplicated(KEYS + [GROUP, "analysis_set_id"]).any():
         raise ValueError("duplicate analysis-set membership rows")
 
+    _require_nonblank(predictions, "run_id")
+    _require_nonblank(predictions, MEMBERSHIP_TYPE_COLUMN)
+    if not predictions["model_failed"].isin([True, False, 0, 1]).all():
+        raise ValueError("prediction model_failed must be explicit boolean values")
+    failed = predictions["model_failed"].astype(bool)
+    successful = ~failed
+    _require_nonblank(predictions, "feature_set_id", mask=successful)
+
     requested_sets = _resolve_requested_sets(analysis_sets, requested_analysis_set_ids)
     scoped_sets = analysis_sets[analysis_sets["analysis_set_id"].astype(str).isin(requested_sets)].copy()
     observed_sets = set(predictions["analysis_set_id"].astype(str).unique().tolist())
@@ -230,13 +251,12 @@ def validate_prediction_archive(
     if unexpected_sets:
         raise ValueError(f"predictions contain analysis_set_id outside requested scope: {unexpected_sets}")
 
-    if MEMBERSHIP_TYPE_COLUMN in predictions.columns:
-        membership_values = predictions[MEMBERSHIP_TYPE_COLUMN].dropna().astype(str).str.strip().unique().tolist()
-        if len(membership_values) != 1 or membership_values[0] != membership_column:
-            raise ValueError(
-                f"prediction membership_type must equal requested membership_column={membership_column}; "
-                f"got {membership_values}"
-            )
+    membership_values = predictions[MEMBERSHIP_TYPE_COLUMN].astype(str).str.strip().unique().tolist()
+    if len(membership_values) != 1 or membership_values[0] != membership_column:
+        raise ValueError(
+            f"prediction membership_type must equal requested membership_column={membership_column}; "
+            f"got {membership_values}"
+        )
 
     if not predictions["outer_fold_group"].astype(str).eq(predictions[GROUP].astype(str)).all():
         raise ValueError("LOSO outer_fold_group must equal the held-out participant_group_id")
@@ -245,28 +265,24 @@ def validate_prediction_archive(
     if not y_true.isin([0, 1]).all():
         raise ValueError("binary prediction archive requires y_true in {0,1}")
 
-    failed = (
-        predictions["model_failed"].fillna(False).astype(bool)
-        if "model_failed" in predictions.columns
-        else pd.Series(False, index=predictions.index)
-    )
-    successful = ~failed
     y_pred = pd.to_numeric(predictions.loc[successful, "y_pred"], errors="coerce")
     if not y_pred.isin([0, 1]).all():
         raise ValueError("successful binary predictions require y_pred in {0,1}")
     proba = pd.to_numeric(predictions.loc[successful, "probability_positive"], errors="coerce")
     if not np.isfinite(proba).all() or not proba.between(0, 1).all():
         raise ValueError("successful probability_positive must be finite and in [0,1]")
+    success_reason = predictions.loc[successful, "failure_reason"].astype("string").fillna("").str.strip()
+    if success_reason.ne("").any():
+        raise ValueError("successful model rows must not contain failure_reason")
 
     if failed.any():
         failed_y = pd.to_numeric(predictions.loc[failed, "y_pred"], errors="coerce")
         failed_p = pd.to_numeric(predictions.loc[failed, "probability_positive"], errors="coerce")
         if failed_y.notna().any() or failed_p.notna().any():
             raise ValueError("failed model rows must not contain fabricated predictions/probabilities")
-        if "failure_reason" in predictions.columns:
-            reason = predictions.loc[failed, "failure_reason"].astype("string").fillna("").str.strip()
-            if reason.eq("").any():
-                raise ValueError("failed model rows require failure_reason")
+        reason = predictions.loc[failed, "failure_reason"].astype("string").fillna("").str.strip()
+        if reason.eq("").any():
+            raise ValueError("failed model rows require failure_reason")
 
     declared_models = _declared_models(scoped_sets)
     declared_outcomes = _declared_outcomes(scoped_sets)
@@ -357,12 +373,7 @@ def validate_prediction_archive(
                         "model_id": model_id,
                         "expected_probe_n": int(len(expected_set)),
                         "predicted_probe_n": int(len(actual)),
-                        "failed_probe_n": int(
-                            rows.get("model_failed", pd.Series(False, index=rows.index))
-                            .fillna(False)
-                            .astype(bool)
-                            .sum()
-                        ),
+                        "failed_probe_n": int(rows["model_failed"].astype(bool).sum()),
                         "missing_probe_n": missing_n,
                         "extra_probe_n": extra_n,
                     }
@@ -372,6 +383,7 @@ def validate_prediction_archive(
         "status": "PASS_PREDICTION_ARCHIVE",
         "membership_column": membership_column,
         "requested_analysis_set_ids": requested_sets,
+        "run_ids": sorted(predictions["run_id"].astype(str).str.strip().unique().tolist()),
         "prediction_n": int(len(predictions)),
         "successful_prediction_n": int(successful.sum()),
         "failed_prediction_n": int(failed.sum()),
