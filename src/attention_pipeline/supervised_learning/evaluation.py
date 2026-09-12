@@ -1,8 +1,8 @@
 """Archive-driven outer evaluation for the FocusWave Q1 supervised task.
 
-Evaluation is deliberately separated from model fitting.  It consumes legal OOF
+Evaluation is deliberately separated from model fitting. It consumes legal OOF
 probe predictions, computes probe-level probability loss, aggregates within each
-participant, then gives participants equal weight.  Participant-cluster
+participant, then gives participants equal weight. Participant-cluster
 bootstrap resamples the already-frozen participant summaries; models are not
 retrained inside bootstrap replicates.
 """
@@ -20,6 +20,8 @@ from .task import Q1_BINARY_SPEC, SupervisedLearningContractError
 DEFAULT_BOOTSTRAP_REPLICATES = 1000
 DEFAULT_BOOTSTRAP_SEED = 20260830
 DEFAULT_CONFIDENCE_LEVEL = 0.95
+MEMBERSHIP_COLUMN = "membership_type"
+ALLOWED_MEMBERSHIP_TYPES = frozenset({"included_complete", "included_missing_aware"})
 PAIR_KEY_COLUMNS = (
     "participant_group_id",
     "session_id",
@@ -48,6 +50,7 @@ class PairedIncrementResult:
     baseline_model_id: str
     added_model_id: str
     analysis_set_id: str
+    membership_type: str
     participant_increments: pd.DataFrame
     overall_increment: float
     bootstrap: dict[str, object]
@@ -74,10 +77,25 @@ def _single_nonblank_value(frame: pd.DataFrame, column: str, *, context: str) ->
     return str(unique[0])
 
 
-def _validate_complete_single_model(frame: pd.DataFrame, *, context: str) -> tuple[pd.DataFrame, str, str]:
+def _strict_bool_series(series: pd.Series, *, context: str, column: str) -> pd.Series:
+    """Accept real booleans or unambiguous serialized boolean values only."""
+    if pd.api.types.is_bool_dtype(series.dtype):
+        return series.astype(bool)
+    normalized = series.astype(str).str.strip().str.lower()
+    mapped = normalized.map({"true": True, "false": False, "1": True, "0": False})
+    if mapped.isna().any():
+        bad = sorted(normalized[mapped.isna()].drop_duplicates().tolist())
+        raise EvaluationContractError(f"{context} {column} contains invalid boolean values: {bad}")
+    return mapped.astype(bool)
+
+
+def _validate_complete_single_model(
+    frame: pd.DataFrame, *, context: str
+) -> tuple[pd.DataFrame, str, str, str]:
     required = {
         *PAIR_KEY_COLUMNS,
         "analysis_set_id",
+        MEMBERSHIP_COLUMN,
         "model_id",
         "outer_fold_group",
         "q1_binary",
@@ -89,6 +107,12 @@ def _validate_complete_single_model(frame: pd.DataFrame, *, context: str) -> tup
         raise EvaluationContractError(f"{context} is empty")
     model_id = _single_nonblank_value(frame, "model_id", context=context)
     analysis_set_id = _single_nonblank_value(frame, "analysis_set_id", context=context)
+    membership_type = _single_nonblank_value(frame, MEMBERSHIP_COLUMN, context=context)
+    if membership_type not in ALLOWED_MEMBERSHIP_TYPES:
+        raise EvaluationContractError(
+            f"{context} has unsupported {MEMBERSHIP_COLUMN}={membership_type!r}; "
+            f"expected one of {sorted(ALLOWED_MEMBERSHIP_TYPES)}"
+        )
     if frame.duplicated(list(PAIR_KEY_COLUMNS)).any():
         raise EvaluationContractError(f"{context} contains duplicate probe keys: {list(PAIR_KEY_COLUMNS)}")
     if frame["participant_group_id"].isna().any():
@@ -99,7 +123,7 @@ def _validate_complete_single_model(frame: pd.DataFrame, *, context: str) -> tup
         raise EvaluationContractError(
             f"{context} outer_fold_group must equal held-out participant_group_id on every OOF row"
         )
-    failed = frame["model_failed"].astype(bool)
+    failed = _strict_bool_series(frame["model_failed"], context=context, column="model_failed")
     if failed.any():
         failed_groups = sorted(frame.loc[failed, "participant_group_id"].astype(str).unique().tolist())
         raise EvaluationContractError(
@@ -116,10 +140,13 @@ def _validate_complete_single_model(frame: pd.DataFrame, *, context: str) -> tup
     out = frame.copy()
     out["q1_binary"] = y.astype(int)
     out[Q1_BINARY_SPEC.positive_probability_name] = p.astype(float)
-    return out, model_id, analysis_set_id
+    out["model_failed"] = failed
+    return out, model_id, analysis_set_id, membership_type
 
 
-def binary_probe_log_loss(y_true: Sequence[int] | np.ndarray, p_positive: Sequence[float] | np.ndarray) -> np.ndarray:
+def binary_probe_log_loss(
+    y_true: Sequence[int] | np.ndarray, p_positive: Sequence[float] | np.ndarray
+) -> np.ndarray:
     """Return one binary negative-log-likelihood value per probe."""
     y = np.asarray(y_true, dtype=int)
     p = np.asarray(p_positive, dtype=float)
@@ -136,7 +163,9 @@ def binary_probe_log_loss(y_true: Sequence[int] | np.ndarray, p_positive: Sequen
 
 def participant_log_loss(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, object]]:
     """Compute probe-equal within-participant and participant-equal overall log loss."""
-    data, model_id, analysis_set_id = _validate_complete_single_model(frame, context="OOF model archive")
+    data, model_id, analysis_set_id, membership_type = _validate_complete_single_model(
+        frame, context="OOF model archive"
+    )
     data = data.copy()
     data["probe_log_loss"] = binary_probe_log_loss(
         data["q1_binary"].to_numpy(dtype=int),
@@ -149,6 +178,7 @@ def participant_log_loss(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, o
             mean_log_loss=("probe_log_loss", "mean"),
         )
     )
+    participant.insert(0, MEMBERSHIP_COLUMN, membership_type)
     participant.insert(0, "analysis_set_id", analysis_set_id)
     participant.insert(0, "model_id", model_id)
     overall = float(participant["mean_log_loss"].mean())
@@ -156,6 +186,7 @@ def participant_log_loss(frame: pd.DataFrame) -> tuple[pd.DataFrame, dict[str, o
     return participant, {
         "model_id": model_id,
         "analysis_set_id": analysis_set_id,
+        MEMBERSHIP_COLUMN: membership_type,
         "metric": "log_loss",
         "aggregation": "participant_equal_within_participant_probe_equal",
         "n_participants": int(len(participant)),
@@ -238,6 +269,7 @@ def evaluate_prediction_archive(
                 {
                     "model_id": model_name,
                     "analysis_set_id": overall["analysis_set_id"],
+                    MEMBERSHIP_COLUMN: overall[MEMBERSHIP_COLUMN],
                     "metric": "participant_equal_log_loss",
                     **bootstrap,
                 }
@@ -248,10 +280,16 @@ def evaluate_prediction_archive(
                 if "analysis_set_id" in model_frame.columns
                 else []
             )
+            membership_values = (
+                model_frame[MEMBERSHIP_COLUMN].dropna().astype(str).str.strip().drop_duplicates().tolist()
+                if MEMBERSHIP_COLUMN in model_frame.columns
+                else []
+            )
             score_rows.append(
                 {
                     "model_id": model_name,
                     "analysis_set_id": analysis_values[0] if len(analysis_values) == 1 else None,
+                    MEMBERSHIP_COLUMN: membership_values[0] if len(membership_values) == 1 else None,
                     "metric": "log_loss",
                     "aggregation": "participant_equal_within_participant_probe_equal",
                     "n_participants": int(model_frame["participant_group_id"].nunique())
@@ -268,7 +306,16 @@ def evaluate_prediction_archive(
     participant_scores = (
         pd.concat(participant_frames, ignore_index=True)
         if participant_frames
-        else pd.DataFrame(columns=["model_id", "analysis_set_id", "participant_group_id", "n_probes", "mean_log_loss"])
+        else pd.DataFrame(
+            columns=[
+                "model_id",
+                "analysis_set_id",
+                MEMBERSHIP_COLUMN,
+                "participant_group_id",
+                "n_probes",
+                "mean_log_loss",
+            ]
+        )
     )
     return ArchiveEvaluationResult(
         participant_scores=participant_scores,
@@ -287,19 +334,24 @@ def paired_log_loss_increment(
 ) -> PairedIncrementResult:
     """Compare matched OOF archives as baseline loss minus added-model loss.
 
-    Positive increment means the added model has lower loss.  The two inputs must
-    contain exactly the same participant/probe members, labels, analysis set and
-    outer-fold assignment; mismatches are a hard not-comparable error.
+    Positive increment means the added model has lower loss. The two inputs must
+    contain exactly the same analysis-set membership, participant/probe members,
+    labels and outer-fold assignment; mismatches are a hard not-comparable error.
     """
-    base, baseline_model_id, base_set = _validate_complete_single_model(
+    base, baseline_model_id, base_set, base_membership = _validate_complete_single_model(
         baseline, context="baseline OOF archive"
     )
-    aug, added_model_id, added_set = _validate_complete_single_model(
+    aug, added_model_id, added_set, added_membership = _validate_complete_single_model(
         added, context="added-model OOF archive"
     )
     if base_set != added_set:
         raise EvaluationContractError(
             f"paired comparison requires the same analysis_set_id; got {base_set!r} vs {added_set!r}"
+        )
+    if base_membership != added_membership:
+        raise EvaluationContractError(
+            f"paired comparison requires the same {MEMBERSHIP_COLUMN}; "
+            f"got {base_membership!r} vs {added_membership!r}"
         )
 
     compare_columns = [*PAIR_KEY_COLUMNS, "outer_fold_group", "q1_binary"]
@@ -336,6 +388,7 @@ def paired_log_loss_increment(
         paired.groupby("participant_group_id", sort=True, as_index=False)
         .agg(n_probes=("probe_increment", "size"), mean_log_loss_increment=("probe_increment", "mean"))
     )
+    participant.insert(0, MEMBERSHIP_COLUMN, base_membership)
     participant.insert(0, "analysis_set_id", base_set)
     participant.insert(0, "added_model_id", added_model_id)
     participant.insert(0, "baseline_model_id", baseline_model_id)
@@ -352,6 +405,7 @@ def paired_log_loss_increment(
         baseline_model_id=baseline_model_id,
         added_model_id=added_model_id,
         analysis_set_id=base_set,
+        membership_type=base_membership,
         participant_increments=participant,
         overall_increment=float(np.mean(values)),
         bootstrap=bootstrap,
