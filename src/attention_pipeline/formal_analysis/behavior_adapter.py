@@ -15,6 +15,47 @@ from .identity_contract import (
 from .identity_questionnaire import attach_identity_metadata, load_repeat_registry
 
 
+CURRENT_BEHAVIOR_PIPELINE_NAME = "attention-analysis-behavior-formal-v3"
+RT_CV_MATHEMATICAL_MIN_N = 2
+RT_CV_MATHEMATICAL_BASIS = "sample_sd_mathematical_requirement_not_empirical_gate"
+
+
+def assert_current_behavior_rt_cv_contract(config: Config) -> None:
+    """Fail closed if the declared current formal Behavior config drifts on RT-CV.
+
+    The value 2 is not a tunable empirical threshold: it only records the
+    mathematical requirement for a sample standard deviation. Generic adapter
+    fixtures and historical/unrelated pipeline configs that do not declare the
+    current formal-v3 pipeline remain outside this current-science guard.
+    """
+    pipeline = config.data.get("pipeline")
+    if not isinstance(pipeline, dict):
+        return
+    if str(pipeline.get("name", "")).strip() != CURRENT_BEHAVIOR_PIPELINE_NAME:
+        return
+    behavior = config.section("behavior")
+    if "rt_cv_min_n" not in behavior:
+        raise ValueError(
+            "current formal Behavior config must explicitly set behavior.rt_cv_min_n=2; "
+            "historical n>=20 fallback is forbidden"
+        )
+    try:
+        minimum = int(behavior["rt_cv_min_n"])
+    except (TypeError, ValueError) as exc:
+        raise ValueError("behavior.rt_cv_min_n must be the integer 2 for the current formal pipeline") from exc
+    if minimum != RT_CV_MATHEMATICAL_MIN_N:
+        raise ValueError(
+            "current formal Behavior RT-CV contract requires rt_cv_min_n=2 as a mathematical sample-SD condition; "
+            f"got {minimum}"
+        )
+    basis = str(behavior.get("rt_cv_min_n_basis", "")).strip()
+    if basis != RT_CV_MATHEMATICAL_BASIS:
+        raise ValueError(
+            "current formal Behavior RT-CV contract requires "
+            f"rt_cv_min_n_basis={RT_CV_MATHEMATICAL_BASIS!r}; got {basis!r}"
+        )
+
+
 def _legacy_identity_policy(config: Config) -> tuple[str, tuple[str, ...]]:
     cohort_cfg = config.section("cohort")
     status_column = str(cohort_cfg.get("legacy_identity_status_column", "identity_status"))
@@ -37,6 +78,8 @@ def prepare_behavior_runtime_config(config: Config) -> tuple[Config, pd.DataFram
     questionnaire-verified session is not rejected merely because the legacy
     cohort grouping column is empty.
     """
+    assert_current_behavior_rt_cv_contract(config)
+
     data = copy.deepcopy(config.data)
     data_cfg = data.setdefault("data", {})
     root_key = str(data_cfg.get("roots_path_key", "formal_raw_roots"))

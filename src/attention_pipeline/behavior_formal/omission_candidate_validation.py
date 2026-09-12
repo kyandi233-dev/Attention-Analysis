@@ -6,7 +6,8 @@ import numpy as np
 import pandas as pd
 
 from .behavior_error_taxonomy import (
-    FORMAL_OMISSION_ENDPOINT_METRICS,
+    CURRENT_PRIMARY_OMISSION_ENDPOINT_METRICS,
+    OMISSION_PARTITION_RATE_METRICS,
     OMISSION_QC_RATE_METRICS,
     TAXONOMY_RATE_METRICS,
 )
@@ -19,17 +20,23 @@ def _participant_column(frame: pd.DataFrame) -> str | None:
     return None
 
 
+def _omission_role(metric: str) -> str:
+    if metric in CURRENT_PRIMARY_OMISSION_ENDPOINT_METRICS:
+        return "current_primary_omission_endpoint"
+    if metric in OMISSION_PARTITION_RATE_METRICS:
+        return "descriptive_qc_sensitivity_partition"
+    return "qc_or_timing_diagnostic"
+
+
 def validate_omission_candidates(
     scale_tables: Mapping[str, pd.DataFrame],
     primary_probe: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Audit formal omission endpoints and timing/QC metrics without p-value selection.
+    """Describe omission coverage/distribution/redundancy without full-cohort selection.
 
-    ``raw_go_omission_rate``, ``clean_go_omission_rate`` and
-    ``timing_ambiguous_go_omission_rate`` are prespecified formal endpoints.
-    They share the Go denominator and the latter two partition the raw rate, so
-    redundancy between them is structural and must never be misread as three
-    independent phenomena.  Finer motor-timing subtypes remain QC/descriptive.
+    Raw is the current primary omission endpoint. Clean/timing and finer timing
+    fields remain descriptive/QC/sensitivity information. This full-cohort audit
+    has no authority to include/drop supervised predictors.
     """
     frames = {k: v for k, v in scale_tables.items() if v is not None}
     frames["probe"] = primary_probe
@@ -42,11 +49,7 @@ def validate_omission_candidates(
         participant = _participant_column(frame)
         available = [m for m in TAXONOMY_RATE_METRICS if m in frame.columns]
         for metric in TAXONOMY_RATE_METRICS:
-            endpoint_role = (
-                "prespecified_formal_endpoint"
-                if metric in FORMAL_OMISSION_ENDPOINT_METRICS
-                else "qc_or_timing_diagnostic"
-            )
+            endpoint_role = _omission_role(metric)
             if metric not in frame.columns:
                 validation_rows.append({
                     "scale": scale,
@@ -54,6 +57,7 @@ def validate_omission_candidates(
                     "n_rows": int(len(frame)),
                     "n_valid": 0,
                     "coverage": 0.0,
+                    "below_historical_80pct_coverage_reference": True,
                     "participant_group_n": 0,
                     "session_n": int(frame["session_id"].nunique()) if "session_id" in frame else 0,
                     "floor_fraction": np.nan,
@@ -61,9 +65,12 @@ def validate_omission_candidates(
                     "between_participant_variance": np.nan,
                     "within_participant_variance": np.nan,
                     "within_participant_observation_n": 0,
-                    "candidate_status": "missing_column",
+                    "candidate_status": "not_computable",
+                    "candidate_reasons": "missing_column",
                     "endpoint_role": endpoint_role,
                     "endpoint_status": "not_estimable_missing_column",
+                    "selection_authority": "descriptive_only",
+                    "automatic_drop_allowed": False,
                 })
                 continue
             value = pd.to_numeric(frame[metric], errors="coerce")
@@ -85,27 +92,16 @@ def validate_omission_candidates(
                     within = work.loc[group_sizes.ge(2), "_within"]
             floor = float((finite <= 0.02).mean()) if len(finite) else np.nan
             ceiling = float((finite >= 0.98).mean()) if len(finite) else np.nan
-            reasons: list[str] = []
+            review_flags: list[str] = []
             coverage = float(len(finite) / len(frame)) if len(frame) else 0.0
             if coverage < 0.80:
-                reasons.append("low_coverage")
+                review_flags.append("below_historical_80pct_coverage_reference")
             if len(finite) and floor >= 0.80:
-                reasons.append("strong_floor_effect")
+                review_flags.append("strong_floor_effect")
             if len(finite) and ceiling >= 0.80:
-                reasons.append("strong_ceiling_effect")
+                review_flags.append("strong_ceiling_effect")
             if finite.nunique() < 3:
-                reasons.append("low_unique_values")
-
-            if endpoint_role == "prespecified_formal_endpoint":
-                status = (
-                    "formal_endpoint_needs_real_data_stability_review"
-                    if reasons
-                    else "formal_endpoint_ready_for_real_data_review"
-                )
-                endpoint_status = "prespecified_not_pvalue_selected"
-            else:
-                status = "qc_candidate_needs_review" if reasons else "qc_candidate_eligible_for_scientific_review"
-                endpoint_status = "not_a_primary_endpoint"
+                review_flags.append("low_unique_values")
 
             validation_rows.append({
                 "scale": scale,
@@ -113,6 +109,7 @@ def validate_omission_candidates(
                 "n_rows": int(len(frame)),
                 "n_valid": int(len(finite)),
                 "coverage": coverage,
+                "below_historical_80pct_coverage_reference": bool(coverage < 0.80),
                 "participant_group_n": participant_group_n,
                 "session_n": int(frame.loc[value.notna(), "session_id"].nunique()) if "session_id" in frame else 0,
                 "floor_fraction": floor,
@@ -120,11 +117,20 @@ def validate_omission_candidates(
                 "between_participant_variance": between,
                 "within_participant_variance": float(within.var(ddof=1)) if len(within) >= 2 else np.nan,
                 "within_participant_observation_n": int(len(within)),
-                "candidate_status": status,
-                "candidate_reasons": ";".join(reasons),
+                "candidate_status": "not_computable" if len(finite) == 0 else "descriptive_audit_only",
+                "candidate_reasons": ";".join(review_flags),
                 "endpoint_role": endpoint_role,
-                "endpoint_status": endpoint_status,
-                "selection_contract": "prespecified role + coverage + floor/ceiling + within/between + redundancy; never outcome p-value screening",
+                "endpoint_status": (
+                    "prespecified_not_pvalue_selected"
+                    if endpoint_role == "current_primary_omission_endpoint"
+                    else "not_a_primary_endpoint"
+                ),
+                "selection_authority": "descriptive_only",
+                "automatic_drop_allowed": False,
+                "selection_contract": (
+                    "full-cohort coverage + floor/ceiling + within/between + redundancy are descriptive only; "
+                    "never outcome p-value, coverage-threshold or redundancy auto-selection"
+                ),
                 "interpretation_guard": (
                     "clean means no detected prestimulus/carry-over ambiguity, not proven attentional lapse"
                     if metric == "clean_go_omission_rate"
@@ -142,8 +148,8 @@ def validate_omission_candidates(
                 for b in available[i + 1:]:
                     r = corr.loc[a, b] if a in corr.index and b in corr.columns else np.nan
                     structural_pair = (
-                        a in FORMAL_OMISSION_ENDPOINT_METRICS
-                        and b in FORMAL_OMISSION_ENDPOINT_METRICS
+                        a in OMISSION_PARTITION_RATE_METRICS
+                        and b in OMISSION_PARTITION_RATE_METRICS
                     )
                     redundancy_rows.append({
                         "scale": scale,
@@ -153,10 +159,12 @@ def validate_omission_candidates(
                         "abs_r": abs(float(r)) if np.isfinite(r) else np.nan,
                         "high_redundancy_flag": bool(np.isfinite(r) and abs(float(r)) >= 0.90),
                         "threshold": 0.90,
+                        "threshold_role": "historical_descriptive_reference_only",
                         "structural_same_denominator_pair": structural_pair,
+                        "selection_authority": "descriptive_only",
                         "automatic_drop_allowed": False,
                         "redundancy_interpretation": (
-                            "formal omission endpoints are algebraically/structurally related; correlation is descriptive only"
+                            "omission partition metrics share the same denominator and are structurally related; correlation is descriptive only"
                             if structural_pair
                             else "descriptive redundancy audit"
                         ),
