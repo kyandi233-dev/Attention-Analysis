@@ -80,8 +80,14 @@ def _build_vertical_contract():
         COMPARISON_SPEC,
     )
     schemes = {
-        "B": [FeatureScheme("behavior-reference-v1", ("b",), modality_blocks=("behavior",))],
-        "B+x": [FeatureScheme("behavior-plus-x-v1", ("b", "x"), modality_blocks=("behavior", "sensor"))],
+        "B": [FeatureScheme("behavior-reference-v1", ("b",), modalities=("behavior",))],
+        "B+x": [
+            FeatureScheme(
+                "behavior-plus-x-v1",
+                ("b", "x"),
+                modalities=("behavior", "ocular"),
+            )
+        ],
     }
     return audited, analysis_sets, schemes
 
@@ -101,10 +107,6 @@ def _materialize(membership_type: str):
 def _run_and_validate(membership_type: str):
     _, analysis_sets, schemes, frame = _materialize(membership_type)
 
-    # This is the actual Task-A boundary contract that had previously only been
-    # tested against A-side fixtures. The required_features mapping here is
-    # produced by Task B, persisted by materialization, and checked against the
-    # exact predictor union of the models that will run.
     required_columns, predictor_union = _validate_analysis_set_feature_scope(
         frame,
         schemes,
@@ -167,8 +169,6 @@ def test_task_a_rejects_task_b_required_features_that_exceed_actual_model_union(
 def test_task_b_serialized_false_states_fail_closed_before_materialization():
     audited, _, _ = _build_vertical_contract()
     status = audited["probe_feature_status"].copy()
-    # Model the post-CSV/string state explicitly rather than relying on pandas
-    # inference, which may keep an all-boolean column as BooleanDtype.
     status["feature_computable"] = status["feature_computable"].astype(object)
     status["eligible_for_missing_strategy"] = status["eligible_for_missing_strategy"].astype(object)
     target = (
