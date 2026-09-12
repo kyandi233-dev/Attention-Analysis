@@ -9,7 +9,12 @@ from typing import Any, Mapping
 import numpy as np
 import pandas as pd
 
-from .evaluation import EvaluationContractError, evaluate_prediction_archive, paired_log_loss_increment
+from .evaluation import (
+    MEMBERSHIP_COLUMN,
+    EvaluationContractError,
+    evaluate_prediction_archive,
+    paired_log_loss_increment,
+)
 from .runner import SupervisedRunResult
 from .task import SupervisedLearningContractError
 
@@ -28,6 +33,7 @@ MANIFEST_FILENAME = "run_manifest.json"
 _FAILURE_COLUMNS = (
     "run_id",
     "analysis_set_id",
+    MEMBERSHIP_COLUMN,
     "model_id",
     "outer_fold_group",
     "n_outer_train_rows",
@@ -67,6 +73,7 @@ def _validate_prediction_contract(result: SupervisedRunResult) -> None:
     required = {
         "run_id",
         "analysis_set_id",
+        MEMBERSHIP_COLUMN,
         "participant_group_id",
         "model_id",
         "outer_fold_group",
@@ -113,7 +120,15 @@ def _validate_prediction_contract(result: SupervisedRunResult) -> None:
             f"fold audit count mismatch: got {len(result.fold_audits)}, expected {expected_audits}"
         )
     audit_frame = pd.DataFrame(result.fold_audits)
-    audit_required = {"run_id", "analysis_set_id", "model_id", "outer_fold_group", "failed", "reason"}
+    audit_required = {
+        "run_id",
+        "analysis_set_id",
+        MEMBERSHIP_COLUMN,
+        "model_id",
+        "outer_fold_group",
+        "failed",
+        "reason",
+    }
     missing_audit = sorted(audit_required - set(audit_frame.columns))
     if missing_audit:
         raise SupervisedLearningContractError(
@@ -186,6 +201,7 @@ def _paired_comparison_outputs(
                     "baseline_model_id",
                     "added_model_id",
                     "analysis_set_id",
+                    MEMBERSHIP_COLUMN,
                     "participant_group_id",
                     "n_probes",
                     "mean_log_loss_increment",
@@ -198,6 +214,7 @@ def _paired_comparison_outputs(
                     "baseline_model_id",
                     "added_model_id",
                     "analysis_set_id",
+                    MEMBERSHIP_COLUMN,
                     "overall_log_loss_increment",
                     "status",
                     "reason",
@@ -240,6 +257,7 @@ def _paired_comparison_outputs(
                     "baseline_model_id": paired.baseline_model_id,
                     "added_model_id": paired.added_model_id,
                     "analysis_set_id": paired.analysis_set_id,
+                    MEMBERSHIP_COLUMN: paired.membership_type,
                     "overall_log_loss_increment": paired.overall_increment,
                     "status": "estimable",
                     "reason": "",
@@ -252,6 +270,7 @@ def _paired_comparison_outputs(
                     "baseline_model_id": paired.baseline_model_id,
                     "added_model_id": paired.added_model_id,
                     "analysis_set_id": paired.analysis_set_id,
+                    MEMBERSHIP_COLUMN: paired.membership_type,
                     **paired.bootstrap,
                 }
             )
@@ -260,6 +279,10 @@ def _paired_comparison_outputs(
                 predictions["model_id"].astype(str).isin([baseline_model_id, added_model_id]),
                 "analysis_set_id",
             ].dropna().astype(str).str.strip().drop_duplicates().tolist()
+            membership_values = predictions.loc[
+                predictions["model_id"].astype(str).isin([baseline_model_id, added_model_id]),
+                MEMBERSHIP_COLUMN,
+            ].dropna().astype(str).str.strip().drop_duplicates().tolist()
             summary_rows.append(
                 {
                     "comparison_type": comparison_type,
@@ -267,6 +290,7 @@ def _paired_comparison_outputs(
                     "baseline_model_id": baseline_model_id,
                     "added_model_id": added_model_id,
                     "analysis_set_id": analysis_values[0] if len(analysis_values) == 1 else None,
+                    MEMBERSHIP_COLUMN: membership_values[0] if len(membership_values) == 1 else None,
                     "overall_log_loss_increment": np.nan,
                     "status": "not_estimable",
                     "reason": str(exc),
@@ -283,6 +307,7 @@ def _paired_comparison_outputs(
                 "baseline_model_id",
                 "added_model_id",
                 "analysis_set_id",
+                MEMBERSHIP_COLUMN,
                 "participant_group_id",
                 "n_probes",
                 "mean_log_loss_increment",
