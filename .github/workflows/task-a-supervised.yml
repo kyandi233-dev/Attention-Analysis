@@ -45,6 +45,7 @@ jobs:
             tests/test_supervised_learning_preprocessing.py \
             tests/test_supervised_learning_feature_schemes.py \
             tests/test_supervised_learning_feature_registry.py \
+            tests/test_supervised_learning_registry_serialization.py \
             tests/test_supervised_learning_models.py \
             tests/test_supervised_learning_runner.py \
             tests/test_supervised_learning_contract_review.py \
