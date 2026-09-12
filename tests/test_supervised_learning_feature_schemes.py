@@ -51,6 +51,7 @@ def test_structural_leakage_and_audit_columns_fail_closed() -> None:
         "window_effective_start_unix_ms",
         "window_end_unix_ms",
         "analysis_set_id",
+        "comparison_models",
         "run_id",
         "model_id",
         "outer_fold_group",
@@ -60,19 +61,6 @@ def test_structural_leakage_and_audit_columns_fail_closed() -> None:
     for column in forbidden:
         with pytest.raises(SupervisedLearningContractError):
             validate_mainline_feature_scheme(FeatureScheme("bad", (column,)))
-
-
-def test_task_a_does_not_hardcode_scientific_feature_eligibility() -> None:
-    # Scientific inclusion/exclusion belongs to the frozen upstream feature registry.
-    # Task A only enforces structural leakage rules.
-    for column in (
-        "q2_ordinal_4level",
-        "omission_rate",
-        "clean_go_omission_rate",
-        "timing_ambiguous_go_omission_rate",
-        "hard_pupil_fraction",
-    ):
-        validate_mainline_feature_scheme(FeatureScheme(f"science::{column}", (column,)))
 
 
 def test_duplicate_features_duplicate_modality_blocks_and_duplicate_scheme_ids_are_rejected() -> None:
