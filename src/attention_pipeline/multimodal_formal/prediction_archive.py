@@ -24,6 +24,7 @@ PREDICTION_KEY = KEYS + [GROUP, "analysis_set_id", "outcome", "model_id"]
 TASK_A_Q1_OUTCOME = "q1_equals_1_vs_2_3_4"
 TASK_A_Q1_PROBABILITY_COLUMN = "p_q1_equals_1"
 Q1_AUTHORITY_COLUMN = "q1_nominal_4class"
+_Q1_AUTHORITY_MERGE_COLUMN = "__behavior_authority_q1_nominal_4class"
 MEMBERSHIP_TYPE_COLUMN = "membership_type"
 REQUIRED_TASK_A_AUDIT_COLUMNS = (
     "run_id",
@@ -137,12 +138,7 @@ def normalize_task_a_predictions(
     outcome: str = TASK_A_Q1_OUTCOME,
     probability_column: str = TASK_A_Q1_PROBABILITY_COLUMN,
 ) -> pd.DataFrame:
-    """Normalize current Task-A runner output into the Task-B archive schema.
-
-    This is a schema adapter only. It does not recompute labels/probabilities, alter folds,
-    discard failed model rows, or perform any training/model selection. Formal Task-A
-    audit fields are required rather than silently synthesized by the adapter.
-    """
+    """Normalize current Task-A runner output into the Task-B archive schema."""
     required = {
         "session_id",
         "block_id",
@@ -163,8 +159,7 @@ def normalize_task_a_predictions(
     out["probe_index_in_block"] = _probe_index_from_task_a(out)
     if out["probe_index_in_block"].isna().any():
         raise ValueError(
-            "Task-A predictions require probe_order_in_block, probe_index_in_block, "
-            "or parseable probe_event_id"
+            "Task-A predictions require probe_order_in_block, probe_index_in_block, or parseable probe_event_id"
         )
     out["outcome"] = str(outcome)
     out["y_true"] = pd.to_numeric(out["q1_binary"], errors="coerce").astype("Int64")
@@ -195,7 +190,6 @@ def _resolve_requested_sets(
 
 
 def _validate_q1_authority_consistency(analysis_sets: pd.DataFrame) -> None:
-    """Ensure copied Behavior-authoritative Q1 cannot disagree across analysis sets."""
     if Q1_AUTHORITY_COLUMN not in analysis_sets.columns:
         raise ValueError(
             "analysis_sets must carry Behavior-authoritative q1_nominal_4class for first-round Q1 archive validation"
@@ -221,12 +215,7 @@ def validate_prediction_archive(
     require_complete: bool = True,
     requested_analysis_set_ids: Sequence[str] | None = None,
 ) -> dict[str, Any]:
-    """Validate identity, authority, LOSO ownership and expected archive coverage.
-
-    Expected coverage is generated only from requested Task-B analysis sets, their
-    declared models and declared outcomes. Formal first-round Q1 validation never
-    reconstructs the expected universe from whatever prediction rows happened to run.
-    """
+    """Validate first-round Q1 OOF identity, authority, ownership and expected coverage."""
     if predictions.empty:
         raise ValueError("predictions archive is empty")
     if analysis_sets.empty:
@@ -237,8 +226,7 @@ def validate_prediction_archive(
         )
 
     required_prediction_columns = set(
-        REQUIRED_IDENTITY_COLUMNS
-        + ["y_pred", "probability_positive", *REQUIRED_TASK_A_AUDIT_COLUMNS]
+        REQUIRED_IDENTITY_COLUMNS + ["y_pred", "probability_positive", *REQUIRED_TASK_A_AUDIT_COLUMNS]
     )
     missing = sorted(required_prediction_columns - set(predictions.columns))
     if missing:
@@ -283,17 +271,14 @@ def validate_prediction_archive(
     membership_values = predictions[MEMBERSHIP_TYPE_COLUMN].astype(str).str.strip().unique().tolist()
     if len(membership_values) != 1 or membership_values[0] != membership_column:
         raise ValueError(
-            f"prediction membership_type must equal requested membership_column={membership_column}; "
-            f"got {membership_values}"
+            f"prediction membership_type must equal requested membership_column={membership_column}; got {membership_values}"
         )
-
     if not predictions["outer_fold_group"].astype(str).eq(predictions[GROUP].astype(str)).all():
         raise ValueError("LOSO outer_fold_group must equal the held-out participant_group_id")
 
     y_true = pd.to_numeric(predictions["y_true"], errors="coerce")
     if not y_true.isin([0, 1]).all():
         raise ValueError("binary prediction archive requires y_true in {0,1}")
-
     y_pred = pd.to_numeric(predictions.loc[successful, "y_pred"], errors="coerce")
     if not y_pred.isin([0, 1]).all():
         raise ValueError("successful binary predictions require y_pred in {0,1}")
@@ -303,7 +288,6 @@ def validate_prediction_archive(
     success_reason = predictions.loc[successful, "failure_reason"].astype("string").fillna("").str.strip()
     if success_reason.ne("").any():
         raise ValueError("successful model rows must not contain failure_reason")
-
     if failed.any():
         failed_y = pd.to_numeric(predictions.loc[failed, "y_pred"], errors="coerce")
         failed_p = pd.to_numeric(predictions.loc[failed, "probability_positive"], errors="coerce")
@@ -325,12 +309,13 @@ def validate_prediction_archive(
         observed_outcomes = set(set_predictions["outcome"].astype(str).unique().tolist())
         undeclared_outcomes = observed_outcomes - set(expected_outcomes)
         if undeclared_outcomes:
-            raise ValueError(
-                f"prediction outcome not declared for {set_id}: {sorted(undeclared_outcomes)}"
-            )
+            raise ValueError(f"prediction outcome not declared for {set_id}: {sorted(undeclared_outcomes)}")
 
+    _validate_q1_authority_consistency(scoped_sets)
     membership_columns = KEYS + [GROUP, "analysis_set_id", membership_column, Q1_AUTHORITY_COLUMN]
-    membership = scoped_sets[membership_columns].copy()
+    membership = scoped_sets[membership_columns].copy().rename(
+        columns={Q1_AUTHORITY_COLUMN: _Q1_AUTHORITY_MERGE_COLUMN}
+    )
     membership["__requested_membership"] = _strict_bool_series(
         membership[membership_column], context=f"analysis_sets {membership_column}"
     )
@@ -345,15 +330,18 @@ def validate_prediction_archive(
     if not merged["__requested_membership"].all():
         raise ValueError("prediction emitted for probe outside requested analysis-set membership")
 
-    _validate_q1_authority_consistency(scoped_sets)
     q1_rows = merged["outcome"].astype(str).eq(TASK_A_Q1_OUTCOME)
     if not q1_rows.all():
         unexpected = sorted(merged.loc[~q1_rows, "outcome"].astype(str).unique().tolist())
         raise ValueError(f"first-round archive contains non-Q1 outcome rows: {unexpected}")
-    q1 = pd.to_numeric(merged[Q1_AUTHORITY_COLUMN], errors="coerce")
-    if q1.isna().any() or not q1.isin([1, 2, 3, 4]).all():
+    authority_q1 = pd.to_numeric(merged[_Q1_AUTHORITY_MERGE_COLUMN], errors="coerce")
+    if authority_q1.isna().any() or not authority_q1.isin([1, 2, 3, 4]).all():
         raise ValueError("Q1 prediction rows lack a valid Behavior-authoritative Q1 label")
-    expected_y = q1.eq(1).astype(int).reset_index(drop=True)
+    if Q1_AUTHORITY_COLUMN in merged.columns:
+        prediction_q1 = pd.to_numeric(merged[Q1_AUTHORITY_COLUMN], errors="coerce")
+        if prediction_q1.isna().any() or not prediction_q1.astype(int).equals(authority_q1.astype(int)):
+            raise ValueError("Task-A raw Q1 disagrees with Behavior-authoritative Q1 label")
+    expected_y = authority_q1.eq(1).astype(int).reset_index(drop=True)
     observed_y = pd.to_numeric(merged["y_true"], errors="coerce").astype(int).reset_index(drop=True)
     if not observed_y.equals(expected_y):
         raise ValueError("prediction y_true disagrees with Behavior-authoritative Q1 label")
@@ -362,13 +350,11 @@ def validate_prediction_archive(
         KEYS + [GROUP, "analysis_set_id"]
     ]
     coverage_rows: list[dict[str, Any]] = []
-
     for set_id in requested_sets:
         expected_set = expected_membership[expected_membership["analysis_set_id"].astype(str).eq(set_id)]
         set_predictions = predictions[predictions["analysis_set_id"].astype(str).eq(set_id)]
         expected_models = declared_models[str(set_id)]
         expected_outcomes = declared_outcomes[str(set_id)]
-
         for outcome in expected_outcomes:
             outcome_rows = set_predictions[set_predictions["outcome"].astype(str).eq(outcome)]
             for model_id in expected_models:
@@ -384,8 +370,7 @@ def validate_prediction_archive(
                 extra_n = int(joined["_merge"].eq("right_only").sum())
                 if require_complete and (missing_n or extra_n):
                     raise ValueError(
-                        f"incomplete prediction coverage for {set_id}/{outcome}/{model_id}: "
-                        f"missing={missing_n}, extra={extra_n}"
+                        f"incomplete prediction coverage for {set_id}/{outcome}/{model_id}: missing={missing_n}, extra={extra_n}"
                     )
                 failed_probe_n = int(
                     _strict_bool_series(rows["model_failed"], context="prediction model_failed").sum()
@@ -439,12 +424,8 @@ def write_prediction_archive(
     output.mkdir(parents=True, exist_ok=True)
     archive_path = output / "probe_predictions.csv"
     audit_path = output / "prediction_archive_audit.json"
-    predictions.sort_values(PREDICTION_KEY).to_csv(
-        archive_path, index=False, encoding="utf-8-sig"
-    )
-    audit_path.write_text(
-        json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
-    )
+    predictions.sort_values(PREDICTION_KEY).to_csv(archive_path, index=False, encoding="utf-8-sig")
+    audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return {
         "probe_predictions": str(archive_path),
         "prediction_archive_audit": str(audit_path),
