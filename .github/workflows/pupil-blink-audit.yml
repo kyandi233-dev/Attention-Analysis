@@ -44,4 +44,5 @@ jobs:
           python -m pytest -q \
             tests/test_pupil_blink_measurement.py \
             tests/test_pupil_blink_binocular.py \
-            tests/test_pupil_blink_sync.py
+            tests/test_pupil_blink_sync.py \
+            tests/test_pupil_blink_audit_config.py
