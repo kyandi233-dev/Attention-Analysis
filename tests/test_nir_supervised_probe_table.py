@@ -32,7 +32,7 @@ def _probes():
             "probe_index_global": [7],
             "probe_index_in_block": [3],
             "probe_event_id": ["sub-001_b1_p3"],
-            "window_end_ms": [100000.0],
+            "probe_time_ms": [100000.0],
             "q1_nominal_4class": [1],
             "q2_ordinal_4level": [2],
         }
@@ -47,10 +47,23 @@ def test_probe_table_primary_and_sensitivity_windows_share_unique_identity():
     assert len(result) == 3
     assert result["participant_group_id"].eq("P001").all()
     assert result["probe_event_id"].eq("sub-001_b1_p3").all()
+    assert result["probe_onset_ms"].eq(100000.0).all()
     assert set(result["window_sec"]) == {10, 20, 30}
     assert result.loc[result["window_sec"].eq(30), "window_role"].iloc[0] == "primary"
     assert result.loc[result["window_sec"].isin([10, 20]), "window_role"].eq("window_sensitivity").all()
     assert result["analysis_set_id"].isna().all() if "analysis_set_id" in result else True
+
+
+def test_probe_table_rejects_trial_absolute_onset_as_probe_time():
+    probes = _probes().drop(columns=["probe_time_ms"]).assign(absolute_onset_time=99500.0)
+    with pytest.raises(ValueError, match="explicit probe time"):
+        build_supervised_probe_table(_analysis_ready(), probes, windows_sec=(30,))
+
+
+def test_probe_table_retains_explicit_window_end_compatibility():
+    probes = _probes().drop(columns=["probe_time_ms"]).assign(window_end_ms=100000.0)
+    result = build_supervised_probe_table(_analysis_ready(), probes, windows_sec=(30,))
+    assert result["probe_onset_ms"].eq(100000.0).all()
 
 
 def test_formal_probe_table_refuses_to_promote_analysis_group_token_to_participant_id():
