@@ -4,8 +4,11 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 
 from attention_pipeline.nir_formal_analysis.pupil_blink_measurement import audit_rgb_nir_sync
+
+FORMAL_PHASES = {"block1", "block2"}
 
 
 def _time_metrics(values: pd.Series) -> dict[str, float | int]:
@@ -45,6 +48,13 @@ def _nearest_signed(reference: np.ndarray, targets: np.ndarray) -> np.ndarray:
     right = reference[np.clip(pos, 0, reference.size - 1)]
     nearest = np.where(np.abs(right - targets) < np.abs(left - targets), right, left)
     return nearest - targets
+
+
+def _formal_rgb_frames(rgb_frames: pd.DataFrame) -> pd.DataFrame:
+    if "phase" not in rgb_frames.columns:
+        return rgb_frames
+    phase = rgb_frames["phase"].astype("string").str.strip().str.lower()
+    return rgb_frames.loc[phase.isin(FORMAL_PHASES)].copy()
 
 
 def rgb_blink_source_availability(
@@ -87,6 +97,8 @@ def audit_rgb_nir_sync_with_frames(
     for name, value in nir_metrics.items():
         row[f"nir_frame_{name}"] = value
 
+    if rgb_frames is not None:
+        rgb_frames = _formal_rgb_frames(rgb_frames)
     if rgb_frames is None or rgb_frames.empty:
         row.update(
             {
@@ -147,9 +159,9 @@ def audit_rgb_nir_sync_with_frames(
                 else np.nan
             ),
             "frame_nearest_residual_signed_median_ms": float(np.median(residual)) if residual.size else np.nan,
-            "frame_nearest_residual_abs_median_ms": float(np.median(abs_res)) if abs_res.size else np.nan,
-            "frame_nearest_residual_abs_p95_ms": float(np.quantile(abs_res, 0.95)) if abs_res.size else np.nan,
-            "frame_nearest_residual_abs_max_ms": float(np.max(abs_res)) if abs_res.size else np.nan,
+            "frame_nearest_residual_abs_median_ms": float(np.median(abs_res)) if residual.size else np.nan,
+            "frame_nearest_residual_abs_p95_ms": float(np.quantile(abs_res, 0.95)) if residual.size else np.nan,
+            "frame_nearest_residual_abs_max_ms": float(np.max(abs_res)) if residual.size else np.nan,
             "frame_nearest_residual_drift_ms_per_hour": drift,
         }
     )
@@ -162,4 +174,6 @@ def load_session_rgb_blink_frames(root: str | Path | None, session_id: str) -> p
     path = Path(root).expanduser() / session_id / f"{session_id}_blink_candidate_frames.parquet"
     if not path.exists():
         return None
-    return pd.read_parquet(path, columns=["unix_ms"])
+    available = set(pq.ParquetFile(path).schema.names)
+    columns = ["unix_ms"] + (["phase"] if "phase" in available else [])
+    return _formal_rgb_frames(pd.read_parquet(path, columns=columns))
