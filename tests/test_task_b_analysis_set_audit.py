@@ -16,6 +16,7 @@ def _tables():
         "participant_group_id": ["p1", "p1", "p2", "p2"],
         "block_id": ["b1"] * 4,
         "probe_index_in_block": [1, 2, 1, 2],
+        "q1_nominal_4class": [1, 2, 1, 3],
         "b": [1.0, 2.0, 3.0, 4.0],
         "raw_go_omission_rate": [0.0, 0.1, 0.0, 0.2],
         "window_name": ["pre_30s"] * 4,
@@ -110,6 +111,7 @@ def _prediction_rows(sets):
     rows = []
     for model in ["M0", "M1"]:
         for _, r in included.iterrows():
+            y = int(int(r.q1_nominal_4class) == 1)
             rows.append({
                 "run_id": "task-b-fixture-run",
                 "feature_set_id": model,
@@ -120,11 +122,11 @@ def _prediction_rows(sets):
                 "probe_index_in_block": r.probe_index_in_block,
                 "analysis_set_id": r.analysis_set_id,
                 "outer_fold_group": r.participant_group_id,
-                "outcome": "q1_binary",
+                "outcome": "q1_equals_1_vs_2_3_4",
                 "model_id": model,
-                "y_true": 1,
-                "y_pred": 1,
-                "probability_positive": 0.75,
+                "y_true": y,
+                "y_pred": y,
+                "probability_positive": 0.75 if y else 0.25,
                 "model_failed": False,
                 "failure_reason": "",
             })
@@ -140,6 +142,7 @@ def _prediction_sets():
             "M0_vs_M1_nir": {
                 "models": ["M0", "M1"],
                 "required_features": {"behavior": ["b"], "nir": ["n"]},
+                "required_outcomes": ["q1_nominal_4class"],
             }
         },
     )
@@ -285,6 +288,8 @@ def _task_a_native_predictions(sets):
     rows = []
     for model in ["M0", "M1"]:
         for _, r in included.iterrows():
+            q1 = int(r.q1_nominal_4class)
+            y = int(q1 == 1)
             rows.append({
                 "run_id": "task-a-fixture-run",
                 "feature_set_id": model,
@@ -298,9 +303,10 @@ def _task_a_native_predictions(sets):
                 "analysis_set_id": r.analysis_set_id,
                 "outer_fold_group": r.participant_group_id,
                 "model_id": model,
-                "q1_binary": 1,
-                "predicted_q1_binary": 1,
-                "p_q1_equals_1": 0.75,
+                "q1_nominal_4class": q1,
+                "q1_binary": y,
+                "predicted_q1_binary": y,
+                "p_q1_equals_1": 0.75 if y else 0.25,
                 "model_failed": False,
                 "failure_reason": "",
             })
