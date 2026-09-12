@@ -1,11 +1,10 @@
 """Structural feature-scheme contracts for the current Q1 supervised core.
 
-Scientific eligibility is frozen upstream in the feature registry.  This module
+Scientific eligibility is frozen upstream in the feature registry. This module
 only guards against structural leakage/misuse (outcomes, generated predictions,
 identity/audit keys, and participant-specific zero-calibration features) and
-checks that declared predictor columns are present.  It does not decide whether
-a scientifically meaningful variable such as Q2, an omission variant, or a pupil
-metric belongs in the current study; those choices belong to the frozen registry.
+checks that declared predictor columns are present. Scientific inclusion choices
+belong to the frozen registry rather than a second Task A blacklist.
 """
 from __future__ import annotations
 
@@ -38,6 +37,7 @@ _STRUCTURAL_FORBIDDEN_COLUMNS: dict[str, str] = {
     "window_effective_start_unix_ms": "window boundary is audit metadata, not a predictor",
     "window_end_unix_ms": "window boundary is audit metadata, not a predictor",
     "analysis_set_id": "analysis-set identity is audit metadata, not a predictor",
+    "comparison_models": "comparison-plan metadata is not a predictor",
     "run_id": "run identity is audit metadata, not a predictor",
     "model_id": "model identity is audit metadata, not a predictor",
     "outer_fold_group": "validation-fold identity is audit metadata, not a predictor",
