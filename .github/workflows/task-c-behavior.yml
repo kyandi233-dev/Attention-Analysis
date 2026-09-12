@@ -35,6 +35,7 @@ jobs:
         run: |
           python -m py_compile \
             src/attention_pipeline/behavior_formal/science_v3.py \
+            src/attention_pipeline/behavior_formal/science_v3_extensions.py \
             src/attention_pipeline/behavior_formal/behavior_error_taxonomy.py \
             src/attention_pipeline/behavior_formal/behavior_supervised_contract.py \
             src/attention_pipeline/behavior_formal/behavior_supervised_interface.py \
@@ -50,6 +51,7 @@ jobs:
             tests/test_behavior_task_c_supervised_interface.py \
             tests/test_behavior_task_c_review_guards.py \
             tests/test_behavior_science_v3_contract.py \
+            tests/test_behavior_science_v3_extensions.py \
             tests/test_behavior_error_taxonomy.py \
             tests/test_behavior_omission_candidate_validation.py \
             tests/test_behavior_omission_probe_models.py \
