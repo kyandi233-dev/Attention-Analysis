@@ -38,6 +38,7 @@ from attention_pipeline.nir_formal_analysis.pupil_blink_binocular import (
 from attention_pipeline.nir_formal_analysis.pupil_blink_sync import (
     audit_rgb_nir_sync_with_frames,
     load_session_rgb_blink_frames,
+    rgb_blink_source_availability,
 )
 
 RUNNER_VERSION = "nir-pupil-blink-measurement-audit-runner-v1"
@@ -143,6 +144,8 @@ def run_pupil_blink_measurement_audit(
     trajectory_rows: list[dict[str, object]] = []
     failure_rows: list[dict[str, object]] = []
     processed_sessions: list[str] = []
+    rgb_blink_available_sessions: list[str] = []
+    rgb_blink_unavailable_sessions: list[str] = []
 
     for record in records:
         session_id = str(record["session_id"])
@@ -154,18 +157,35 @@ def run_pupil_blink_measurement_audit(
             if adapted.empty:
                 raise ValueError("session has no block1/block2 pupil rows")
             session_probes = probes[probes["session_id"].eq(session_id)].copy()
+            if session_probes.empty:
+                raise ValueError("session has no Behavior probe rows")
             _validate_probe_identity(session_probes, adapted, session_id)
 
             eye = derive_eye_measurements(adapted)
             timepoints = build_binocular_measurement_timepoints(adapted)
             events = _session_events(blinks, session_id)
             rgb_frames = load_session_rgb_blink_frames(rgb_blink_frames_root, session_id)
+            rgb_blink_available, rgb_blink_basis = rgb_blink_source_availability(events, rgb_frames)
+            if rgb_blink_available:
+                rgb_blink_available_sessions.append(session_id)
+            else:
+                rgb_blink_unavailable_sessions.append(session_id)
 
-            sync_parts.append(audit_rgb_nir_sync_with_frames(timepoints, events, rgb_frames))
+            sync = audit_rgb_nir_sync_with_frames(timepoints, events, rgb_frames)
+            sync["rgb_blink_source_available"] = bool(rgb_blink_available)
+            sync["rgb_blink_availability_basis"] = rgb_blink_basis
+            if not rgb_blink_available:
+                sync["sync_status"] = "rgb_blink_source_unavailable"
+                sync["sync_evidence_level"] = rgb_blink_basis
+            elif events.empty:
+                sync["sync_evidence_level"] = rgb_blink_basis
+            sync_parts.append(sync)
+
             availability_parts.append(audit_signal_availability(eye))
             rseg_parts.append(audit_rseg_quality_associations(eye))
-            buffer_loss_parts.append(audit_buffer_loss(timepoints, events, buffers=buffers))
-            if not events.empty:
+            if rgb_blink_available:
+                buffer_loss_parts.append(audit_buffer_loss(timepoints, events, buffers=buffers))
+            if rgb_blink_available and not events.empty:
                 recovery_parts.append(
                     build_blink_recovery_bins(
                         timepoints,
@@ -196,28 +216,29 @@ def run_pupil_blink_measurement_audit(
                     )
 
             blink_tracks = tuple(x for x in tracks if x in {"rgb_blink_only", "rgb_plus_nir_qc"})
-            for buffer in buffers:
-                masked = add_rgb_blink_mask(
-                    timepoints,
-                    events,
-                    pre_buffer_ms=buffer.pre_ms,
-                    post_buffer_ms=buffer.post_ms,
-                )
-                for _, probe in session_probes.iterrows():
-                    if blink_tracks:
-                        append_probe_track(
-                            out_rows=probe_rows,
-                            trajectory_rows=trajectory_rows,
-                            timepoints=masked,
-                            probe=probe,
-                            signals=signals,
-                            tracks=blink_tracks,
-                            bin_widths=bin_widths,
-                            window_sec=window_sec,
-                            buffer_id=buffer.name,
-                            buffer_pre_ms=buffer.pre_ms,
-                            buffer_post_ms=buffer.post_ms,
-                        )
+            if rgb_blink_available:
+                for buffer in buffers:
+                    masked = add_rgb_blink_mask(
+                        timepoints,
+                        events,
+                        pre_buffer_ms=buffer.pre_ms,
+                        post_buffer_ms=buffer.post_ms,
+                    )
+                    for _, probe in session_probes.iterrows():
+                        if blink_tracks:
+                            append_probe_track(
+                                out_rows=probe_rows,
+                                trajectory_rows=trajectory_rows,
+                                timepoints=masked,
+                                probe=probe,
+                                signals=signals,
+                                tracks=blink_tracks,
+                                bin_widths=bin_widths,
+                                window_sec=window_sec,
+                                buffer_id=buffer.name,
+                                buffer_pre_ms=buffer.pre_ms,
+                                buffer_post_ms=buffer.post_ms,
+                            )
             processed_sessions.append(session_id)
         except Exception as exc:
             failure_rows.append(
@@ -267,6 +288,10 @@ def run_pupil_blink_measurement_audit(
         "source_session_n_processed": int(len(processed_sessions)),
         "source_session_n_failed": int(len(failure_rows)),
         "rgb_frame_axis_requested": rgb_blink_frames_root is not None,
+        "rgb_blink_source_available_session_n": int(len(rgb_blink_available_sessions)),
+        "rgb_blink_source_unavailable_session_n": int(len(rgb_blink_unavailable_sessions)),
+        "rgb_blink_source_unavailable_sessions": rgb_blink_unavailable_sessions,
+        "rgb_missing_is_zero_blinks": False,
         "processed_sessions": processed_sessions,
         "output_tables": {name: int(len(table)) for name, table in tables.items()},
     }
