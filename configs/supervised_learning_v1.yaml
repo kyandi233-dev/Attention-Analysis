@@ -2,7 +2,7 @@ pipeline:
   name: focuswave-supervised-learning-v1
   version: 1.1.0-dev
   evidence_repo: kyandi233-dev/FocusWave-Formal-Analysis
-  evidence_branch: codex/1.16.1-supervised-interpretation-review
+  evidence_branch: codex/code-fix-ledger
   evidence_method_entry: 分析设计/1.16.1-监督学习心理意义、训练权重与多层评价修订_20260911.md
   implementation_plan: https://github.com/kyandi233-dev/Attention-Analysis/issues/43
   random_seed: 20260910
@@ -87,5 +87,9 @@ outputs:
   preserve_outer_fold: true
   preserve_feature_set_id: true
   preserve_analysis_set_id: true
+  preserve_membership_type: true
   preserve_run_id: true
   preserve_failures: true
+  preserve_q2_for_reporting_context: true
+  write_probe_trajectory: true
+  write_session_discrimination: true
