@@ -23,7 +23,10 @@ def read_table(path: str | Path) -> pd.DataFrame:
     if suffix == ".parquet":
         return pd.read_parquet(source)
     if suffix in {".csv", ".txt"}:
-        return pd.read_csv(source, encoding="utf-8-sig", low_memory=False)
+        try:
+            return pd.read_csv(source, encoding="utf-8-sig", low_memory=False)
+        except pd.errors.EmptyDataError:
+            return pd.DataFrame()
     raise ValueError(f"unsupported table format for {source}; use CSV or Parquet")
 
 
