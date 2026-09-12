@@ -14,6 +14,7 @@ def _entry(**overrides):
         "role": "behavior",
         "modality": "behavior",
         "raw_source": "synthetic behavior",
+        "source_namespace": "behavior",
         "required_devices": [],
         "behavior_reference_eligible": "true",
         "standalone_eligible": "false",
@@ -36,6 +37,7 @@ def test_serialized_false_registry_flags_remain_false() -> None:
     assert feature.full_model_eligible is True
     assert feature.full_leave_one_out_eligible is False
     assert feature.modality == "behavior"
+    assert feature.source_namespace == "behavior"
     assert feature.required_devices == ()
 
 
@@ -47,5 +49,12 @@ def test_invalid_registry_boolean_text_fails_closed() -> None:
 def test_registry_requires_explicit_scientific_modality() -> None:
     entry = _entry()
     entry.pop("modality")
+    with pytest.raises(FeatureRegistryContractError, match="missing required fields"):
+        load_registered_features({"features": [entry]})
+
+
+def test_registry_requires_explicit_source_namespace() -> None:
+    entry = _entry()
+    entry.pop("source_namespace")
     with pytest.raises(FeatureRegistryContractError, match="missing required fields"):
         load_registered_features({"features": [entry]})
