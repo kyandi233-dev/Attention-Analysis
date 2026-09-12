@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 import pandas as pd
 
@@ -26,6 +27,7 @@ from .task import Q1_BINARY_SPEC, SupervisedLearningContractError
 
 FORMAL_PARTICIPANT_GROUP_COLUMN = "participant_group_id"
 FORMAL_ANALYSIS_SET_COLUMN = "analysis_set_id"
+FORMAL_COMPARISON_MODELS_COLUMN = "comparison_models"
 FORMAL_INNER_SPLITS = 5
 
 
@@ -41,7 +43,6 @@ def _require_frozen_runtime_contract(config_data: Mapping[str, Any]) -> None:
         "negative_label": 0,
         "positive_probability_name": Q1_BINARY_SPEC.positive_probability_name,
         "primary_window_seconds": 30,
-        "q2_is_predictor": False,
     }
     for key, expected in expected_task.items():
         if task.get(key) != expected:
@@ -222,6 +223,53 @@ def _require_single_analysis_set_id(frame: pd.DataFrame) -> str:
     return values[0]
 
 
+def _parse_comparison_models(value: object) -> tuple[str, ...]:
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            raise SupervisedLearningContractError("comparison_models contains a blank value")
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise SupervisedLearningContractError(
+                f"comparison_models must be a JSON list of model IDs: {exc}"
+            ) from exc
+    elif isinstance(value, Sequence) and not isinstance(value, (bytes, bytearray)):
+        parsed = list(value)
+    else:
+        raise SupervisedLearningContractError("comparison_models must be a JSON/list sequence of model IDs")
+    if not isinstance(parsed, list) or not parsed:
+        raise SupervisedLearningContractError("comparison_models must contain at least one model ID")
+    models = tuple(str(item).strip() for item in parsed)
+    if any(not item for item in models):
+        raise SupervisedLearningContractError("comparison_models contains blank model IDs")
+    if len(set(models)) != len(models):
+        raise SupervisedLearningContractError("comparison_models contains duplicate model IDs")
+    return models
+
+
+def _require_comparison_models(frame: pd.DataFrame) -> tuple[str, ...]:
+    """Read the one comparison-specific model list supplied by Task B.
+
+    Task B builds one analysis_set_id per requested comparison.  A registry-backed
+    Task A run therefore consumes only the models declared for that set instead of
+    forcing every registry model onto one global common sample.
+    """
+    if FORMAL_COMPARISON_MODELS_COLUMN not in frame.columns:
+        raise SupervisedLearningContractError(
+            "registry-backed formal input must contain comparison_models supplied by the B-layer analysis-set contract"
+        )
+    if frame[FORMAL_COMPARISON_MODELS_COLUMN].isna().any():
+        raise SupervisedLearningContractError("comparison_models contains missing values")
+    parsed_rows = [_parse_comparison_models(value) for value in frame[FORMAL_COMPARISON_MODELS_COLUMN].tolist()]
+    unique = set(parsed_rows)
+    if len(unique) != 1:
+        raise SupervisedLearningContractError(
+            f"one analysis_set_id must declare one comparison_models list; got {sorted(unique)}"
+        )
+    return parsed_rows[0]
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -255,7 +303,7 @@ def run_supervised_from_config(
     output_root: str | Path | None = None,
     run_id: str | None = None,
 ) -> dict[str, object]:
-    """Execute Task A from an upstream admitted probe table and write an immutable run."""
+    """Execute Task A from one upstream comparison-specific admitted probe table."""
     config = load_config(config_path, paths_config=paths_config)
     _require_frozen_runtime_contract(config.data)
 
@@ -264,11 +312,24 @@ def run_supervised_from_config(
     if not input_path.is_file():
         raise FileNotFoundError(f"supervised input probe table not found: {input_path}")
 
-    families, comparison_plan = _resolve_model_plan(config.data)
-    if not families:
+    all_families, comparison_plan = _resolve_model_plan(config.data)
+    if not all_families:
         raise SupervisedLearningContractError(
             "no supervised feature families are configured; Task C/D must freeze a feature registry or candidate schemes before a formal real-data run"
         )
+
+    frame = _read_probe_table(input_path)
+    analysis_set_id = _require_single_analysis_set_id(frame)
+    families = all_families
+    declared_models: tuple[str, ...] | None = None
+    if comparison_plan is not None:
+        declared_models = _require_comparison_models(frame)
+        unknown = sorted(set(declared_models) - set(all_families))
+        if unknown:
+            raise SupervisedLearningContractError(
+                f"analysis_set_id={analysis_set_id} declares models absent from frozen feature registry: {unknown}"
+            )
+        families = {model_id: all_families[model_id] for model_id in declared_models}
 
     validation = config.section("validation")
     inner = validation.get("inner", {})
@@ -276,8 +337,6 @@ def run_supervised_from_config(
     pipeline = config.section("pipeline")
     resolved_run_id = run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
 
-    frame = _read_probe_table(input_path)
-    analysis_set_id = _require_single_analysis_set_id(frame)
     result = run_nested_loso(
         frame,
         model_feature_schemes=families,
@@ -290,7 +349,9 @@ def run_supervised_from_config(
         analysis_set_id=analysis_set_id,
     )
     if comparison_plan is not None:
+        selected = set(families)
         result.metadata["feature_comparison_plan"] = comparison_plan.audit_dict()
+        result.metadata["analysis_set_declared_models"] = list(declared_models or ())
         result.metadata["paired_comparisons"] = [
             {
                 "comparison_type": "behavior_increment",
@@ -299,6 +360,7 @@ def run_supervised_from_config(
                 "feature_id": feature_id,
             }
             for baseline, added, feature_id in comparison_plan.behavior_increment_pairs
+            if baseline in selected and added in selected
         ] + [
             {
                 "comparison_type": "full_leave_one_out",
@@ -307,6 +369,7 @@ def run_supervised_from_config(
                 "feature_id": feature_id,
             }
             for reduced, full, feature_id in comparison_plan.full_leave_one_out_pairs
+            if reduced in selected and full in selected
         ]
 
     repo_root = Path(__file__).resolve().parents[3]
