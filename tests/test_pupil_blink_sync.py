@@ -3,6 +3,7 @@ import pytest
 
 from attention_pipeline.nir_formal_analysis.pupil_blink_sync import (
     audit_rgb_nir_sync_with_frames,
+    rgb_blink_source_availability,
 )
 
 
@@ -23,3 +24,25 @@ def test_event_only_sync_is_explicitly_limited():
     row = audit_rgb_nir_sync_with_frames(nir, events, None).iloc[0]
     assert row["sync_evidence_level"] == "blink_event_boundaries_only"
     assert not row["rgb_frame_axis_available"]
+
+
+def test_rgb_frame_axis_with_zero_events_is_observed_zero_not_missing():
+    events = pd.DataFrame(columns=["session_id", "start_unix_ms", "end_unix_ms"])
+    rgb = pd.DataFrame({"unix_ms": [1000, 1100]})
+    available, basis = rgb_blink_source_availability(events, rgb)
+    assert available
+    assert basis == "rgb_frame_axis_zero_detected_events"
+
+
+def test_event_boundaries_without_frame_axis_remain_usable_with_limited_evidence():
+    events = pd.DataFrame({"session_id": ["s1"], "start_unix_ms": [1000], "end_unix_ms": [1050]})
+    available, basis = rgb_blink_source_availability(events, None)
+    assert available
+    assert basis == "blink_event_boundaries_only"
+
+
+def test_no_rgb_frame_axis_and_no_events_is_unavailable_not_zero_blinks():
+    events = pd.DataFrame(columns=["session_id", "start_unix_ms", "end_unix_ms"])
+    available, basis = rgb_blink_source_availability(events, None)
+    assert not available
+    assert basis == "rgb_blink_evidence_unavailable_or_ambiguous"
