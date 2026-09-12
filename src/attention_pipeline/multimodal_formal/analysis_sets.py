@@ -14,6 +14,24 @@ KEYS = list(KEY_COLUMNS)
 GROUP = "participant_group_id"
 
 
+def _strict_bool_scalar(value: Any, *, field: str) -> bool:
+    """Parse serialized Task-B booleans without Python truthiness shortcuts."""
+    if pd.isna(value):
+        raise ValueError(f"{field} contains missing boolean state")
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    if isinstance(value, (int, np.integer)) and int(value) in (0, 1):
+        return bool(int(value))
+    if isinstance(value, (float, np.floating)) and np.isfinite(value) and float(value) in (0.0, 1.0):
+        return bool(int(value))
+    text = str(value).strip().lower()
+    if text in {"true", "1", "1.0", "yes"}:
+        return True
+    if text in {"false", "0", "0.0", "no"}:
+        return False
+    raise ValueError(f"{field} contains invalid boolean state: {value!r}")
+
+
 def _normalize_spec(
     spec: dict[str, Any],
 ) -> tuple[dict[str, list[str]], list[str], list[str]]:
@@ -120,9 +138,12 @@ def build_analysis_sets(
                         {
                             "modality": modality,
                             "feature": feature,
-                            "feature_computable": bool(row["feature_computable"]),
-                            "eligible_for_missing_strategy": bool(
-                                row["eligible_for_missing_strategy"]
+                            "feature_computable": _strict_bool_scalar(
+                                row["feature_computable"], field="feature_computable"
+                            ),
+                            "eligible_for_missing_strategy": _strict_bool_scalar(
+                                row["eligible_for_missing_strategy"],
+                                field="eligible_for_missing_strategy",
                             ),
                             "missing_kind": str(row["missing_kind"]),
                         }
