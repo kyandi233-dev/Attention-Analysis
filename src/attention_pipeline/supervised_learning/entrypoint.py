@@ -20,6 +20,7 @@ from .evaluation import (
 from .feature_registry import FeatureComparisonPlan, build_feature_comparison_plan, load_registered_features
 from .feature_schemes import FeatureScheme, load_feature_schemes
 from .models import SELECTION_METRIC
+from .outcome_scope import validate_task_a_required_outcomes
 from .reporting import write_supervised_run
 from .runner import run_nested_loso
 from .task import Q1_BINARY_SPEC, SupervisedLearningContractError
@@ -398,6 +399,7 @@ def run_supervised_from_config(
 
     frame = _read_probe_table(input_path)
     analysis_set_id = _require_single_analysis_set_id(frame)
+    required_outcomes = validate_task_a_required_outcomes(frame)
     families = all_families
     declared_models: tuple[str, ...] | None = None
     required_feature_columns: tuple[str, ...] | None = None
@@ -433,6 +435,8 @@ def run_supervised_from_config(
         run_id=str(resolved_run_id),
         analysis_set_id=analysis_set_id,
     )
+    result.metadata["analysis_set_required_outcomes"] = list(required_outcomes)
+    result.metadata["analysis_set_outcome_scope_verified"] = True
     if comparison_plan is not None:
         selected = set(families)
         feature_columns = _feature_columns_by_id(comparison_plan)
