@@ -110,6 +110,15 @@ def _write_configs(tmp_path: Path, config_data: dict, paths_data: dict) -> tuple
     return config_path, paths_path
 
 
+def _verified_temporal_fields(label: str) -> dict[str, object]:
+    return {
+        "temporal_anchor": "probe_time_ms",
+        "temporal_scope": "pre_probe_only",
+        "time_legality_status": "verified_pre_probe_only",
+        "time_legality_evidence": f"synthetic {label} uses only the current probe's pre-probe window",
+    }
+
+
 def _registry_config() -> dict:
     return {
         "features": [
@@ -122,6 +131,7 @@ def _registry_config() -> dict:
                 "raw_source": "synthetic behavior",
                 "source_namespace": "behavior",
                 "required_devices": [],
+                **_verified_temporal_fields("behavior signal"),
                 "behavior_reference_eligible": True,
                 "behavior_increment_eligible": False,
                 "allowed_device_packages": [],
@@ -135,6 +145,7 @@ def _registry_config() -> dict:
                 "raw_source": "synthetic RGB",
                 "source_namespace": "rgb",
                 "required_devices": ["rgb"],
+                **_verified_temporal_fields("RGB signal"),
                 "behavior_increment_eligible": True,
                 "modality_model_eligible": True,
                 "allowed_device_packages": ["M3"],
@@ -217,6 +228,27 @@ def test_registry_run_consumes_only_models_declared_by_current_analysis_set(tmp_
     assert saved_manifest["declared_model_predictor_union"] == ["behavior_signal", "rgb_signal"]
     assert saved_manifest["analysis_set_required_outcomes"] == ["q1_nominal_4class"]
     assert saved_manifest["analysis_set_outcome_scope_verified"] is True
+    assert saved_manifest["time_legality_runtime_verified"] is True
+    assert saved_manifest["feature_time_legality"]["n_verified_pre_probe_only"] == 2
+    paired = json.loads((output_root / "registry-run" / "paired_comparison_provenance.json").read_text(encoding="utf-8"))
+    assert paired["comparisons"][0]["defining_feature_time_legality"][0]["feature_id"] == "rgb_signal"
+    assert paired["comparisons"][0]["defining_feature_time_legality"][0]["time_legality_status"] == "verified_pre_probe_only"
+
+
+def test_registry_run_fails_closed_on_pending_time_legality(tmp_path) -> None:
+    input_path = tmp_path / "probe_table.csv"
+    output_root = tmp_path / "outputs"
+    _probe_table().to_csv(input_path, index=False)
+    config_data, paths_data = _config(input_path, output_root)
+    config_data["feature_registry"] = _registry_config()
+    candidate = config_data["feature_registry"]["features"][1]
+    candidate["temporal_scope"] = "pending_upstream_freeze"
+    candidate["time_legality_status"] = "pending_upstream_freeze"
+    candidate["time_legality_evidence"] = ""
+    config_path, paths_path = _write_configs(tmp_path, config_data, paths_data)
+
+    with pytest.raises(SupervisedLearningContractError, match="fail-closed"):
+        run_supervised_from_config(config_path, paths_config=paths_path, run_id="blocked-time-legality")
 
 
 def test_registry_run_rejects_model_not_declared_in_frozen_registry(tmp_path) -> None:
@@ -239,6 +271,7 @@ def test_registry_run_rejects_model_not_declared_in_frozen_registry(tmp_path) ->
                 "raw_source": "synthetic behavior",
                 "source_namespace": "behavior",
                 "required_devices": [],
+                **_verified_temporal_fields("behavior signal"),
                 "behavior_reference_eligible": True,
                 "allowed_device_packages": [],
             }
