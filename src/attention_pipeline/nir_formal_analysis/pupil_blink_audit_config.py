@@ -81,8 +81,10 @@ def cleaning_tracks(config: Mapping[str, Any]) -> tuple[str, ...]:
 
 def probe_onset_ms(row: pd.Series) -> float:
     # ``probe_time_ms`` is the authoritative current Behavior formal-v3 field.
-    # The remaining names are retained for compatible historical/audit tables.
-    for name in ("probe_time_ms", "probe_onset_ms", "window_end_ms", "absolute_onset_time"):
+    # Historical aliases are accepted only when they explicitly denote the probe
+    # onset / probe-locked window end. Formal-experiment ``absolute_onset_time`` is
+    # the SART trial stimulus onset and must never be used as a probe-time fallback.
+    for name in ("probe_time_ms", "probe_onset_ms", "window_end_ms"):
         if name in row.index:
             value = pd.to_numeric(pd.Series([row[name]]), errors="coerce").iloc[0]
             if np.isfinite(value):
