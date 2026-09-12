@@ -114,6 +114,55 @@ def _resolve_membership_type(frame: pd.DataFrame, explicit: str | None) -> str:
     return resolved
 
 
+def _declared_feature_columns(
+    model_feature_schemes: Mapping[str, Sequence[FeatureScheme]],
+) -> tuple[str, ...]:
+    columns: list[str] = []
+    seen: set[str] = set()
+    for schemes in model_feature_schemes.values():
+        for scheme in schemes:
+            for column in scheme.columns:
+                if column not in seen:
+                    seen.add(column)
+                    columns.append(column)
+    return tuple(columns)
+
+
+def _validate_complete_membership(
+    frame: pd.DataFrame,
+    model_feature_schemes: Mapping[str, Sequence[FeatureScheme]],
+    *,
+    membership_type: str,
+) -> None:
+    """Keep ``included_complete`` semantically complete inside Task A itself.
+
+    The B layer is the primary membership authority, but Task A must still fail
+    closed if a direct caller labels a frame complete while supplying missing
+    predictor values. Otherwise the train-only imputer would silently turn a
+    complete-case analysis into a missing-aware analysis.
+    """
+    if membership_type != "included_complete":
+        return
+    columns = _declared_feature_columns(model_feature_schemes)
+    missing_counts: dict[str, int] = {}
+    for column in columns:
+        numeric = pd.to_numeric(frame[column], errors="coerce")
+        invalid_text = frame[column].notna() & numeric.isna()
+        if invalid_text.any():
+            bad = frame.loc[invalid_text, column].astype(str).drop_duplicates().tolist()
+            raise SupervisedLearningContractError(
+                f"included_complete contains non-numeric values in feature {column}: {bad}"
+            )
+        missing_n = int(numeric.isna().sum())
+        if missing_n:
+            missing_counts[column] = missing_n
+    if missing_counts:
+        raise SupervisedLearningContractError(
+            "included_complete cannot contain missing predictor values; "
+            f"missing_counts={missing_counts}"
+        )
+
+
 def _validate_frame(
     frame: pd.DataFrame,
     model_feature_schemes: Mapping[str, Sequence[FeatureScheme]],
@@ -177,6 +226,11 @@ def run_nested_loso(
     data, archive_columns = _validate_frame(frame, model_feature_schemes, group_col=group_col)
     resolved_analysis_set = _resolve_analysis_set_id(data, analysis_set_id)
     resolved_membership = _resolve_membership_type(data, membership_type)
+    _validate_complete_membership(
+        data,
+        model_feature_schemes,
+        membership_type=resolved_membership,
+    )
     groups = sorted(data[group_col].astype(str).unique().tolist())
     if len(groups) < 2:
         raise SupervisedLearningContractError("outer LOSO requires at least two participant groups")
