@@ -28,6 +28,15 @@ _OPTIONAL_PROBE_METADATA = (
     "q2_ordinal_4level",
     "window_name",
 )
+_TASK_A_REQUIRED_METADATA = ("probe_event_id", "q1_nominal_4class")
+_NUMERIC_METADATA = {
+    "probe_order_in_block",
+    "probe_index_global",
+    "probe_time_ms",
+    "probe_onset_unix_ms",
+    "q1_nominal_4class",
+    "q2_ordinal_4level",
+}
 
 
 class SupervisedInputMaterializationError(ValueError):
@@ -49,6 +58,36 @@ def _single_nonblank_value(frame: pd.DataFrame, column: str, *, context: str) ->
             f"{context} requires one {column}; got {unique}"
         )
     return str(unique[0])
+
+
+def _strict_bool(values: pd.Series, *, context: str) -> pd.Series:
+    if values.isna().any():
+        raise SupervisedInputMaterializationError(f"{context} contains missing boolean values")
+    normalized = values.astype("string").str.strip().str.lower()
+    true_values = {"true", "1", "1.0", "yes"}
+    false_values = {"false", "0", "0.0", "no"}
+    valid = normalized.isin(true_values | false_values)
+    if not valid.all():
+        bad = sorted(normalized.loc[~valid].dropna().unique().tolist())
+        raise SupervisedInputMaterializationError(
+            f"{context} contains invalid boolean values: {bad}"
+        )
+    return normalized.isin(true_values)
+
+
+def _parse_string_list(value: object, *, context: str) -> list[str]:
+    try:
+        parsed = json.loads(str(value))
+    except json.JSONDecodeError as exc:
+        raise SupervisedInputMaterializationError(f"{context} is not valid JSON") from exc
+    if not isinstance(parsed, list) or not parsed:
+        raise SupervisedInputMaterializationError(f"{context} must be a non-empty JSON list")
+    cleaned = [str(item).strip() for item in parsed]
+    if any(not item for item in cleaned) or len(cleaned) != len(set(cleaned)):
+        raise SupervisedInputMaterializationError(
+            f"{context} contains blank or duplicate values"
+        )
+    return cleaned
 
 
 def _parse_required_features(value: object) -> dict[str, list[str]]:
@@ -98,6 +137,43 @@ def _validate_probe_metadata(metadata: pd.DataFrame) -> pd.DataFrame:
         raise SupervisedInputMaterializationError("probe_metadata contains duplicate canonical probe keys")
     keep = required + [column for column in _OPTIONAL_PROBE_METADATA if column in metadata.columns]
     return metadata[keep].copy()
+
+
+def _merge_probe_metadata(base: pd.DataFrame, metadata: pd.DataFrame) -> pd.DataFrame:
+    key = KEYS + [GROUP]
+    overlapping = [
+        column for column in _OPTIONAL_PROBE_METADATA if column in base.columns and column in metadata.columns
+    ]
+    metadata_columns = [column for column in _OPTIONAL_PROBE_METADATA if column in metadata.columns]
+    authority = metadata[key + metadata_columns].copy()
+    renamed = {column: f"__authority_{column}" for column in overlapping}
+    authority = authority.rename(columns=renamed)
+    merged = base.merge(authority, on=key, how="left", validate="one_to_one")
+
+    for column in overlapping:
+        authority_column = f"__authority_{column}"
+        left = merged[column]
+        right = merged[authority_column]
+        comparable = left.notna() & right.notna()
+        if column in _NUMERIC_METADATA:
+            left_value = pd.to_numeric(left, errors="coerce")
+            right_value = pd.to_numeric(right, errors="coerce")
+            mismatch = comparable & (
+                left_value.isna()
+                | right_value.isna()
+                | ~np.isclose(left_value, right_value, rtol=0.0, atol=1e-6, equal_nan=False)
+            )
+        else:
+            left_value = left.astype("string").str.strip()
+            right_value = right.astype("string").str.strip()
+            mismatch = comparable & left_value.ne(right_value)
+        if mismatch.any():
+            raise SupervisedInputMaterializationError(
+                f"probe_metadata {column} disagrees with analysis-set authority"
+            )
+        merged = merged.drop(columns=[authority_column])
+
+    return merged
 
 
 def materialize_supervised_input(
@@ -151,7 +227,7 @@ def materialize_supervised_input(
             f"probe_feature_status missing required columns: {missing_status}"
         )
 
-    scoped = analysis_sets[analysis_sets["analysis_set_id"].astype(str).eq(set_id)].copy()
+    scoped = analysis_sets[analysis_sets["analysis_set_id"].astype(str).str.strip().eq(set_id)].copy()
     if scoped.empty:
         raise SupervisedInputMaterializationError(
             f"analysis_set_id={set_id!r} is not present in analysis_sets"
@@ -164,12 +240,15 @@ def materialize_supervised_input(
     comparison_models = _single_nonblank_value(
         scoped, "comparison_models", context=f"analysis_set_id={set_id}"
     )
+    _parse_string_list(comparison_models, context=f"comparison_models for {set_id}")
     required_features_raw = _single_nonblank_value(
         scoped, "required_features", context=f"analysis_set_id={set_id}"
     )
     required_features = _parse_required_features(required_features_raw)
 
-    membership_mask = scoped[membership].fillna(False).astype(bool)
+    membership_mask = _strict_bool(
+        scoped[membership], context=f"analysis_set_id={set_id} {membership}"
+    )
     members = scoped.loc[membership_mask].copy()
     if members.empty:
         raise SupervisedInputMaterializationError(
@@ -185,18 +264,26 @@ def materialize_supervised_input(
 
     if probe_metadata is not None:
         metadata = _validate_probe_metadata(probe_metadata)
-        additions = [
-            column
-            for column in _OPTIONAL_PROBE_METADATA
-            if column in metadata.columns and column not in base.columns
-        ]
-        if additions:
-            base = base.merge(
-                metadata[KEYS + [GROUP] + additions],
-                on=KEYS + [GROUP],
-                how="left",
-                validate="one_to_one",
-            )
+        base = _merge_probe_metadata(base, metadata)
+
+    missing_task_a = sorted(set(_TASK_A_REQUIRED_METADATA) - set(base.columns))
+    if missing_task_a:
+        raise SupervisedInputMaterializationError(
+            f"materialized Task-A input missing required metadata: {missing_task_a}"
+        )
+    if base[list(_TASK_A_REQUIRED_METADATA)].isna().any().any():
+        raise SupervisedInputMaterializationError(
+            "materialized Task-A input contains missing probe_event_id or q1_nominal_4class"
+        )
+    if base["probe_event_id"].astype("string").str.strip().eq("").any():
+        raise SupervisedInputMaterializationError(
+            "materialized Task-A input contains blank probe_event_id"
+        )
+    q1 = pd.to_numeric(base["q1_nominal_4class"], errors="coerce")
+    if q1.isna().any() or not q1.isin([1, 2, 3, 4]).all():
+        raise SupervisedInputMaterializationError(
+            "materialized Task-A input requires q1_nominal_4class in {1,2,3,4}"
+        )
 
     status_key = KEYS + [GROUP, "modality", "feature"]
     if probe_feature_status.duplicated(status_key).any():
@@ -207,8 +294,8 @@ def materialize_supervised_input(
     for modality, features in required_features.items():
         for feature in features:
             status = probe_feature_status[
-                probe_feature_status["modality"].astype(str).eq(modality)
-                & probe_feature_status["feature"].astype(str).eq(feature)
+                probe_feature_status["modality"].astype(str).str.strip().eq(modality)
+                & probe_feature_status["feature"].astype(str).str.strip().eq(feature)
             ][
                 KEYS
                 + [
@@ -253,8 +340,11 @@ def materialize_supervised_input(
             else:
                 missing_value = ~finite
                 if missing_value.any():
-                    eligible = base[f"__{feature}_missing_eligible"].astype(bool)
-                    kind = base[f"__{feature}_missing_kind"].astype(str)
+                    eligible = _strict_bool(
+                        base[f"__{feature}_missing_eligible"],
+                        context=f"{modality}:{feature} eligible_for_missing_strategy",
+                    )
+                    kind = base[f"__{feature}_missing_kind"].astype(str).str.strip()
                     illegal = missing_value & (~eligible | kind.ne("single_feature_missing"))
                     if illegal.any():
                         raise SupervisedInputMaterializationError(
