@@ -243,8 +243,17 @@ def validate_registered_features(features: Sequence[RegisteredFeature]) -> tuple
             if feature.allowed_device_packages
             else ()
         )
-        if feature.role == "behavior" and not packages:
-            packages = tuple(DEVICE_PACKAGES)
+        if feature.role == "behavior":
+            if not feature.behavior_reference_eligible and packages:
+                raise FeatureRegistryContractError(
+                    f"{feature_id}: non-reference Behavior feature cannot enter M0-M7 device packages"
+                )
+            if feature.behavior_reference_eligible:
+                if packages and set(packages) != set(DEVICE_PACKAGES):
+                    raise FeatureRegistryContractError(
+                        f"{feature_id}: Behavior-reference features must enter all M0-M7 packages so M0 equals the frozen Behavior reference"
+                    )
+                packages = tuple(DEVICE_PACKAGES)
         for package_id in packages:
             if package_id not in DEVICE_PACKAGES:
                 raise FeatureRegistryContractError(f"{feature_id}: unknown device package {package_id}")
@@ -452,9 +461,10 @@ def build_feature_comparison_plan(features: Sequence[RegisteredFeature]) -> Feat
         selected: list[RegisteredFeature] = []
         seen_scientific: set[str] = set()
         for feature in registry:
-            packages = feature.allowed_device_packages
-            if feature.role == "behavior" and not packages:
-                packages = tuple(DEVICE_PACKAGES)
+            if feature.role == "behavior":
+                packages = tuple(DEVICE_PACKAGES) if feature.behavior_reference_eligible else ()
+            else:
+                packages = feature.allowed_device_packages
             if package_id not in packages:
                 continue
             required = set(feature.required_devices)
