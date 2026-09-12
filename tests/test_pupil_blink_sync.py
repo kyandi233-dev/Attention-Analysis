@@ -3,6 +3,7 @@ import pytest
 
 from attention_pipeline.nir_formal_analysis.pupil_blink_sync import (
     audit_rgb_nir_sync_with_frames,
+    load_session_rgb_blink_frames,
     rgb_blink_source_availability,
 )
 
@@ -63,5 +64,14 @@ def test_event_boundaries_without_frame_axis_remain_usable_with_limited_evidence
 def test_no_rgb_frame_axis_and_no_events_is_unavailable_not_zero_blinks():
     events = pd.DataFrame(columns=["session_id", "start_unix_ms", "end_unix_ms"])
     available, basis = rgb_blink_source_availability(events, None)
+    assert not available
+    assert basis == "rgb_blink_evidence_unavailable_or_ambiguous"
+
+
+def test_missing_rgb_session_file_returns_none_and_stays_unavailable(tmp_path):
+    frames = load_session_rgb_blink_frames(tmp_path, "sub-041")
+    assert frames is None
+    events = pd.DataFrame(columns=["session_id", "start_unix_ms", "end_unix_ms"])
+    available, basis = rgb_blink_source_availability(events, frames)
     assert not available
     assert basis == "rgb_blink_evidence_unavailable_or_ambiguous"
