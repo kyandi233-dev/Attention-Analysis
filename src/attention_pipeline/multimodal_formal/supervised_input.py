@@ -3,6 +3,12 @@
 This layer performs no imputation, scaling, feature selection, or model fitting. It
 only selects an already-defined analysis-set membership and pivots the exact audited
 feature values into a one-row-per-probe wide table for the supervised-learning core.
+
+Scientific modality and producer source namespace are separate. New Task-B analysis
+sets persist ``required_feature_records`` so each predictor is looked up by its
+explicit source namespace and predictor column while ``required_features`` remains
+the scientific-modality -> predictor-column contract verified by Task A. Historical
+analysis sets without these records use an explicit legacy compatibility path.
 """
 from __future__ import annotations
 
@@ -106,7 +112,7 @@ def _parse_required_features(value: object) -> dict[str, list[str]]:
         modality = str(raw_modality).strip()
         if not modality or not isinstance(raw_features, list) or not raw_features:
             raise SupervisedInputMaterializationError(
-                "required_features must map nonblank modality names to non-empty lists"
+                "required_features must map nonblank scientific modality names to non-empty lists"
             )
         features = [str(feature).strip() for feature in raw_features]
         if any(not feature for feature in features) or len(features) != len(set(features)):
@@ -116,12 +122,98 @@ def _parse_required_features(value: object) -> dict[str, list[str]]:
         overlap = seen_feature_names & set(features)
         if overlap:
             raise SupervisedInputMaterializationError(
-                "Task-A wide feature columns must be unique across modalities; "
+                "Task-A wide feature columns must be unique across scientific modalities; "
                 f"duplicate names: {sorted(overlap)}"
             )
         seen_feature_names.update(features)
         normalized[modality] = features
     return normalized
+
+
+def _legacy_feature_records(required_features: Mapping[str, list[str]]) -> list[dict[str, str]]:
+    return [
+        {
+            "feature_id": f"legacy::{modality}::{predictor}",
+            "scientific_modality": modality,
+            "source_namespace": modality,
+            "predictor_column": predictor,
+            "identity_mode": "legacy_source_feature",
+        }
+        for modality, predictors in required_features.items()
+        for predictor in predictors
+    ]
+
+
+def _parse_required_feature_records(
+    value: object,
+    required_features: Mapping[str, list[str]],
+) -> list[dict[str, str]]:
+    try:
+        parsed = json.loads(str(value))
+    except json.JSONDecodeError as exc:
+        raise SupervisedInputMaterializationError(
+            "required_feature_records is not valid JSON"
+        ) from exc
+    if not isinstance(parsed, list) or not parsed:
+        raise SupervisedInputMaterializationError(
+            "required_feature_records must be a non-empty JSON list"
+        )
+
+    records: list[dict[str, str]] = []
+    seen_predictors: set[str] = set()
+    seen_feature_keys: set[tuple[str, str]] = set()
+    for raw in parsed:
+        if not isinstance(raw, Mapping):
+            raise SupervisedInputMaterializationError(
+                "required_feature_records entries must be mappings"
+            )
+        record = {
+            "feature_id": str(raw.get("feature_id", "")).strip(),
+            "scientific_modality": str(raw.get("scientific_modality", "")).strip(),
+            "source_namespace": str(raw.get("source_namespace", "")).strip(),
+            "predictor_column": str(raw.get("predictor_column", "")).strip(),
+            "identity_mode": str(raw.get("identity_mode", "explicit_per_feature")).strip()
+            or "explicit_per_feature",
+        }
+        missing = [
+            field
+            for field in ("feature_id", "scientific_modality", "source_namespace", "predictor_column")
+            if not record[field]
+        ]
+        if missing:
+            raise SupervisedInputMaterializationError(
+                f"required_feature_records entry has blank fields: {missing}"
+            )
+        key = (record["feature_id"], record["predictor_column"])
+        if key in seen_feature_keys:
+            raise SupervisedInputMaterializationError(
+                f"required_feature_records contains duplicate feature identity {key}"
+            )
+        seen_feature_keys.add(key)
+        predictor = record["predictor_column"]
+        if predictor in seen_predictors:
+            raise SupervisedInputMaterializationError(
+                f"predictor column {predictor} is assigned to multiple feature identity records"
+            )
+        seen_predictors.add(predictor)
+        expected = required_features.get(record["scientific_modality"])
+        if expected is None or predictor not in expected:
+            raise SupervisedInputMaterializationError(
+                "required_feature_records scientific_modality/predictor_column does not match required_features: "
+                f"{record['scientific_modality']}:{predictor}"
+            )
+        records.append(record)
+
+    required_predictors = {
+        predictor for predictors in required_features.values() for predictor in predictors
+    }
+    if seen_predictors != required_predictors:
+        raise SupervisedInputMaterializationError(
+            "required_feature_records must cover exactly the required_features predictor union; "
+            f"missing={sorted(required_predictors - seen_predictors)}, "
+            f"extra={sorted(seen_predictors - required_predictors)}"
+        )
+    return records
 
 
 def _validate_probe_metadata(metadata: pd.DataFrame) -> pd.DataFrame:
@@ -257,6 +349,27 @@ def materialize_supervised_input(
         scoped, "required_features", context=f"analysis_set_id={set_id}"
     )
     required_features = _parse_required_features(required_features_raw)
+
+    if "required_feature_records" in scoped.columns:
+        required_feature_records_raw = _single_nonblank_value(
+            scoped, "required_feature_records", context=f"analysis_set_id={set_id}"
+        )
+        required_feature_records = _parse_required_feature_records(
+            required_feature_records_raw, required_features
+        )
+    else:
+        required_feature_records = _legacy_feature_records(required_features)
+        required_feature_records_raw = json.dumps(
+            required_feature_records, ensure_ascii=False, sort_keys=True
+        )
+
+    if "feature_identity_mode" in scoped.columns:
+        feature_identity_mode = _single_nonblank_value(
+            scoped, "feature_identity_mode", context=f"analysis_set_id={set_id}"
+        )
+    else:
+        feature_identity_mode = "legacy_source_feature"
+
     required_outcomes_raw = _single_nonblank_value(
         scoped, "required_outcomes", context=f"analysis_set_id={set_id}"
     )
@@ -277,6 +390,8 @@ def materialize_supervised_input(
     base["membership_type"] = membership
     base["comparison_models"] = comparison_models
     base["required_features"] = required_features_raw
+    base["required_feature_records"] = required_feature_records_raw
+    base["feature_identity_mode"] = feature_identity_mode
     base["required_outcomes"] = required_outcomes_raw
 
     if probe_metadata is not None:
@@ -305,71 +420,81 @@ def materialize_supervised_input(
     status_key = KEYS + [GROUP, "modality", "feature"]
     if probe_feature_status.duplicated(status_key).any():
         raise SupervisedInputMaterializationError(
-            "probe_feature_status contains duplicate probe/modality/feature rows"
+            "probe_feature_status contains duplicate probe/source-namespace/predictor rows"
         )
 
-    for modality, features in required_features.items():
-        for feature in features:
-            status = probe_feature_status[
-                probe_feature_status["modality"].astype(str).str.strip().eq(modality)
-                & probe_feature_status["feature"].astype(str).str.strip().eq(feature)
-            ][
-                KEYS
-                + [
-                    GROUP,
-                    "value",
-                    "feature_computable",
-                    "eligible_for_missing_strategy",
-                    "missing_kind",
-                ]
-            ].copy()
-            if status.empty:
-                raise SupervisedInputMaterializationError(
-                    f"required feature has no Task-B status rows: {modality}:{feature}"
-                )
-            status = status.rename(
-                columns={
-                    "value": feature,
-                    "feature_computable": f"__{feature}_computable",
-                    "eligible_for_missing_strategy": f"__{feature}_missing_eligible",
-                    "missing_kind": f"__{feature}_missing_kind",
-                }
-            )
-            base = base.merge(status, on=KEYS + [GROUP], how="left", validate="one_to_one")
-
-            helper_columns = [
-                f"__{feature}_computable",
-                f"__{feature}_missing_eligible",
-                f"__{feature}_missing_kind",
+    for record in required_feature_records:
+        feature_id = record["feature_id"]
+        scientific_modality = record["scientific_modality"]
+        source_namespace = record["source_namespace"]
+        predictor = record["predictor_column"]
+        status = probe_feature_status[
+            probe_feature_status["modality"].astype(str).str.strip().eq(source_namespace)
+            & probe_feature_status["feature"].astype(str).str.strip().eq(predictor)
+        ][
+            KEYS
+            + [
+                GROUP,
+                "value",
+                "feature_computable",
+                "eligible_for_missing_strategy",
+                "missing_kind",
             ]
-            if base[helper_columns].isna().any().any():
-                raise SupervisedInputMaterializationError(
-                    f"selected membership lacks Task-B status rows for required feature {modality}:{feature}"
-                )
+        ].copy()
+        if status.empty:
+            raise SupervisedInputMaterializationError(
+                "required feature has no Task-B status rows: "
+                f"feature_id={feature_id}, scientific_modality={scientific_modality}, "
+                f"source_namespace={source_namespace}, predictor_column={predictor}"
+            )
+        status = status.rename(
+            columns={
+                "value": predictor,
+                "feature_computable": f"__{predictor}_computable",
+                "eligible_for_missing_strategy": f"__{predictor}_missing_eligible",
+                "missing_kind": f"__{predictor}_missing_kind",
+            }
+        )
+        base = base.merge(status, on=KEYS + [GROUP], how="left", validate="one_to_one")
 
-            numeric = pd.to_numeric(base[feature], errors="coerce")
-            finite = pd.Series(np.isfinite(numeric), index=base.index)
-            if membership == "included_complete":
-                if not finite.all():
+        helper_columns = [
+            f"__{predictor}_computable",
+            f"__{predictor}_missing_eligible",
+            f"__{predictor}_missing_kind",
+        ]
+        if base[helper_columns].isna().any().any():
+            raise SupervisedInputMaterializationError(
+                "selected membership lacks Task-B status rows for required feature "
+                f"{feature_id} ({source_namespace}:{predictor})"
+            )
+
+        numeric = pd.to_numeric(base[predictor], errors="coerce")
+        finite = pd.Series(np.isfinite(numeric), index=base.index)
+        if membership == "included_complete":
+            if not finite.all():
+                raise SupervisedInputMaterializationError(
+                    "included_complete contains non-finite required feature "
+                    f"{feature_id} ({source_namespace}:{predictor})"
+                )
+        else:
+            missing_value = ~finite
+            if missing_value.any():
+                eligible = _strict_bool(
+                    base[f"__{predictor}_missing_eligible"],
+                    context=(
+                        f"{feature_id} ({source_namespace}:{predictor}) "
+                        "eligible_for_missing_strategy"
+                    ),
+                )
+                kind = base[f"__{predictor}_missing_kind"].astype(str).str.strip()
+                illegal = missing_value & (~eligible | kind.ne("single_feature_missing"))
+                if illegal.any():
                     raise SupervisedInputMaterializationError(
-                        f"included_complete contains non-finite required feature {modality}:{feature}"
+                        "included_missing_aware contains a missing value outside residual "
+                        f"single-feature missingness for {feature_id} ({source_namespace}:{predictor})"
                     )
-            else:
-                missing_value = ~finite
-                if missing_value.any():
-                    eligible = _strict_bool(
-                        base[f"__{feature}_missing_eligible"],
-                        context=f"{modality}:{feature} eligible_for_missing_strategy",
-                    )
-                    kind = base[f"__{feature}_missing_kind"].astype(str).str.strip()
-                    illegal = missing_value & (~eligible | kind.ne("single_feature_missing"))
-                    if illegal.any():
-                        raise SupervisedInputMaterializationError(
-                            "included_missing_aware contains a missing value outside residual "
-                            f"single-feature missingness for {modality}:{feature}"
-                        )
-            base[feature] = numeric
-            base = base.drop(columns=helper_columns)
+        base[predictor] = numeric
+        base = base.drop(columns=helper_columns)
 
     sort_columns = [GROUP, "session_id", "block_id", "probe_index_in_block"]
     return base.sort_values(sort_columns, kind="stable").reset_index(drop=True)
