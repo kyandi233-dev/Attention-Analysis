@@ -27,6 +27,7 @@ jobs:
           python -m py_compile \
             src/attention_pipeline/multimodal_formal/quality_admission.py \
             src/attention_pipeline/multimodal_formal/analysis_sets.py \
+            src/attention_pipeline/multimodal_formal/supervised_input.py \
             src/attention_pipeline/multimodal_formal/prediction_archive.py
 
       - name: Run Task B contract tests
