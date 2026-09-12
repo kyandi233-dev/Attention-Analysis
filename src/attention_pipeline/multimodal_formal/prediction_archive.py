@@ -37,7 +37,6 @@ _ALLOWED_MEMBERSHIP_COLUMNS = frozenset({"included_complete", "included_missing_
 
 
 def _strict_bool_series(values: pd.Series, *, context: str) -> pd.Series:
-    """Parse booleans without Python's ``bool('False') == True`` trap."""
     if values.isna().any():
         raise ValueError(f"{context} contains missing boolean values")
     if pd.api.types.is_bool_dtype(values.dtype):
@@ -78,7 +77,6 @@ def _parse_json_string_list(value: object, *, context: str) -> list[str]:
 
 
 def _declared_models(analysis_sets: pd.DataFrame) -> dict[str, list[str]]:
-    """Read the authoritative per-set model scope; never infer it from predictions."""
     if "comparison_models" not in analysis_sets.columns:
         raise ValueError("analysis_sets must declare comparison_models for formal prediction archive validation")
     declared: dict[str, list[str]] = {}
@@ -94,7 +92,6 @@ def _declared_models(analysis_sets: pd.DataFrame) -> dict[str, list[str]]:
 
 
 def _declared_outcomes(analysis_sets: pd.DataFrame) -> dict[str, list[str]]:
-    """Map the authoritative Task-B outcome scope onto archive outcome identifiers."""
     if "required_outcomes" not in analysis_sets.columns:
         raise ValueError("analysis_sets must declare required_outcomes for formal prediction archive validation")
     declared: dict[str, list[str]] = {}
@@ -107,10 +104,7 @@ def _declared_outcomes(analysis_sets: pd.DataFrame) -> dict[str, list[str]]:
             raise ValueError(f"analysis_set_id={set_id} declares no expected outcomes")
         mapped: list[str] = []
         for outcome in raw:
-            if outcome == Q1_AUTHORITY_COLUMN:
-                mapped.append(TASK_A_Q1_OUTCOME)
-            else:
-                mapped.append(outcome)
+            mapped.append(TASK_A_Q1_OUTCOME if outcome == Q1_AUTHORITY_COLUMN else outcome)
         declared[str(set_id)] = mapped
     return declared
 
@@ -154,7 +148,6 @@ def normalize_task_a_predictions(
     missing = sorted(required - set(predictions.columns))
     if missing:
         raise ValueError(f"Task-A predictions missing columns for archive adapter: {missing}")
-
     out = predictions.copy()
     out["probe_index_in_block"] = _probe_index_from_task_a(out)
     if out["probe_index_in_block"].isna().any():
@@ -207,6 +200,19 @@ def _validate_q1_authority_consistency(analysis_sets: pd.DataFrame) -> None:
         raise ValueError("authoritative Q1 disagrees across analysis_set_id copies of the same probe")
 
 
+def _run_ids_by_analysis_set(predictions: pd.DataFrame) -> dict[str, str]:
+    """Require one Task-A run per analysis set while allowing a multi-set archive."""
+    mapping: dict[str, str] = {}
+    for set_id, rows in predictions.groupby("analysis_set_id", sort=False):
+        values = rows["run_id"].astype(str).str.strip().unique().tolist()
+        if len(values) != 1:
+            raise ValueError(
+                f"analysis_set_id={set_id} must contain exactly one run_id; got {values}"
+            )
+        mapping[str(set_id)] = values[0]
+    return mapping
+
+
 def validate_prediction_archive(
     predictions: pd.DataFrame,
     analysis_sets: pd.DataFrame,
@@ -233,14 +239,7 @@ def validate_prediction_archive(
         raise ValueError(f"predictions missing columns: {missing}")
     set_required = set(
         KEYS
-        + [
-            GROUP,
-            "analysis_set_id",
-            membership_column,
-            "comparison_models",
-            "required_outcomes",
-            Q1_AUTHORITY_COLUMN,
-        ]
+        + [GROUP, "analysis_set_id", membership_column, "comparison_models", "required_outcomes", Q1_AUTHORITY_COLUMN]
     )
     missing_set = sorted(set_required - set(analysis_sets.columns))
     if missing_set:
@@ -253,9 +252,7 @@ def validate_prediction_archive(
         raise ValueError("duplicate analysis-set membership rows")
 
     _require_nonblank(predictions, "run_id")
-    run_ids = predictions["run_id"].astype(str).str.strip().unique().tolist()
-    if len(run_ids) != 1:
-        raise ValueError(f"prediction archive must contain exactly one run_id; got {run_ids}")
+    run_id_by_set = _run_ids_by_analysis_set(predictions)
     _require_nonblank(predictions, MEMBERSHIP_TYPE_COLUMN)
     failed = _strict_bool_series(predictions["model_failed"], context="prediction model_failed")
     successful = ~failed
@@ -346,9 +343,7 @@ def validate_prediction_archive(
     if not observed_y.equals(expected_y):
         raise ValueError("prediction y_true disagrees with Behavior-authoritative Q1 label")
 
-    expected_membership = membership[membership["__requested_membership"]][
-        KEYS + [GROUP, "analysis_set_id"]
-    ]
+    expected_membership = membership[membership["__requested_membership"]][KEYS + [GROUP, "analysis_set_id"]]
     coverage_rows: list[dict[str, Any]] = []
     for set_id in requested_sets:
         expected_set = expected_membership[expected_membership["analysis_set_id"].astype(str).eq(set_id)]
@@ -392,7 +387,8 @@ def validate_prediction_archive(
         "status": "PASS_PREDICTION_ARCHIVE",
         "membership_column": membership_column,
         "requested_analysis_set_ids": requested_sets,
-        "run_ids": run_ids,
+        "run_ids": sorted(set(run_id_by_set.values())),
+        "run_id_by_analysis_set": run_id_by_set,
         "prediction_n": int(len(predictions)),
         "successful_prediction_n": int(successful.sum()),
         "failed_prediction_n": int(failed.sum()),
