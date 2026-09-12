@@ -1,13 +1,18 @@
 pipeline:
   name: focuswave-behavior-supervised-candidates-v1
-  version: 1.0.0
-  authority: FocusWave-Formal-Analysis/analysis-design-1.15.5-1.15.7
+  version: 1.1.0
+  authority:
+    - FocusWave-Formal-Analysis/分析设计/1.16.4-单模态特征冻结与真实运行闸门_20260912.md
+    - FocusWave-Formal-Analysis/分析设计/1.16.10-监督学习模态与设备定义修订及代码迁移计划_20260912.md
+    - FocusWave-Formal-Analysis/分析设计/1.16.12-单模态科研输出绘图与特征交接计划_20260913.md
 
 source:
   table: behavior_supervised_probe_30s.csv
   analysis_unit: probe
   primary_window_seconds: 30
   one_row_per_probe: true
+  scientific_modality: behavior
+  source_namespace: behavior
 
 identity_and_locators:
   - participant_group_id
@@ -27,21 +32,24 @@ candidate_dimensions:
   rt_level:
     columns: [go_correct_rt_mean_ms, go_correct_rt_median_ms]
     one_representative_per_feature_scheme: true
-    final_choice: pending
+    final_choice: researcher_freeze_pending_mean_vs_median
   rt_variability:
     preferred_current: go_correct_rt_cv
     limited_alternatives: [go_correct_rt_sd_ms, go_correct_rt_mad_ms, go_correct_rt_iqr_ms]
     one_representative_per_feature_scheme: true
-    final_choice: pending
+    final_choice: frozen_go_correct_rt_cv
+    rt_cv_min_n: 2
+    rt_cv_min_n_role: mathematical_sample_sd_minimum_only
   rt_trend:
     columns: [go_correct_rt_theilsen_slope_ms_per_s]
     final_choice: frozen_behavior_producer_definition
   omission:
     columns: [raw_go_omission_rate]
     final_choice: frozen_raw_only
-  error_control:
-    columns: [commission_rate, dprime_loglinear]
-    final_choice: pending_whether_both_retained
+  inhibitory_error:
+    primary: [commission_rate]
+    sensitivity_alternative: [dprime_loglinear]
+    final_choice: frozen_commission_primary_dprime_sensitivity
 
 descriptive_qc_sensitivity_only:
   - clean_go_omission_rate
@@ -51,20 +59,37 @@ descriptive_qc_sensitivity_only:
   - omission_prestimulus_and_carryover_ambiguity_rate
   - late_go_response_candidate_rate
   - anticipatory_go_response_candidate_rate
+  - go_correct_rt_sd_ms
+  - go_correct_rt_mad_ms
+  - go_correct_rt_iqr_ms
+  - dprime_loglinear
 
 compatibility_aliases_not_independent_predictors:
   omission_rate: raw_go_omission_rate
   omission_no_detected_motor_timing_ambiguity_rate: clean_go_omission_rate
   omission_motor_timing_ambiguous_rate: timing_ambiguous_go_omission_rate
 
+handoff_contract:
+  feature_registry_mutation_allowed: false
+  scientific_modality: behavior
+  source_namespace: behavior
+  required_devices: []
+  preprocessing_dependencies: []
+  temporal_anchor: probe_time_ms
+  temporal_scope: pre_probe_only
+  time_legality_status: verified_pre_probe_only
+  researcher_freeze_remaining:
+    - behavior_rt_level_mean_vs_median
+
 policies:
-  no_imputation_in_task_c_interface: true
-  no_row_deletion_by_feature_coverage_in_task_c: true
+  no_imputation_in_producer_handoff: true
+  no_row_deletion_by_feature_coverage_in_producer_handoff: true
   no_full_cohort_empirical_redundancy_selection: true
-  analysis_set_id_generated_by_task_c: false
-  analysis_set_id_owned_by_task_b: true
-  data_dependent_selection_owned_by_task_a_training_boundary: true
+  comparison_analysis_set_owned_by_common_sample_layer: true
+  data_dependent_selection_must_remain_inside_training_boundary: true
   all_nonraw_omission_rates_not_first_round_predictors: true
   rt_cv_empirical_minimum_n_gate: false
   rt_level_choice_not_frozen_here: true
-  commission_dprime_joint_retention_not_frozen_here: true
+  commission_is_first_round_primary: true
+  dprime_is_sensitivity_not_joint_primary: true
+  q1_q2_significance_not_feature_freeze_criterion: true
