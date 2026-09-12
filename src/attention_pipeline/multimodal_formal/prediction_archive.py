@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 import numpy as np
 import pandas as pd
@@ -23,6 +23,27 @@ REQUIRED_IDENTITY_COLUMNS = KEYS + [
 PREDICTION_KEY = KEYS + [GROUP, "analysis_set_id", "outcome", "model_id"]
 TASK_A_Q1_OUTCOME = "q1_equals_1_vs_2_3_4"
 TASK_A_Q1_PROBABILITY_COLUMN = "p_q1_equals_1"
+Q1_AUTHORITY_COLUMN = "q1_nominal_4class"
+MEMBERSHIP_TYPE_COLUMN = "membership_type"
+_ALLOWED_MEMBERSHIP_COLUMNS = frozenset({"included_complete", "included_missing_aware"})
+
+
+def _parse_json_string_list(value: object, *, context: str) -> list[str]:
+    if pd.isna(value):
+        return []
+    raw = str(value).strip()
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid JSON list for {context}") from exc
+    if not isinstance(parsed, list) or any(not isinstance(x, str) or not x.strip() for x in parsed):
+        raise ValueError(f"{context} must be a JSON string list")
+    cleaned = [x.strip() for x in parsed]
+    if len(cleaned) != len(set(cleaned)):
+        raise ValueError(f"duplicate values in {context}")
+    return cleaned
 
 
 def _declared_models(analysis_sets: pd.DataFrame) -> dict[str, list[str]]:
@@ -36,16 +57,36 @@ def _declared_models(analysis_sets: pd.DataFrame) -> dict[str, list[str]]:
             continue
         if len(values) != 1:
             raise ValueError(f"inconsistent comparison_models within analysis_set_id={set_id}")
-        raw = values[0]
-        try:
-            parsed = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"invalid comparison_models JSON for {set_id}") from exc
-        if not isinstance(parsed, list) or any(not isinstance(x, str) or not x for x in parsed):
-            raise ValueError(f"comparison_models must be a JSON string list for {set_id}")
-        if len(parsed) != len(set(parsed)):
-            raise ValueError(f"duplicate model ids in comparison_models for {set_id}")
-        declared[str(set_id)] = parsed
+        declared[str(set_id)] = _parse_json_string_list(
+            values[0], context=f"comparison_models for {set_id}"
+        )
+    return declared
+
+
+def _declared_outcomes(analysis_sets: pd.DataFrame) -> dict[str, list[str]]:
+    """Map Task-B required outcomes onto archive outcome identifiers.
+
+    The first-round supervised archive currently has one formal target: binary Q1.
+    Task B records that target upstream as ``q1_nominal_4class``; the archive records
+    the derived task name ``q1_equals_1_vs_2_3_4``.
+    """
+    if "required_outcomes" not in analysis_sets.columns:
+        return {}
+    declared: dict[str, list[str]] = {}
+    for set_id, rows in analysis_sets.groupby("analysis_set_id", sort=False):
+        values = rows["required_outcomes"].dropna().astype(str).unique().tolist()
+        if not values:
+            continue
+        if len(values) != 1:
+            raise ValueError(f"inconsistent required_outcomes within analysis_set_id={set_id}")
+        raw = _parse_json_string_list(values[0], context=f"required_outcomes for {set_id}")
+        mapped: list[str] = []
+        for outcome in raw:
+            if outcome == Q1_AUTHORITY_COLUMN:
+                mapped.append(TASK_A_Q1_OUTCOME)
+            else:
+                mapped.append(outcome)
+        declared[str(set_id)] = mapped
     return declared
 
 
@@ -69,7 +110,8 @@ def normalize_task_a_predictions(
     """Normalize current Task-A runner output into the Task-B archive schema.
 
     This is a schema adapter only. It does not recompute labels/probabilities, alter folds,
-    discard failed model rows, or perform any training/model selection.
+    discard failed model rows, or perform any training/model selection. Additional Task-A
+    audit fields such as ``run_id``, ``feature_set_id`` and ``membership_type`` are retained.
     """
     required = {
         "session_id",
@@ -104,14 +146,67 @@ def normalize_task_a_predictions(
     return out
 
 
+def _resolve_requested_sets(
+    analysis_sets: pd.DataFrame,
+    requested_analysis_set_ids: Sequence[str] | None,
+) -> list[str]:
+    available = analysis_sets["analysis_set_id"].dropna().astype(str).drop_duplicates().tolist()
+    if requested_analysis_set_ids is None:
+        requested = available
+    else:
+        requested = [str(x).strip() for x in requested_analysis_set_ids]
+        if not requested or any(not x for x in requested):
+            raise ValueError("requested_analysis_set_ids must contain nonblank set ids")
+        if len(requested) != len(set(requested)):
+            raise ValueError("requested_analysis_set_ids contains duplicates")
+        unknown = sorted(set(requested) - set(available))
+        if unknown:
+            raise ValueError(f"requested analysis_set_id not present in analysis_sets: {unknown}")
+    if not requested:
+        raise ValueError("analysis_sets contains no requested analysis_set_id")
+    return requested
+
+
+def _validate_q1_authority_consistency(analysis_sets: pd.DataFrame) -> None:
+    """Ensure copied Behavior-authoritative Q1 cannot disagree across analysis sets."""
+    if Q1_AUTHORITY_COLUMN not in analysis_sets.columns:
+        return
+    authority = analysis_sets[KEYS + [GROUP, Q1_AUTHORITY_COLUMN]].copy()
+    authority = authority.dropna(subset=[Q1_AUTHORITY_COLUMN])
+    if authority.empty:
+        return
+    numeric = pd.to_numeric(authority[Q1_AUTHORITY_COLUMN], errors="coerce")
+    if numeric.isna().any() or not numeric.isin([1, 2, 3, 4]).all():
+        raise ValueError("analysis_sets contains invalid authoritative Q1 values")
+    authority[Q1_AUTHORITY_COLUMN] = numeric.astype(int)
+    counts = authority.groupby(KEYS + [GROUP], dropna=False)[Q1_AUTHORITY_COLUMN].nunique()
+    if (counts > 1).any():
+        raise ValueError("authoritative Q1 disagrees across analysis_set_id copies of the same probe")
+
+
 def validate_prediction_archive(
     predictions: pd.DataFrame,
     analysis_sets: pd.DataFrame,
     *,
     membership_column: str = "included_complete",
     require_complete: bool = True,
+    requested_analysis_set_ids: Sequence[str] | None = None,
 ) -> dict[str, Any]:
-    """Validate identity, LOSO ownership, probability semantics and set coverage."""
+    """Validate identity, authority, LOSO ownership and expected archive coverage.
+
+    Expected coverage is generated from the requested Task-B analysis sets, their
+    declared models and their required outcomes. It is never inferred only from rows
+    that happen to be present in ``predictions``.
+    """
+    if predictions.empty:
+        raise ValueError("predictions archive is empty")
+    if analysis_sets.empty:
+        raise ValueError("analysis_sets is empty")
+    if membership_column not in _ALLOWED_MEMBERSHIP_COLUMNS:
+        raise ValueError(
+            f"unsupported membership_column={membership_column!r}; expected one of {sorted(_ALLOWED_MEMBERSHIP_COLUMNS)}"
+        )
+
     required_prediction_columns = set(REQUIRED_IDENTITY_COLUMNS + ["y_pred", "probability_positive"])
     missing = sorted(required_prediction_columns - set(predictions.columns))
     if missing:
@@ -127,6 +222,21 @@ def validate_prediction_archive(
         raise ValueError("duplicate per-probe prediction key")
     if analysis_sets.duplicated(KEYS + [GROUP, "analysis_set_id"]).any():
         raise ValueError("duplicate analysis-set membership rows")
+
+    requested_sets = _resolve_requested_sets(analysis_sets, requested_analysis_set_ids)
+    scoped_sets = analysis_sets[analysis_sets["analysis_set_id"].astype(str).isin(requested_sets)].copy()
+    observed_sets = set(predictions["analysis_set_id"].astype(str).unique().tolist())
+    unexpected_sets = sorted(observed_sets - set(requested_sets))
+    if unexpected_sets:
+        raise ValueError(f"predictions contain analysis_set_id outside requested scope: {unexpected_sets}")
+
+    if MEMBERSHIP_TYPE_COLUMN in predictions.columns:
+        membership_values = predictions[MEMBERSHIP_TYPE_COLUMN].dropna().astype(str).str.strip().unique().tolist()
+        if len(membership_values) != 1 or membership_values[0] != membership_column:
+            raise ValueError(
+                f"prediction membership_type must equal requested membership_column={membership_column}; "
+                f"got {membership_values}"
+            )
 
     if not predictions["outer_fold_group"].astype(str).eq(predictions[GROUP].astype(str)).all():
         raise ValueError("LOSO outer_fold_group must equal the held-out participant_group_id")
@@ -144,17 +254,13 @@ def validate_prediction_archive(
     y_pred = pd.to_numeric(predictions.loc[successful, "y_pred"], errors="coerce")
     if not y_pred.isin([0, 1]).all():
         raise ValueError("successful binary predictions require y_pred in {0,1}")
-    proba = pd.to_numeric(
-        predictions.loc[successful, "probability_positive"], errors="coerce"
-    )
+    proba = pd.to_numeric(predictions.loc[successful, "probability_positive"], errors="coerce")
     if not np.isfinite(proba).all() or not proba.between(0, 1).all():
         raise ValueError("successful probability_positive must be finite and in [0,1]")
 
     if failed.any():
         failed_y = pd.to_numeric(predictions.loc[failed, "y_pred"], errors="coerce")
-        failed_p = pd.to_numeric(
-            predictions.loc[failed, "probability_positive"], errors="coerce"
-        )
+        failed_p = pd.to_numeric(predictions.loc[failed, "probability_positive"], errors="coerce")
         if failed_y.notna().any() or failed_p.notna().any():
             raise ValueError("failed model rows must not contain fabricated predictions/probabilities")
         if "failure_reason" in predictions.columns:
@@ -162,24 +268,28 @@ def validate_prediction_archive(
             if reason.eq("").any():
                 raise ValueError("failed model rows require failure_reason")
 
-    declared = _declared_models(analysis_sets)
-    for set_id, models in declared.items():
-        if not models:
-            continue
-        observed_models = set(
-            predictions.loc[
-                predictions["analysis_set_id"].astype(str).eq(set_id), "model_id"
-            ]
-            .astype(str)
-            .unique()
-        )
-        undeclared = observed_models - set(models)
-        if undeclared:
-            raise ValueError(
-                f"prediction model_id not declared for {set_id}: {sorted(undeclared)}"
-            )
+    declared_models = _declared_models(scoped_sets)
+    declared_outcomes = _declared_outcomes(scoped_sets)
+    for set_id, set_predictions in predictions.groupby("analysis_set_id", sort=False):
+        models = declared_models.get(str(set_id), [])
+        if models:
+            observed_models = set(set_predictions["model_id"].astype(str).unique().tolist())
+            undeclared = observed_models - set(models)
+            if undeclared:
+                raise ValueError(f"prediction model_id not declared for {set_id}: {sorted(undeclared)}")
+        expected_outcomes = declared_outcomes.get(str(set_id), [])
+        if expected_outcomes:
+            observed_outcomes = set(set_predictions["outcome"].astype(str).unique().tolist())
+            undeclared_outcomes = observed_outcomes - set(expected_outcomes)
+            if undeclared_outcomes:
+                raise ValueError(
+                    f"prediction outcome not declared for {set_id}: {sorted(undeclared_outcomes)}"
+                )
 
-    membership = analysis_sets[KEYS + [GROUP, "analysis_set_id", membership_column]].copy()
+    membership_columns = KEYS + [GROUP, "analysis_set_id", membership_column]
+    if Q1_AUTHORITY_COLUMN in scoped_sets.columns:
+        membership_columns.append(Q1_AUTHORITY_COLUMN)
+    membership = scoped_sets[membership_columns].copy()
     merged = predictions.merge(
         membership,
         on=KEYS + [GROUP, "analysis_set_id"],
@@ -191,24 +301,39 @@ def validate_prediction_archive(
     if not merged[membership_column].astype(bool).all():
         raise ValueError("prediction emitted for probe outside requested analysis-set membership")
 
-    expected = membership[membership[membership_column].astype(bool)][
+    _validate_q1_authority_consistency(scoped_sets)
+    if Q1_AUTHORITY_COLUMN in merged.columns:
+        q1_rows = merged["outcome"].astype(str).isin({TASK_A_Q1_OUTCOME, "q1_binary"})
+        if q1_rows.any():
+            q1 = pd.to_numeric(merged.loc[q1_rows, Q1_AUTHORITY_COLUMN], errors="coerce")
+            if q1.isna().any() or not q1.isin([1, 2, 3, 4]).all():
+                raise ValueError("Q1 prediction rows lack a valid Behavior-authoritative Q1 label")
+            expected_y = q1.eq(1).astype(int).reset_index(drop=True)
+            observed_y = pd.to_numeric(merged.loc[q1_rows, "y_true"], errors="coerce").astype(int).reset_index(drop=True)
+            if not observed_y.equals(expected_y):
+                raise ValueError("prediction y_true disagrees with Behavior-authoritative Q1 label")
+
+    expected_membership = membership[membership[membership_column].astype(bool)][
         KEYS + [GROUP, "analysis_set_id"]
     ]
     coverage_rows: list[dict[str, Any]] = []
 
-    # Outcomes are observed archive dimensions; within each outcome, every model declared
-    # by the comparison contract must cover the same requested analysis set. Failed model
-    # rows still count toward row coverage, while their prediction values remain explicitly null.
-    for set_id, set_predictions in predictions.groupby("analysis_set_id", sort=False):
-        expected_set = expected[expected["analysis_set_id"].eq(set_id)]
-        outcomes = set_predictions["outcome"].astype(str).unique().tolist()
-        expected_models = declared.get(str(set_id)) or sorted(
-            set_predictions["model_id"].astype(str).unique().tolist()
-        )
-        for outcome in outcomes:
-            outcome_rows = set_predictions[
-                set_predictions["outcome"].astype(str).eq(outcome)
-            ]
+    for set_id in requested_sets:
+        expected_set = expected_membership[expected_membership["analysis_set_id"].astype(str).eq(set_id)]
+        set_predictions = predictions[predictions["analysis_set_id"].astype(str).eq(set_id)]
+        expected_models = declared_models.get(str(set_id), [])
+        if not expected_models:
+            expected_models = sorted(set_predictions["model_id"].astype(str).unique().tolist())
+        expected_outcomes = declared_outcomes.get(str(set_id), [])
+        if not expected_outcomes:
+            expected_outcomes = sorted(set_predictions["outcome"].astype(str).unique().tolist())
+        if not expected_models:
+            raise ValueError(f"no expected models declared or observed for analysis_set_id={set_id}")
+        if not expected_outcomes:
+            raise ValueError(f"no expected outcomes declared or observed for analysis_set_id={set_id}")
+
+        for outcome in expected_outcomes:
+            outcome_rows = set_predictions[set_predictions["outcome"].astype(str).eq(outcome)]
             for model_id in expected_models:
                 rows = outcome_rows[outcome_rows["model_id"].astype(str).eq(model_id)]
                 actual = rows[KEYS + [GROUP, "analysis_set_id"]]
@@ -246,12 +371,14 @@ def validate_prediction_archive(
     return {
         "status": "PASS_PREDICTION_ARCHIVE",
         "membership_column": membership_column,
+        "requested_analysis_set_ids": requested_sets,
         "prediction_n": int(len(predictions)),
         "successful_prediction_n": int(successful.sum()),
         "failed_prediction_n": int(failed.sum()),
-        "analysis_set_n": int(predictions["analysis_set_id"].nunique()),
+        "analysis_set_n": int(len(requested_sets)),
         "model_n": int(predictions["model_id"].nunique()),
         "outcome_n": int(predictions["outcome"].nunique()),
+        "authoritative_q1_checked": bool(Q1_AUTHORITY_COLUMN in merged.columns),
         "coverage": coverage_rows,
     }
 
@@ -263,12 +390,14 @@ def write_prediction_archive(
     *,
     membership_column: str = "included_complete",
     require_complete: bool = True,
+    requested_analysis_set_ids: Sequence[str] | None = None,
 ) -> dict[str, str]:
     audit = validate_prediction_archive(
         predictions,
         analysis_sets,
         membership_column=membership_column,
         require_complete=require_complete,
+        requested_analysis_set_ids=requested_analysis_set_ids,
     )
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
