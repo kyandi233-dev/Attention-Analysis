@@ -1,8 +1,11 @@
-"""Predeclared feature-scheme contracts for the current Q1 mainline.
+"""Structural feature-scheme contracts for the current Q1 supervised core.
 
-Feature schemes define scientifically allowed candidate representations before a
-model sees outer-test data. They do not perform empirical filtering themselves;
-training-split-only column handling belongs to ``preprocessing.py``.
+Scientific eligibility is frozen upstream in the feature registry.  This module
+only guards against structural leakage/misuse (outcomes, generated predictions,
+identity/audit keys, and participant-specific zero-calibration features) and
+checks that declared predictor columns are present.  It does not decide whether
+a scientifically meaningful variable such as Q2, an omission variant, or a pupil
+metric belongs in the current study; those choices belong to the frozen registry.
 """
 from __future__ import annotations
 
@@ -14,31 +17,26 @@ import pandas as pd
 from .task import Q1_BINARY_SPEC, SupervisedLearningContractError
 
 
-_MAINLINE_FORBIDDEN_COLUMNS: dict[str, str] = {
+_STRUCTURAL_FORBIDDEN_COLUMNS: dict[str, str] = {
     Q1_BINARY_SPEC.source_column: "outcome label cannot be used as a predictor",
     "q1_binary": "derived outcome label cannot be used as a predictor",
     Q1_BINARY_SPEC.positive_probability_name: "supervised output probability cannot be recycled as a predictor",
     "predicted_q1_binary": "supervised output label cannot be recycled as a predictor",
-    "q2_ordinal_4level": "Q2 is interpretation/construct validation, not a first-round Q1 predictor",
-    "omission_rate": "historical alias duplicates raw_go_omission_rate",
-    "clean_go_omission_rate": "clean omission is descriptive/QC only in the first-round mainline",
-    "timing_ambiguous_go_omission_rate": "timing-ambiguous omission is descriptive/QC only in the first-round mainline",
-    "hard_pupil_fraction": "historical validated field is outside the first-round NIR mainline",
     "participant_group_id": "participant identity is a grouping key, not a predictor",
     "repeat_participant_id": "participant identity alias is not a predictor",
     "session_id": "session locator is not a predictor",
     "block_id": "block locator is not a predictor",
     "probe_event_id": "probe locator is not a predictor",
     "probe_id": "probe locator is not a predictor",
-    "probe_order_in_block": "probe locator/order is audit metadata, not a first-round predictor",
-    "probe_index_in_block": "probe locator/order is audit metadata, not a first-round predictor",
-    "probe_index_global": "probe locator/order is audit metadata, not a first-round predictor",
-    "probe_time_ms": "probe timestamp is audit metadata, not a first-round predictor",
-    "probe_onset_unix_ms": "probe timestamp is audit metadata, not a first-round predictor",
+    "probe_order_in_block": "probe locator/order is audit metadata, not a predictor",
+    "probe_index_in_block": "probe locator/order is audit metadata, not a predictor",
+    "probe_index_global": "probe locator/order is audit metadata, not a predictor",
+    "probe_time_ms": "raw probe timestamp is audit metadata, not a predictor",
+    "probe_onset_unix_ms": "raw probe timestamp is audit metadata, not a predictor",
     "window_name": "window locator is not a predictor",
-    "window_start_unix_ms": "window boundary is audit metadata, not a first-round predictor",
-    "window_effective_start_unix_ms": "window boundary is audit metadata, not a first-round predictor",
-    "window_end_unix_ms": "window boundary is audit metadata, not a first-round predictor",
+    "window_start_unix_ms": "window boundary is audit metadata, not a predictor",
+    "window_effective_start_unix_ms": "window boundary is audit metadata, not a predictor",
+    "window_end_unix_ms": "window boundary is audit metadata, not a predictor",
     "analysis_set_id": "analysis-set identity is audit metadata, not a predictor",
     "run_id": "run identity is audit metadata, not a predictor",
     "model_id": "model identity is audit metadata, not a predictor",
@@ -49,7 +47,7 @@ _FORBIDDEN_SUFFIXES = ("_within", "_between")
 
 @dataclass(frozen=True)
 class FeatureScheme:
-    """One scientifically predeclared candidate predictor representation."""
+    """One predeclared candidate predictor representation."""
 
     feature_set_id: str
     columns: tuple[str, ...]
@@ -66,7 +64,7 @@ class FeatureScheme:
 
 
 def validate_mainline_feature_scheme(scheme: FeatureScheme) -> None:
-    """Fail closed when a candidate violates the current first-round contract."""
+    """Fail closed on structural leakage or malformed candidate definitions."""
     if not scheme.feature_set_id.strip():
         raise SupervisedLearningContractError("feature_set_id must be non-empty")
     if not scheme.columns:
@@ -88,9 +86,9 @@ def validate_mainline_feature_scheme(scheme: FeatureScheme) -> None:
         )
 
     for col in scheme.columns:
-        if col in _MAINLINE_FORBIDDEN_COLUMNS:
+        if col in _STRUCTURAL_FORBIDDEN_COLUMNS:
             raise SupervisedLearningContractError(
-                f"feature {col} is forbidden in first-round mainline: {_MAINLINE_FORBIDDEN_COLUMNS[col]}"
+                f"feature {col} is structurally forbidden as a predictor: {_STRUCTURAL_FORBIDDEN_COLUMNS[col]}"
             )
         if col.endswith(_FORBIDDEN_SUFFIXES):
             raise SupervisedLearningContractError(
