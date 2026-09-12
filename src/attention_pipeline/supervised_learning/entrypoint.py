@@ -28,6 +28,7 @@ from .task import Q1_BINARY_SPEC, SupervisedLearningContractError
 FORMAL_PARTICIPANT_GROUP_COLUMN = "participant_group_id"
 FORMAL_ANALYSIS_SET_COLUMN = "analysis_set_id"
 FORMAL_COMPARISON_MODELS_COLUMN = "comparison_models"
+FORMAL_REQUIRED_FEATURES_COLUMN = "required_features"
 FORMAL_INNER_SPLITS = 5
 
 
@@ -249,12 +250,7 @@ def _parse_comparison_models(value: object) -> tuple[str, ...]:
 
 
 def _require_comparison_models(frame: pd.DataFrame) -> tuple[str, ...]:
-    """Read the one comparison-specific model list supplied by Task B.
-
-    Task B builds one analysis_set_id per requested comparison.  A registry-backed
-    Task A run therefore consumes only the models declared for that set instead of
-    forcing every registry model onto one global common sample.
-    """
+    """Read the one comparison-specific model list supplied by Task B."""
     if FORMAL_COMPARISON_MODELS_COLUMN not in frame.columns:
         raise SupervisedLearningContractError(
             "registry-backed formal input must contain comparison_models supplied by the B-layer analysis-set contract"
@@ -268,6 +264,95 @@ def _require_comparison_models(frame: pd.DataFrame) -> tuple[str, ...]:
             f"one analysis_set_id must declare one comparison_models list; got {sorted(unique)}"
         )
     return parsed_rows[0]
+
+
+def _parse_required_features(value: object) -> tuple[tuple[str, tuple[str, ...]], ...]:
+    if not isinstance(value, str) or not value.strip():
+        raise SupervisedLearningContractError("required_features must be a nonblank JSON mapping")
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise SupervisedLearningContractError(f"required_features is not valid JSON: {exc}") from exc
+    if not isinstance(parsed, Mapping) or not parsed:
+        raise SupervisedLearningContractError("required_features must be a non-empty modality-to-feature mapping")
+    normalized: list[tuple[str, tuple[str, ...]]] = []
+    seen: set[str] = set()
+    for raw_modality, raw_features in parsed.items():
+        modality = str(raw_modality).strip()
+        if not modality or not isinstance(raw_features, list) or not raw_features:
+            raise SupervisedLearningContractError(
+                "required_features must map nonblank modalities to non-empty feature lists"
+            )
+        features = tuple(str(item).strip() for item in raw_features)
+        if any(not item for item in features) or len(set(features)) != len(features):
+            raise SupervisedLearningContractError(
+                f"required_features[{modality}] contains blank or duplicate feature names"
+            )
+        overlap = seen & set(features)
+        if overlap:
+            raise SupervisedLearningContractError(
+                f"required_features repeats predictor columns across modalities: {sorted(overlap)}"
+            )
+        seen.update(features)
+        normalized.append((modality, features))
+    return tuple(sorted(normalized, key=lambda item: item[0]))
+
+
+def _require_required_feature_columns(frame: pd.DataFrame) -> tuple[str, ...]:
+    """Read the exact sample-defining feature scope supplied by Task B."""
+    if FORMAL_REQUIRED_FEATURES_COLUMN not in frame.columns:
+        raise SupervisedLearningContractError(
+            "registry-backed formal input must contain required_features supplied by the B-layer analysis-set contract"
+        )
+    if frame[FORMAL_REQUIRED_FEATURES_COLUMN].isna().any():
+        raise SupervisedLearningContractError("required_features contains missing values")
+    parsed_rows = [_parse_required_features(value) for value in frame[FORMAL_REQUIRED_FEATURES_COLUMN].tolist()]
+    unique = set(parsed_rows)
+    if len(unique) != 1:
+        raise SupervisedLearningContractError(
+            "one analysis_set_id must declare one required_features mapping"
+        )
+    required = next(iter(unique))
+    return tuple(feature for _, features in required for feature in features)
+
+
+def _model_predictor_union(families: Mapping[str, Sequence[FeatureScheme]]) -> tuple[str, ...]:
+    columns: list[str] = []
+    seen: set[str] = set()
+    for schemes in families.values():
+        for scheme in schemes:
+            for column in scheme.columns:
+                if column not in seen:
+                    seen.add(column)
+                    columns.append(column)
+    return tuple(columns)
+
+
+def _validate_analysis_set_feature_scope(
+    frame: pd.DataFrame,
+    families: Mapping[str, Sequence[FeatureScheme]],
+    *,
+    analysis_set_id: str,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Ensure Task B did not define the common sample using a different feature scope.
+
+    For a direct comparison, the common sample must be conditioned on the union of
+    predictors that the declared models can actually use. Extra Task-B features would
+    over-restrict the sample; missing Task-B features would leave the model/sample
+    contract incomplete. This function verifies equality only; it never selects features.
+    """
+    required_columns = _require_required_feature_columns(frame)
+    predictor_columns = _model_predictor_union(families)
+    required_set = set(required_columns)
+    predictor_set = set(predictor_columns)
+    extra = sorted(required_set - predictor_set)
+    missing = sorted(predictor_set - required_set)
+    if extra or missing:
+        raise SupervisedLearningContractError(
+            f"analysis_set_id={analysis_set_id} required_features does not match the declared model predictor union; "
+            f"extra_sample_filters={extra}, predictors_missing_from_sample_contract={missing}"
+        )
+    return tuple(sorted(required_set)), tuple(sorted(predictor_set))
 
 
 def _sha256(path: Path) -> str:
@@ -322,6 +407,8 @@ def run_supervised_from_config(
     analysis_set_id = _require_single_analysis_set_id(frame)
     families = all_families
     declared_models: tuple[str, ...] | None = None
+    required_feature_columns: tuple[str, ...] | None = None
+    predictor_union: tuple[str, ...] | None = None
     if comparison_plan is not None:
         declared_models = _require_comparison_models(frame)
         unknown = sorted(set(declared_models) - set(all_families))
@@ -330,6 +417,11 @@ def run_supervised_from_config(
                 f"analysis_set_id={analysis_set_id} declares models absent from frozen feature registry: {unknown}"
             )
         families = {model_id: all_families[model_id] for model_id in declared_models}
+        required_feature_columns, predictor_union = _validate_analysis_set_feature_scope(
+            frame,
+            families,
+            analysis_set_id=analysis_set_id,
+        )
 
     validation = config.section("validation")
     inner = validation.get("inner", {})
@@ -352,6 +444,9 @@ def run_supervised_from_config(
         selected = set(families)
         result.metadata["feature_comparison_plan"] = comparison_plan.audit_dict()
         result.metadata["analysis_set_declared_models"] = list(declared_models or ())
+        result.metadata["analysis_set_required_feature_columns"] = list(required_feature_columns or ())
+        result.metadata["declared_model_predictor_union"] = list(predictor_union or ())
+        result.metadata["analysis_set_feature_scope_verified"] = True
         result.metadata["paired_comparisons"] = [
             {
                 "comparison_type": "behavior_increment",
