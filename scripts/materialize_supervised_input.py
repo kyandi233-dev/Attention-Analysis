@@ -37,6 +37,37 @@ def _write_table(frame: pd.DataFrame, path: Path) -> None:
     raise ValueError(f"unsupported output format {suffix!r}; use CSV or Parquet")
 
 
+def _required_outcomes_for_set(analysis_sets: pd.DataFrame, analysis_set_id: str) -> str:
+    if "required_outcomes" not in analysis_sets.columns:
+        raise ValueError("analysis_sets missing required_outcomes")
+    scoped = analysis_sets[
+        analysis_sets["analysis_set_id"].astype(str).str.strip().eq(str(analysis_set_id).strip())
+    ]
+    if scoped.empty:
+        raise ValueError(f"analysis_set_id={analysis_set_id!r} is not present in analysis_sets")
+    if scoped["required_outcomes"].isna().any():
+        raise ValueError("required_outcomes contains missing values")
+    values = scoped["required_outcomes"].astype(str).str.strip()
+    if values.eq("").any():
+        raise ValueError("required_outcomes contains blank values")
+    unique = values.drop_duplicates().tolist()
+    if len(unique) != 1:
+        raise ValueError(
+            f"one analysis_set_id must declare one required_outcomes list; got {unique}"
+        )
+    raw = unique[0]
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError("required_outcomes is not valid JSON") from exc
+    if not isinstance(parsed, list) or not parsed:
+        raise ValueError("required_outcomes must be a non-empty JSON list")
+    cleaned = [str(item).strip() for item in parsed]
+    if any(not item for item in cleaned) or len(cleaned) != len(set(cleaned)):
+        raise ValueError("required_outcomes contains blank or duplicate outcome names")
+    return json.dumps(cleaned, ensure_ascii=False)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--analysis-sets", required=True, help="Task-B analysis_sets CSV/Parquet")
@@ -78,6 +109,7 @@ def main() -> int:
     analysis_sets = _read_table(analysis_sets_path)
     probe_feature_status = _read_table(status_path)
     probe_metadata = _read_table(metadata_path) if metadata_path is not None else None
+    required_outcomes = _required_outcomes_for_set(analysis_sets, args.analysis_set_id)
 
     frame = materialize_supervised_input(
         analysis_sets,
@@ -86,6 +118,7 @@ def main() -> int:
         membership_type=args.membership_type,
         probe_metadata=probe_metadata,
     )
+    frame["required_outcomes"] = required_outcomes
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     _write_table(frame, output_path)
@@ -93,6 +126,7 @@ def main() -> int:
         "status": "complete",
         "analysis_set_id": str(args.analysis_set_id),
         "membership_type": str(args.membership_type),
+        "required_outcomes": json.loads(required_outcomes),
         "rows": int(len(frame)),
         "participant_groups": int(frame["participant_group_id"].astype(str).nunique()),
         "sessions": int(frame["session_id"].astype(str).nunique()),
