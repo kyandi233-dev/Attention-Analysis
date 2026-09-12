@@ -20,6 +20,8 @@ from .task import Q1_BINARY_SPEC, SupervisedLearningContractError, encode_q1_bin
 
 
 DEFAULT_GROUP_COLUMN = "participant_group_id"
+MEMBERSHIP_COLUMN = "membership_type"
+ALLOWED_MEMBERSHIP_TYPES = frozenset({"included_complete", "included_missing_aware"})
 REQUIRED_PROBE_LOCATORS = ("session_id", "block_id", "probe_event_id")
 OPTIONAL_PROBE_LOCATORS = (
     "probe_id",
@@ -54,15 +56,58 @@ class SupervisedRunResult:
 def _resolve_analysis_set_id(frame: pd.DataFrame, explicit: str | None) -> str | None:
     if "analysis_set_id" not in frame.columns:
         return explicit
-    values = frame["analysis_set_id"].dropna().astype(str).drop_duplicates().tolist()
+    values = frame["analysis_set_id"].dropna().astype(str).str.strip().drop_duplicates().tolist()
     if len(values) > 1:
         raise SupervisedLearningContractError(f"Task A expects one analysis_set_id per run; got {values}")
     from_frame = values[0] if values else None
-    if explicit is not None and from_frame is not None and str(explicit) != from_frame:
+    if explicit is not None and from_frame is not None and str(explicit).strip() != from_frame:
         raise SupervisedLearningContractError(
             f"explicit analysis_set_id={explicit} conflicts with frame value={from_frame}"
         )
-    return from_frame if from_frame is not None else explicit
+    resolved = from_frame if from_frame is not None else explicit
+    if resolved is None or not str(resolved).strip():
+        raise SupervisedLearningContractError("Task A requires a non-empty analysis_set_id")
+    return str(resolved).strip()
+
+
+def _resolve_membership_type(frame: pd.DataFrame, explicit: str | None) -> str:
+    if MEMBERSHIP_COLUMN in frame.columns:
+        raw = frame[MEMBERSHIP_COLUMN]
+        if raw.isna().any():
+            raise SupervisedLearningContractError(f"{MEMBERSHIP_COLUMN} contains missing values")
+        values = raw.astype(str).str.strip()
+        if values.eq("").any():
+            raise SupervisedLearningContractError(f"{MEMBERSHIP_COLUMN} contains blank values")
+        unique = values.drop_duplicates().tolist()
+        if len(unique) != 1:
+            raise SupervisedLearningContractError(
+                f"Task A expects one {MEMBERSHIP_COLUMN} per run; got {unique}"
+            )
+        from_frame = unique[0]
+    else:
+        from_frame = None
+
+    if explicit is not None:
+        explicit_value = str(explicit).strip()
+        if not explicit_value:
+            raise SupervisedLearningContractError(f"explicit {MEMBERSHIP_COLUMN} is blank")
+        if from_frame is not None and explicit_value != from_frame:
+            raise SupervisedLearningContractError(
+                f"explicit {MEMBERSHIP_COLUMN}={explicit_value} conflicts with frame value={from_frame}"
+            )
+        resolved = from_frame if from_frame is not None else explicit_value
+    else:
+        resolved = from_frame
+
+    if resolved is None:
+        raise SupervisedLearningContractError(
+            f"Task A requires {MEMBERSHIP_COLUMN} so complete and missing-aware memberships cannot be mixed"
+        )
+    if resolved not in ALLOWED_MEMBERSHIP_TYPES:
+        raise SupervisedLearningContractError(
+            f"unsupported {MEMBERSHIP_COLUMN}={resolved!r}; expected one of {sorted(ALLOWED_MEMBERSHIP_TYPES)}"
+        )
+    return resolved
 
 
 def _validate_frame(
@@ -118,10 +163,12 @@ def run_nested_loso(
     seed: int = 20260910,
     run_id: str = "task-a-in-memory",
     analysis_set_id: str | None = None,
+    membership_type: str | None = None,
 ) -> SupervisedRunResult:
-    """Run one full participant-disjoint LOSO analysis on an explicit frame."""
+    """Run one full participant-disjoint LOSO analysis on one explicit membership."""
     data, locator_columns = _validate_frame(frame, model_feature_schemes, group_col=group_col)
     resolved_analysis_set = _resolve_analysis_set_id(data, analysis_set_id)
+    resolved_membership = _resolve_membership_type(data, membership_type)
     groups = sorted(data[group_col].astype(str).unique().tolist())
     if len(groups) < 2:
         raise SupervisedLearningContractError("outer LOSO requires at least two participant groups")
@@ -153,6 +200,7 @@ def run_nested_loso(
             base_prediction = outer_test[locator_columns + [group_col, Q1_BINARY_SPEC.source_column, "q1_binary"]].copy()
             base_prediction["run_id"] = str(run_id)
             base_prediction["analysis_set_id"] = resolved_analysis_set
+            base_prediction[MEMBERSHIP_COLUMN] = resolved_membership
             base_prediction["model_id"] = model_id
             base_prediction["outer_fold_group"] = held_out_group
 
@@ -197,6 +245,7 @@ def run_nested_loso(
                     {
                         "run_id": str(run_id),
                         "analysis_set_id": resolved_analysis_set,
+                        MEMBERSHIP_COLUMN: resolved_membership,
                         "model_id": model_id,
                         "outer_fold_group": held_out_group,
                         "outer_train_group_ids": train_groups,
@@ -222,6 +271,7 @@ def run_nested_loso(
                     {
                         "run_id": str(run_id),
                         "analysis_set_id": resolved_analysis_set,
+                        MEMBERSHIP_COLUMN: resolved_membership,
                         "model_id": model_id,
                         "outer_fold_group": held_out_group,
                         "n_outer_train_rows": int(len(outer_train)),
@@ -233,6 +283,7 @@ def run_nested_loso(
                     {
                         "run_id": str(run_id),
                         "analysis_set_id": resolved_analysis_set,
+                        MEMBERSHIP_COLUMN: resolved_membership,
                         "model_id": model_id,
                         "outer_fold_group": held_out_group,
                         "outer_train_group_ids": train_groups,
@@ -251,6 +302,7 @@ def run_nested_loso(
     metadata = {
         "run_id": str(run_id),
         "analysis_set_id": resolved_analysis_set,
+        MEMBERSHIP_COLUMN: resolved_membership,
         "task": Q1_BINARY_SPEC.name,
         "positive_probability_name": Q1_BINARY_SPEC.positive_probability_name,
         "n_input_rows": int(len(data)),
