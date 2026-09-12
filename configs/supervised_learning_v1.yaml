@@ -23,7 +23,6 @@ task:
   positive_label: 1
   negative_label: 0
   positive_probability_name: p_q1_equals_1
-  q2_is_predictor: false
 
 validation:
   outer:
@@ -62,7 +61,7 @@ feature_schemes:
   status: interface_only_pending_task_c_d
   model_families: {}
   participant_specific_suffixes_forbidden: [_within, _between]
-  note: "Task A provides the shared nested training core. Formal feature registries may request standalone x->Q1, Behavior+x, Full-x and M0-M7 device-package models, but every direct comparison must use the same analysis_set_id, participant/probe membership, outer folds and training contract. Probe/window locators and audit identifiers are preserved for reporting and never used as predictors."
+  note: "Task A provides the shared nested training core. Registry-backed formal runs consume only the model IDs declared by the current B-layer comparison-specific analysis_set_id; unrelated feature/device models are not forced onto one global common sample."
 
 models:
   primary:
