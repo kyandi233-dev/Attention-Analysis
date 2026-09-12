@@ -205,12 +205,14 @@ def build_paired_comparison_specs(
 def _fold_failure_index(fold_audits: Sequence[Mapping[str, Any]]) -> dict[tuple[str, str], str]:
     failures: dict[tuple[str, str], str] = {}
     for audit in fold_audits:
-        if not bool(audit.get("model_failed", False)):
+        if not bool(audit.get("failed", False)):
             continue
-        model_id = str(audit.get("model_id", ""))
-        outer_group = str(audit.get("outer_fold_group", ""))
+        model_id = str(audit.get("model_id", "")).strip()
+        outer_group = str(audit.get("outer_fold_group", "")).strip()
         if model_id and outer_group:
-            failures[(model_id, outer_group)] = str(audit.get("failure_reason", "model_failed"))
+            failures[(model_id, outer_group)] = str(
+                audit.get("reason", "model failed before paired-comparison audit")
+            )
     return failures
 
 
@@ -229,7 +231,13 @@ def write_paired_comparison_provenance(
     run_root.mkdir(parents=True, exist_ok=True)
     failures = _fold_failure_index(fold_audits)
     enriched: list[dict[str, object]] = []
-    all_groups = sorted({str(audit.get("outer_fold_group", "")) for audit in fold_audits if audit.get("outer_fold_group")})
+    all_groups = sorted(
+        {
+            str(audit.get("outer_fold_group", "")).strip()
+            for audit in fold_audits
+            if str(audit.get("outer_fold_group", "")).strip()
+        }
+    )
     for raw in paired_comparisons:
         spec = dict(raw)
         baseline = str(spec["baseline_model_id"])
