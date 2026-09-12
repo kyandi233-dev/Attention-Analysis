@@ -21,6 +21,7 @@ def _registry() -> list[RegisteredFeature]:
             role="behavior",
             modality="behavior",
             raw_source="SART behavior",
+            source_namespace="behavior",
             required_devices=(),
             behavior_reference_eligible=True,
             behavior_increment_eligible=False,
@@ -32,6 +33,7 @@ def _registry() -> list[RegisteredFeature]:
             role="behavior",
             modality="behavior",
             raw_source="SART behavior",
+            source_namespace="behavior",
             required_devices=(),
             behavior_reference_eligible=True,
             behavior_increment_eligible=False,
@@ -44,6 +46,7 @@ def _registry() -> list[RegisteredFeature]:
             modality="ocular",
             feature_type="pupil",
             raw_source="NIR pupil",
+            source_namespace="nir",
             required_devices=("nir",),
             preprocessing_dependencies=("NIR-only blink/artifact QC",),
             standalone_eligible=False,
@@ -61,6 +64,7 @@ def _registry() -> list[RegisteredFeature]:
             modality="ocular",
             feature_type="pupil",
             raw_source="NIR pupil",
+            source_namespace="nir",
             required_devices=("nir", "rgb"),
             preprocessing_dependencies=("RGB blink mask",),
             standalone_eligible=True,
@@ -78,6 +82,7 @@ def _registry() -> list[RegisteredFeature]:
             modality="ocular",
             feature_type="blink",
             raw_source="RGB eye landmarks",
+            source_namespace="rgb",
             required_devices=("rgb",),
             behavior_increment_eligible=True,
             modality_model_eligible=True,
@@ -91,6 +96,7 @@ def _registry() -> list[RegisteredFeature]:
             modality="movement",
             feature_type="body_motion",
             raw_source="RGB body landmarks",
+            source_namespace="rgb",
             required_devices=("rgb",),
             behavior_increment_eligible=True,
             modality_model_eligible=True,
@@ -104,6 +110,7 @@ def _registry() -> list[RegisteredFeature]:
             modality="cardiopulmonary",
             feature_type="breathing_rate",
             raw_source="mmWave",
+            source_namespace="mmwave",
             required_devices=("mmwave",),
             behavior_increment_eligible=True,
             modality_model_eligible=True,
@@ -155,6 +162,44 @@ def test_cross_device_ocular_model_keeps_science_modality_distinct_from_devices(
     assert scheme.modalities == ("ocular",)
     assert set(scheme.required_devices) == {"nir", "rgb"}
     assert scheme.modality_blocks == ()
+
+
+def test_registry_generates_task_b_spec_without_inferring_source_from_devices() -> None:
+    plan = build_feature_comparison_plan(_registry())
+    spec = plan.task_b_comparison_spec(
+        ["behavior_reference", "behavior_plus_modality::ocular"],
+        required_outcomes=["q1_nominal_4class"],
+    )
+
+    assert spec["models"] == ["behavior_reference", "behavior_plus_modality::ocular"]
+    assert spec["required_features"] == {
+        "behavior": ["go_correct_rt_cv", "raw_go_omission_rate"],
+        "ocular": ["pupil_sd_rgb_assisted", "blink_event_rate_per_min"],
+    }
+    records = {row["predictor_column"]: row for row in spec["required_feature_records"]}
+    assert records["pupil_sd_rgb_assisted"] == {
+        "feature_id": "pupil_variability_rgb_assisted",
+        "scientific_modality": "ocular",
+        "source_namespace": "nir",
+        "predictor_column": "pupil_sd_rgb_assisted",
+    }
+    assert records["blink_event_rate_per_min"]["scientific_modality"] == "ocular"
+    assert records["blink_event_rate_per_min"]["source_namespace"] == "rgb"
+    assert spec["required_outcomes"] == ["q1_nominal_4class"]
+
+
+def test_same_rgb_source_namespace_can_supply_distinct_scientific_modalities() -> None:
+    plan = build_feature_comparison_plan(_registry())
+    spec = plan.task_b_comparison_spec(
+        ["modality::ocular", "modality::movement"],
+        required_outcomes=["q1_nominal_4class"],
+    )
+    records = {row["feature_id"]: row for row in spec["required_feature_records"]}
+
+    assert records["blink_rate"]["source_namespace"] == "rgb"
+    assert records["body_motion"]["source_namespace"] == "rgb"
+    assert records["blink_rate"]["scientific_modality"] == "ocular"
+    assert records["body_motion"]["scientific_modality"] == "movement"
 
 
 def test_device_packages_are_hardware_only_but_explicitly_include_behavior_reference() -> None:
@@ -234,6 +279,16 @@ def test_registry_rejects_behavior_as_device() -> None:
         **{**behavior.__dict__, "required_devices": ("behavior",)}
     )
     with pytest.raises(FeatureRegistryContractError, match="unknown required_devices"):
+        validate_registered_features(features)
+
+
+def test_registry_rejects_invalid_source_namespace() -> None:
+    features = _registry()
+    blink = features[4]
+    features[4] = RegisteredFeature(
+        **{**blink.__dict__, "source_namespace": "ocular"}
+    )
+    with pytest.raises(FeatureRegistryContractError, match="unknown source_namespace"):
         validate_registered_features(features)
 
 
