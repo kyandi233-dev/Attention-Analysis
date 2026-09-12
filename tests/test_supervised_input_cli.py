@@ -25,6 +25,7 @@ def test_file_level_materialization_cli_writes_task_a_input_and_refuses_overwrit
                 "included_missing_aware": True,
                 "comparison_models": '["B", "B+x"]',
                 "required_features": '{"behavior": ["b"], "sensor": ["x"]}',
+                "required_outcomes": '["q1_nominal_4class"]',
             },
             {
                 "session_id": "s2",
@@ -38,6 +39,7 @@ def test_file_level_materialization_cli_writes_task_a_input_and_refuses_overwrit
                 "included_missing_aware": True,
                 "comparison_models": '["B", "B+x"]',
                 "required_features": '{"behavior": ["b"], "sensor": ["x"]}',
+                "required_outcomes": '["q1_nominal_4class"]',
             },
         ]
     )
@@ -86,9 +88,10 @@ def test_file_level_materialization_cli_writes_task_a_input_and_refuses_overwrit
 
     out = pd.read_csv(output_path, encoding="utf-8-sig")
     assert len(out) == 2
-    assert set(("b", "x", "analysis_set_id", "membership_type")) <= set(out.columns)
+    assert set(("b", "x", "analysis_set_id", "membership_type", "required_outcomes")) <= set(out.columns)
     assert out["analysis_set_id"].eq("behavior_vs_x").all()
     assert out["membership_type"].eq("included_complete").all()
+    assert out["required_outcomes"].eq('["q1_nominal_4class"]').all()
 
     repeated = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=False)
     assert repeated.returncode != 0
