@@ -5,6 +5,7 @@ import argparse
 import json
 from pathlib import Path
 
+from attention_pipeline.rgb_formal.movement_science_figures import build_movement_science_figures
 from attention_pipeline.rgb_formal.movement_science_output import build_movement_science_output
 
 
@@ -40,12 +41,20 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    science_root = Path(args.science_root).expanduser().resolve()
     manifest = build_movement_science_output(
         Path(args.rgb55_root),
-        Path(args.science_root),
+        science_root,
         g1_probe_candidates_path=(Path(args.g1_probe_candidates) if args.g1_probe_candidates else None),
         authoritative=not args.non_authoritative,
         replace=not args.keep_existing,
+    )
+    generated = build_movement_science_figures(science_root / "Movement")
+    manifest["generated_model_figures"] = generated
+    manifest_path = science_root / "Movement/manifests/movement_science_output_manifest.json"
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2, default=str) + "\n",
+        encoding="utf-8",
     )
     print(json.dumps(manifest, ensure_ascii=False, indent=2, default=str))
     return 0
