@@ -111,6 +111,9 @@ def _prediction_rows(sets):
     for model in ["M0", "M1"]:
         for _, r in included.iterrows():
             rows.append({
+                "run_id": "task-b-fixture-run",
+                "feature_set_id": model,
+                "membership_type": "included_complete",
                 "session_id": r.session_id,
                 "participant_group_id": r.participant_group_id,
                 "block_id": r.block_id,
@@ -122,6 +125,8 @@ def _prediction_rows(sets):
                 "y_true": 1,
                 "y_pred": 1,
                 "probability_positive": 0.75,
+                "model_failed": False,
+                "failure_reason": "",
             })
     return pd.DataFrame(rows)
 
@@ -281,6 +286,9 @@ def _task_a_native_predictions(sets):
     for model in ["M0", "M1"]:
         for _, r in included.iterrows():
             rows.append({
+                "run_id": "task-a-fixture-run",
+                "feature_set_id": model,
+                "membership_type": "included_complete",
                 "session_id": r.session_id,
                 "participant_group_id": r.participant_group_id,
                 "block_id": r.block_id,
