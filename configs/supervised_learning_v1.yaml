@@ -23,7 +23,6 @@ task:
   positive_label: 1
   negative_label: 0
   positive_probability_name: p_q1_equals_1
-  q2_is_predictor: false
 
 validation:
   outer:
@@ -48,46 +47,19 @@ preprocessing:
   unified_global_coverage_cutoff: null
   participant_specific_within_between_mainline: false
 
-# Task C/D must populate this registry only after scientific feature qualification is frozen.
-# Task A consumes it; Task A does not decide which real features are scientifically eligible.
+# Upstream scientific work freezes the exact predictors. Task A consumes the registry;
+# it does not maintain a second scientific-variable blacklist.
 feature_registry:
   status: pending_upstream_feature_freeze
   features: []
   note: "Each exact representation records scientific_feature_id, predictor column(s), Behavior/sensor role, raw source, actual required devices, preprocessing dependencies, standalone / Behavior+x / Full eligibility, and explicit M0-M7 package eligibility. Cross-device cleaning dependencies must be represented here."
 
 # Compatibility/manual-test interface. A non-empty feature_registry takes precedence.
+# Structural leakage guards (Q1 outcome/output columns, IDs, raw locator/audit fields)
+# live in feature_schemes.py; scientific eligibility belongs only to the registry.
 feature_schemes:
   status: interface_only_pending_task_c_d
   model_families: {}
-  mainline_forbidden_columns:
-    - q1_nominal_4class
-    - q1_binary
-    - p_q1_equals_1
-    - predicted_q1_binary
-    - q2_ordinal_4level
-    - omission_rate
-    - clean_go_omission_rate
-    - timing_ambiguous_go_omission_rate
-    - hard_pupil_fraction
-    - participant_group_id
-    - repeat_participant_id
-    - session_id
-    - block_id
-    - probe_event_id
-    - probe_id
-    - probe_order_in_block
-    - probe_index_in_block
-    - probe_index_global
-    - probe_time_ms
-    - probe_onset_unix_ms
-    - window_name
-    - window_start_unix_ms
-    - window_effective_start_unix_ms
-    - window_end_unix_ms
-    - analysis_set_id
-    - run_id
-    - model_id
-    - outer_fold_group
   participant_specific_suffixes_forbidden: [_within, _between]
   note: "Task A provides the shared nested training core. Formal feature registries may request standalone x->Q1, Behavior+x, Full-x and M0-M7 device-package models, but every direct comparison must use the same analysis_set_id, participant/probe membership, outer folds and training contract. Probe/window locators and audit identifiers are preserved for reporting and never used as predictors."
 
