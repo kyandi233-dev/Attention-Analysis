@@ -48,7 +48,6 @@ def _config(input_path: Path, output_root: Path) -> tuple[dict, dict]:
             "positive_label": 1,
             "negative_label": 0,
             "positive_probability_name": "p_q1_equals_1",
-            "q2_is_predictor": False,
         },
         "validation": {
             "outer": {"method": "leave_one_participant_out", "group_column": "participant_group_id", "participant_disjoint": True},
@@ -134,6 +133,81 @@ def test_run_supervised_from_config_end_to_end(tmp_path) -> None:
     saved = json.loads((run_root / "run_manifest.json").read_text(encoding="utf-8"))
     assert saved["provenance"]["input_table"] == str(input_path)
     assert len(saved["provenance"]["input_sha256"]) == 64
+
+
+def test_registry_run_consumes_only_models_declared_by_current_analysis_set(tmp_path) -> None:
+    input_path = tmp_path / "probe_table.csv"
+    output_root = tmp_path / "outputs"
+    frame = _probe_table()
+    frame["rgb_signal"] = frame["behavior_signal"] * 0.5
+    declared = ["behavior_reference", "behavior_plus::rgb_signal"]
+    frame["comparison_models"] = json.dumps(declared)
+    frame.to_csv(input_path, index=False)
+
+    config_data, paths_data = _config(input_path, output_root)
+    config_data["feature_registry"] = {
+        "features": [
+            {
+                "feature_id": "behavior_signal",
+                "scientific_feature_id": "behavior_signal",
+                "columns": ["behavior_signal"],
+                "role": "behavior",
+                "raw_source": "synthetic behavior",
+                "required_devices": ["behavior"],
+                "behavior_reference_eligible": True,
+                "behavior_increment_eligible": False,
+                "allowed_device_packages": [],
+            },
+            {
+                "feature_id": "rgb_signal",
+                "scientific_feature_id": "rgb_signal",
+                "columns": ["rgb_signal"],
+                "role": "sensor",
+                "raw_source": "synthetic RGB",
+                "required_devices": ["rgb"],
+                "behavior_increment_eligible": True,
+                "allowed_device_packages": ["M3"],
+            },
+        ]
+    }
+    config_path, paths_path = _write_configs(tmp_path, config_data, paths_data)
+
+    manifest = run_supervised_from_config(config_path, paths_config=paths_path, run_id="registry-run")
+    saved_predictions = pd.read_csv(output_root / "registry-run" / "probe_predictions.csv")
+
+    assert manifest["status"] == "complete"
+    assert set(saved_predictions["model_id"]) == set(declared)
+    assert manifest["n_prediction_rows"] == len(frame) * len(declared)
+    saved_manifest = json.loads((output_root / "registry-run" / "run_manifest.json").read_text(encoding="utf-8"))
+    assert saved_manifest["analysis_set_declared_models"] == declared
+
+
+def test_registry_run_rejects_model_not_declared_in_frozen_registry(tmp_path) -> None:
+    input_path = tmp_path / "probe_table.csv"
+    output_root = tmp_path / "outputs"
+    frame = _probe_table()
+    frame["comparison_models"] = json.dumps(["behavior_reference", "not_in_registry"])
+    frame.to_csv(input_path, index=False)
+
+    config_data, paths_data = _config(input_path, output_root)
+    config_data["feature_registry"] = {
+        "features": [
+            {
+                "feature_id": "behavior_signal",
+                "scientific_feature_id": "behavior_signal",
+                "columns": ["behavior_signal"],
+                "role": "behavior",
+                "raw_source": "synthetic behavior",
+                "required_devices": ["behavior"],
+                "behavior_reference_eligible": True,
+                "allowed_device_packages": [],
+            }
+        ]
+    }
+    config_path, paths_path = _write_configs(tmp_path, config_data, paths_data)
+
+    with pytest.raises(SupervisedLearningContractError, match="absent from frozen feature registry"):
+        run_supervised_from_config(config_path, paths_config=paths_path, run_id="blocked-registry")
 
 
 def test_runtime_config_cannot_reenable_global_coverage_gate(tmp_path) -> None:
