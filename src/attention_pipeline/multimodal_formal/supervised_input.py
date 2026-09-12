@@ -189,6 +189,8 @@ def materialize_supervised_input(
     ``included_complete`` requires every audited feature value to be finite.
     ``included_missing_aware`` may retain only residual single-feature missing values
     that Task B has already marked eligible for a training-fold missing-data strategy.
+    The Task-B ``required_outcomes`` declaration is preserved unchanged so Task A
+    can verify that sample eligibility was defined by its own authoritative target.
     """
     set_id = str(analysis_set_id).strip()
     membership = str(membership_type).strip()
@@ -203,7 +205,17 @@ def materialize_supervised_input(
     if probe_feature_status.empty:
         raise SupervisedInputMaterializationError("probe_feature_status is empty")
 
-    set_required = set(KEYS + [GROUP, "analysis_set_id", membership, "comparison_models", "required_features"])
+    set_required = set(
+        KEYS
+        + [
+            GROUP,
+            "analysis_set_id",
+            membership,
+            "comparison_models",
+            "required_features",
+            "required_outcomes",
+        ]
+    )
     missing_set = sorted(set_required - set(analysis_sets.columns))
     if missing_set:
         raise SupervisedInputMaterializationError(
@@ -245,6 +257,10 @@ def materialize_supervised_input(
         scoped, "required_features", context=f"analysis_set_id={set_id}"
     )
     required_features = _parse_required_features(required_features_raw)
+    required_outcomes_raw = _single_nonblank_value(
+        scoped, "required_outcomes", context=f"analysis_set_id={set_id}"
+    )
+    _parse_string_list(required_outcomes_raw, context=f"required_outcomes for {set_id}")
 
     membership_mask = _strict_bool(
         scoped[membership], context=f"analysis_set_id={set_id} {membership}"
@@ -261,6 +277,7 @@ def materialize_supervised_input(
     base["membership_type"] = membership
     base["comparison_models"] = comparison_models
     base["required_features"] = required_features_raw
+    base["required_outcomes"] = required_outcomes_raw
 
     if probe_metadata is not None:
         metadata = _validate_probe_metadata(probe_metadata)
