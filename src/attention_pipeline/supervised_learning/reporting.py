@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -32,6 +32,7 @@ MODEL_SCORES_FILENAME = "model_evaluation.csv"
 BOOTSTRAP_FILENAME = "participant_bootstrap.json"
 PAIRED_PARTICIPANT_INCREMENTS_FILENAME = "paired_participant_increments.csv"
 PAIRED_MODEL_INCREMENTS_FILENAME = "paired_model_increments.csv"
+PAIRED_FOLD_ESTIMABILITY_FILENAME = "paired_fold_estimability.csv"
 PAIRED_BOOTSTRAP_FILENAME = "paired_increment_bootstrap.json"
 PROBE_TRAJECTORY_FILENAME = "probe_trajectory.csv"
 SESSION_DISCRIMINATION_FILENAME = "session_discrimination.csv"
@@ -191,48 +192,194 @@ def _validate_prediction_contract(result: SupervisedRunResult) -> None:
             )
 
 
+def _parse_feature_columns(raw: object, *, feature_id: str) -> tuple[str, ...]:
+    if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
+        raise SupervisedLearningContractError(
+            f"paired comparison {feature_id} requires feature_columns as a non-string sequence"
+        )
+    columns = tuple(str(value).strip() for value in raw)
+    if not columns or any(not value for value in columns) or len(set(columns)) != len(columns):
+        raise SupervisedLearningContractError(
+            f"paired comparison {feature_id} feature_columns must be non-empty, nonblank and unique"
+        )
+    return columns
+
+
+def _fold_audit_index(fold_audits: Sequence[Mapping[str, object]]) -> dict[tuple[str, str], Mapping[str, object]]:
+    index: dict[tuple[str, str], Mapping[str, object]] = {}
+    for audit in fold_audits:
+        model_id = str(audit.get("model_id", "")).strip()
+        group_id = str(audit.get("outer_fold_group", "")).strip()
+        if not model_id or not group_id:
+            raise SupervisedLearningContractError("fold audit lacks model_id or outer_fold_group")
+        key = (model_id, group_id)
+        if key in index:
+            raise SupervisedLearningContractError(f"duplicate fold audit for {key}")
+        index[key] = audit
+    return index
+
+
+def _feature_fold_estimability(
+    predictions: pd.DataFrame,
+    fold_audits: Sequence[Mapping[str, object]],
+    *,
+    comparison_type: str,
+    feature_id: str,
+    feature_columns: tuple[str, ...],
+    baseline_model_id: str,
+    added_model_id: str,
+) -> pd.DataFrame:
+    """Audit whether the defining feature actually entered the added/full model in each outer fold."""
+    index = _fold_audit_index(fold_audits)
+    groups = sorted(
+        predictions.loc[
+            predictions["model_id"].astype(str).eq(added_model_id), "outer_fold_group"
+        ].astype(str).unique().tolist()
+    )
+    if not groups:
+        raise SupervisedLearningContractError(
+            f"paired comparison {baseline_model_id}->{added_model_id} has no added-model outer folds"
+        )
+
+    rows: list[dict[str, object]] = []
+    expected_columns = set(feature_columns)
+    for group_id in groups:
+        key = (added_model_id, group_id)
+        if key not in index:
+            raise SupervisedLearningContractError(
+                f"missing fold audit for added model {added_model_id} outer_fold_group={group_id}"
+            )
+        audit = index[key]
+        if bool(audit.get("failed", False)):
+            rows.append(
+                {
+                    "comparison_type": comparison_type,
+                    "feature_id": feature_id,
+                    "feature_columns": json.dumps(list(feature_columns), ensure_ascii=False),
+                    "baseline_model_id": baseline_model_id,
+                    "added_model_id": added_model_id,
+                    "outer_fold_group": group_id,
+                    "status": "not_estimable_model_failure",
+                    "missing_feature_columns": json.dumps(list(feature_columns), ensure_ascii=False),
+                    "reason": str(audit.get("reason", "model failed before feature-retention audit")),
+                }
+            )
+            continue
+
+        final_refit = audit.get("final_refit")
+        if not isinstance(final_refit, Mapping):
+            raise SupervisedLearningContractError(
+                f"successful fold audit lacks final_refit for {added_model_id}/{group_id}"
+            )
+        preprocessing = final_refit.get("preprocessing")
+        if not isinstance(preprocessing, Mapping):
+            raise SupervisedLearningContractError(
+                f"successful fold audit lacks preprocessing audit for {added_model_id}/{group_id}"
+            )
+        output_columns_raw = preprocessing.get("output_columns")
+        dropped_raw = preprocessing.get("dropped_columns", {})
+        if not isinstance(output_columns_raw, Sequence) or isinstance(output_columns_raw, (str, bytes)):
+            raise SupervisedLearningContractError(
+                f"preprocessing audit lacks output_columns for {added_model_id}/{group_id}"
+            )
+        if not isinstance(dropped_raw, Mapping):
+            raise SupervisedLearningContractError(
+                f"preprocessing dropped_columns must be a mapping for {added_model_id}/{group_id}"
+            )
+        output_columns = {str(value) for value in output_columns_raw}
+        dropped_columns = {str(value): str(reason) for value, reason in dropped_raw.items()}
+        absent = sorted(expected_columns - output_columns)
+        unaccounted = sorted(set(absent) - set(dropped_columns))
+        if unaccounted:
+            raise SupervisedLearningContractError(
+                f"feature-retention audit cannot account for absent columns {unaccounted} in {added_model_id}/{group_id}"
+            )
+        if absent:
+            reason = "; ".join(f"{column}:{dropped_columns[column]}" for column in absent)
+            status = "not_estimable_feature_absent"
+        else:
+            reason = ""
+            status = "estimable"
+        rows.append(
+            {
+                "comparison_type": comparison_type,
+                "feature_id": feature_id,
+                "feature_columns": json.dumps(list(feature_columns), ensure_ascii=False),
+                "baseline_model_id": baseline_model_id,
+                "added_model_id": added_model_id,
+                "outer_fold_group": group_id,
+                "status": status,
+                "missing_feature_columns": json.dumps(absent, ensure_ascii=False),
+                "reason": reason,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _empty_paired_outputs() -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, list[dict[str, object]]]:
+    participant = pd.DataFrame(
+        columns=[
+            "comparison_type",
+            "feature_id",
+            "baseline_model_id",
+            "added_model_id",
+            "analysis_set_id",
+            MEMBERSHIP_COLUMN,
+            "participant_group_id",
+            "n_probes",
+            "mean_log_loss_increment",
+        ]
+    )
+    summary = pd.DataFrame(
+        columns=[
+            "comparison_type",
+            "feature_id",
+            "baseline_model_id",
+            "added_model_id",
+            "analysis_set_id",
+            MEMBERSHIP_COLUMN,
+            "overall_log_loss_increment",
+            "n_expected_outer_folds",
+            "n_estimable_outer_folds",
+            "n_feature_absent_outer_folds",
+            "n_model_failed_outer_folds",
+            "status",
+            "reason",
+        ]
+    )
+    fold = pd.DataFrame(
+        columns=[
+            "comparison_type",
+            "feature_id",
+            "feature_columns",
+            "baseline_model_id",
+            "added_model_id",
+            "outer_fold_group",
+            "status",
+            "missing_feature_columns",
+            "reason",
+        ]
+    )
+    return participant, summary, fold, []
+
+
 def _paired_comparison_outputs(
     predictions: pd.DataFrame,
+    fold_audits: Sequence[Mapping[str, object]],
     paired_specs: object,
-) -> tuple[pd.DataFrame, pd.DataFrame, list[dict[str, object]]]:
-    """Evaluate declared comparison pairs without silently dropping invalid pairs."""
-    participant_frames: list[pd.DataFrame] = []
-    summary_rows: list[dict[str, object]] = []
-    bootstrap_records: list[dict[str, object]] = []
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, list[dict[str, object]]]:
+    """Evaluate declared pairs only where the defining feature entered the added/full model."""
     if paired_specs in (None, []):
-        return (
-            pd.DataFrame(
-                columns=[
-                    "comparison_type",
-                    "feature_id",
-                    "baseline_model_id",
-                    "added_model_id",
-                    "analysis_set_id",
-                    MEMBERSHIP_COLUMN,
-                    "participant_group_id",
-                    "n_probes",
-                    "mean_log_loss_increment",
-                ]
-            ),
-            pd.DataFrame(
-                columns=[
-                    "comparison_type",
-                    "feature_id",
-                    "baseline_model_id",
-                    "added_model_id",
-                    "analysis_set_id",
-                    MEMBERSHIP_COLUMN,
-                    "overall_log_loss_increment",
-                    "status",
-                    "reason",
-                ]
-            ),
-            [],
-        )
+        return _empty_paired_outputs()
     if not isinstance(paired_specs, list):
         raise SupervisedLearningContractError("paired_comparisons metadata must be a list")
 
+    participant_frames: list[pd.DataFrame] = []
+    summary_rows: list[dict[str, object]] = []
+    fold_frames: list[pd.DataFrame] = []
+    bootstrap_records: list[dict[str, object]] = []
     known_models = set(predictions["model_id"].astype(str).unique().tolist())
+
     for raw in paired_specs:
         if not isinstance(raw, Mapping):
             raise SupervisedLearningContractError("each paired comparison must be a mapping")
@@ -240,34 +387,100 @@ def _paired_comparison_outputs(
         feature_id = str(raw.get("feature_id", "")).strip()
         baseline_model_id = str(raw.get("baseline_model_id", "")).strip()
         added_model_id = str(raw.get("added_model_id", "")).strip()
-        if not comparison_type or not baseline_model_id or not added_model_id:
+        if not comparison_type or not feature_id or not baseline_model_id or not added_model_id:
             raise SupervisedLearningContractError(
-                "paired comparison requires comparison_type, baseline_model_id and added_model_id"
+                "paired comparison requires comparison_type, feature_id, baseline_model_id and added_model_id"
             )
+        feature_columns = _parse_feature_columns(raw.get("feature_columns"), feature_id=feature_id)
         missing_models = sorted({baseline_model_id, added_model_id} - known_models)
         if missing_models:
             raise SupervisedLearningContractError(
                 f"paired comparison references model IDs absent from OOF archive: {missing_models}"
             )
-        baseline = predictions.loc[predictions["model_id"].astype(str).eq(baseline_model_id)].copy()
-        added = predictions.loc[predictions["model_id"].astype(str).eq(added_model_id)].copy()
+
+        fold_status = _feature_fold_estimability(
+            predictions,
+            fold_audits,
+            comparison_type=comparison_type,
+            feature_id=feature_id,
+            feature_columns=feature_columns,
+            baseline_model_id=baseline_model_id,
+            added_model_id=added_model_id,
+        )
+        fold_frames.append(fold_status)
+        n_expected = int(len(fold_status))
+        n_estimable = int(fold_status["status"].eq("estimable").sum())
+        n_feature_absent = int(fold_status["status"].eq("not_estimable_feature_absent").sum())
+        n_model_failed = int(fold_status["status"].eq("not_estimable_model_failure").sum())
+
+        analysis_values = predictions.loc[
+            predictions["model_id"].astype(str).isin([baseline_model_id, added_model_id]),
+            "analysis_set_id",
+        ].dropna().astype(str).str.strip().drop_duplicates().tolist()
+        membership_values = predictions.loc[
+            predictions["model_id"].astype(str).isin([baseline_model_id, added_model_id]),
+            MEMBERSHIP_COLUMN,
+        ].dropna().astype(str).str.strip().drop_duplicates().tolist()
+        base_summary = {
+            "comparison_type": comparison_type,
+            "feature_id": feature_id,
+            "baseline_model_id": baseline_model_id,
+            "added_model_id": added_model_id,
+            "analysis_set_id": analysis_values[0] if len(analysis_values) == 1 else None,
+            MEMBERSHIP_COLUMN: membership_values[0] if len(membership_values) == 1 else None,
+            "n_expected_outer_folds": n_expected,
+            "n_estimable_outer_folds": n_estimable,
+            "n_feature_absent_outer_folds": n_feature_absent,
+            "n_model_failed_outer_folds": n_model_failed,
+        }
+
+        if n_model_failed:
+            summary_rows.append(
+                {
+                    **base_summary,
+                    "overall_log_loss_increment": np.nan,
+                    "status": "not_estimable_model_failure",
+                    "reason": "one or more outer folds failed model fitting; failed folds are not silently dropped",
+                }
+            )
+            continue
+        if n_estimable == 0:
+            summary_rows.append(
+                {
+                    **base_summary,
+                    "overall_log_loss_increment": np.nan,
+                    "status": "not_estimable_feature_absent",
+                    "reason": "defining feature was absent from the added/full model in every outer fold",
+                }
+            )
+            continue
+
+        valid_groups = set(
+            fold_status.loc[fold_status["status"].eq("estimable"), "outer_fold_group"].astype(str)
+        )
+        baseline = predictions.loc[
+            predictions["model_id"].astype(str).eq(baseline_model_id)
+            & predictions["outer_fold_group"].astype(str).isin(valid_groups)
+        ].copy()
+        added = predictions.loc[
+            predictions["model_id"].astype(str).eq(added_model_id)
+            & predictions["outer_fold_group"].astype(str).isin(valid_groups)
+        ].copy()
         try:
             paired = paired_log_loss_increment(baseline, added)
             participant = paired.participant_increments.copy()
             participant.insert(0, "feature_id", feature_id)
             participant.insert(0, "comparison_type", comparison_type)
             participant_frames.append(participant)
+            status = "estimable" if n_estimable == n_expected else "estimable_partial_fold_coverage"
             summary_rows.append(
                 {
-                    "comparison_type": comparison_type,
-                    "feature_id": feature_id,
-                    "baseline_model_id": paired.baseline_model_id,
-                    "added_model_id": paired.added_model_id,
+                    **base_summary,
                     "analysis_set_id": paired.analysis_set_id,
                     MEMBERSHIP_COLUMN: paired.membership_type,
                     "overall_log_loss_increment": paired.overall_increment,
-                    "status": "estimable",
-                    "reason": "",
+                    "status": status,
+                    "reason": "" if status == "estimable" else "one or more outer folds excluded because the defining feature was absent after train-fold preprocessing",
                 }
             )
             bootstrap_records.append(
@@ -278,26 +491,16 @@ def _paired_comparison_outputs(
                     "added_model_id": paired.added_model_id,
                     "analysis_set_id": paired.analysis_set_id,
                     MEMBERSHIP_COLUMN: paired.membership_type,
+                    "n_expected_outer_folds": n_expected,
+                    "n_estimable_outer_folds": n_estimable,
+                    "n_feature_absent_outer_folds": n_feature_absent,
                     **paired.bootstrap,
                 }
             )
         except EvaluationContractError as exc:
-            analysis_values = predictions.loc[
-                predictions["model_id"].astype(str).isin([baseline_model_id, added_model_id]),
-                "analysis_set_id",
-            ].dropna().astype(str).str.strip().drop_duplicates().tolist()
-            membership_values = predictions.loc[
-                predictions["model_id"].astype(str).isin([baseline_model_id, added_model_id]),
-                MEMBERSHIP_COLUMN,
-            ].dropna().astype(str).str.strip().drop_duplicates().tolist()
             summary_rows.append(
                 {
-                    "comparison_type": comparison_type,
-                    "feature_id": feature_id,
-                    "baseline_model_id": baseline_model_id,
-                    "added_model_id": added_model_id,
-                    "analysis_set_id": analysis_values[0] if len(analysis_values) == 1 else None,
-                    MEMBERSHIP_COLUMN: membership_values[0] if len(membership_values) == 1 else None,
+                    **base_summary,
                     "overall_log_loss_increment": np.nan,
                     "status": "not_estimable",
                     "reason": str(exc),
@@ -307,21 +510,10 @@ def _paired_comparison_outputs(
     participant_output = (
         pd.concat(participant_frames, ignore_index=True)
         if participant_frames
-        else pd.DataFrame(
-            columns=[
-                "comparison_type",
-                "feature_id",
-                "baseline_model_id",
-                "added_model_id",
-                "analysis_set_id",
-                MEMBERSHIP_COLUMN,
-                "participant_group_id",
-                "n_probes",
-                "mean_log_loss_increment",
-            ]
-        )
+        else _empty_paired_outputs()[0]
     )
-    return participant_output, pd.DataFrame(summary_rows), bootstrap_records
+    fold_output = pd.concat(fold_frames, ignore_index=True) if fold_frames else _empty_paired_outputs()[2]
+    return participant_output, pd.DataFrame(summary_rows), fold_output, bootstrap_records
 
 
 def write_supervised_run(
@@ -339,8 +531,9 @@ def write_supervised_run(
         )
 
     evaluation = evaluate_prediction_archive(result.predictions)
-    paired_participant, paired_summary, paired_bootstrap = _paired_comparison_outputs(
+    paired_participant, paired_summary, paired_fold, paired_bootstrap = _paired_comparison_outputs(
         result.predictions,
+        result.fold_audits,
         result.metadata.get("paired_comparisons"),
     )
     trajectory = build_probe_trajectory(result.predictions)
@@ -362,6 +555,7 @@ def write_supervised_run(
     bootstrap_path = run_root / BOOTSTRAP_FILENAME
     paired_participant_path = run_root / PAIRED_PARTICIPANT_INCREMENTS_FILENAME
     paired_summary_path = run_root / PAIRED_MODEL_INCREMENTS_FILENAME
+    paired_fold_path = run_root / PAIRED_FOLD_ESTIMABILITY_FILENAME
     paired_bootstrap_path = run_root / PAIRED_BOOTSTRAP_FILENAME
     trajectory_path = run_root / PROBE_TRAJECTORY_FILENAME
     session_discrimination_path = run_root / SESSION_DISCRIMINATION_FILENAME
@@ -384,6 +578,7 @@ def write_supervised_run(
     )
     paired_participant.to_csv(paired_participant_path, index=False, encoding="utf-8-sig")
     paired_summary.to_csv(paired_summary_path, index=False, encoding="utf-8-sig")
+    paired_fold.to_csv(paired_fold_path, index=False, encoding="utf-8-sig")
     paired_bootstrap_path.write_text(
         json.dumps(paired_bootstrap, ensure_ascii=False, indent=2, default=_json_default),
         encoding="utf-8",
@@ -398,7 +593,9 @@ def write_supervised_run(
     n_failed_folds = int(len(failures))
     n_estimable_models = int(evaluation.model_scores["status"].eq("estimable").sum())
     n_declared_comparisons = int(len(paired_summary))
-    n_estimable_comparisons = int(paired_summary["status"].eq("estimable").sum()) if not paired_summary.empty else 0
+    n_estimable_comparisons = int(
+        paired_summary["status"].astype(str).str.startswith("estimable").sum()
+    ) if not paired_summary.empty else 0
     manifest: dict[str, object] = {
         **result.metadata,
         "status": "complete" if n_failed_folds == 0 else "partial_with_failures",
@@ -420,6 +617,7 @@ def write_supervised_run(
             "bootstrap_retrain_models": False,
             "paired_increment_definition": "baseline_log_loss_minus_added_log_loss",
             "positive_increment_interpretation": "added_model_has_lower_loss",
+            "paired_feature_absence_rule": "outer folds where the defining feature is absent from the added/full model are not interpreted as zero increment and are excluded from that feature's estimable participant denominator",
         },
         "trajectory_reporting": {
             "role": "exploratory_probe_sampled_reporting",
@@ -439,6 +637,7 @@ def write_supervised_run(
             "participant_bootstrap": BOOTSTRAP_FILENAME,
             "paired_participant_increments": PAIRED_PARTICIPANT_INCREMENTS_FILENAME,
             "paired_model_increments": PAIRED_MODEL_INCREMENTS_FILENAME,
+            "paired_fold_estimability": PAIRED_FOLD_ESTIMABILITY_FILENAME,
             "paired_increment_bootstrap": PAIRED_BOOTSTRAP_FILENAME,
             "probe_trajectory": PROBE_TRAJECTORY_FILENAME,
             "session_discrimination": SESSION_DISCRIMINATION_FILENAME,
