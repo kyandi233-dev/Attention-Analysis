@@ -38,12 +38,14 @@ jobs:
             src/attention_pipeline/supervised_learning/evaluation.py \
             src/attention_pipeline/supervised_learning/trajectory.py \
             src/attention_pipeline/supervised_learning/reporting.py \
+            src/attention_pipeline/supervised_learning/outcome_scope.py \
             src/attention_pipeline/supervised_learning/entrypoint.py \
             src/attention_pipeline/multimodal_formal/quality_admission.py \
             src/attention_pipeline/multimodal_formal/analysis_sets.py \
             src/attention_pipeline/multimodal_formal/supervised_input.py \
             src/attention_pipeline/multimodal_formal/prediction_archive.py \
-            src/attention_pipeline/multimodal_formal/probe_key_authority.py
+            src/attention_pipeline/multimodal_formal/probe_key_authority.py \
+            src/attention_pipeline/nir_formal_analysis/supervised_probe_table.py
 
       - name: Run Task A and vertical-integration contract tests
         run: |
@@ -60,7 +62,9 @@ jobs:
             tests/test_supervised_learning_trajectory.py \
             tests/test_supervised_learning_reporting.py \
             tests/test_supervised_learning_entrypoint.py \
+            tests/test_supervised_outcome_scope.py \
             tests/test_task_b_malformed_feature_values.py \
             tests/test_supervised_vertical_integration.py \
             tests/test_supervised_input_cli.py \
-            tests/test_supervised_prediction_archive_cli.py
+            tests/test_supervised_prediction_archive_cli.py \
+            tests/test_nir_supervised_probe_table.py
