@@ -13,7 +13,7 @@ from attention_pipeline.supervised_learning.feature_schemes import (
 from attention_pipeline.supervised_learning.task import SupervisedLearningContractError
 
 
-def test_valid_predeclared_behavior_scheme_uses_raw_omission() -> None:
+def test_valid_predeclared_behavior_scheme_uses_scientific_modality() -> None:
     scheme = feature_scheme_from_mapping(
         {
             "feature_set_id": "behavior_candidate_a",
@@ -25,11 +25,37 @@ def test_valid_predeclared_behavior_scheme_uses_raw_omission() -> None:
                 "commission_rate",
                 "dprime_loglinear",
             ],
-            "modality_blocks": ["behavior"],
+            "modalities": ["behavior"],
+            "required_devices": [],
         }
     )
     assert scheme.feature_set_id == "behavior_candidate_a"
     assert "raw_go_omission_rate" in scheme.columns
+    assert scheme.modalities == ("behavior",)
+    assert scheme.required_devices == ()
+    assert not scheme.uses_deprecated_modality_blocks
+
+
+def test_deprecated_modality_blocks_is_explicit_and_only_accepts_scientific_modalities() -> None:
+    legacy = feature_scheme_from_mapping(
+        {
+            "feature_set_id": "legacy_behavior",
+            "columns": ["x"],
+            "modality_blocks": ["behavior"],
+        }
+    )
+    assert legacy.effective_modalities == ("behavior",)
+    assert legacy.uses_deprecated_modality_blocks
+    assert legacy.audit_dict()["deprecated_modality_blocks"] == ["behavior"]
+
+    with pytest.raises(SupervisedLearningContractError, match="non-scientific modality"):
+        feature_scheme_from_mapping(
+            {
+                "feature_set_id": "legacy_device_misuse",
+                "columns": ["x"],
+                "modality_blocks": ["nir", "rgb"],
+            }
+        )
 
 
 def test_structural_leakage_and_audit_columns_fail_closed() -> None:
@@ -52,6 +78,8 @@ def test_structural_leakage_and_audit_columns_fail_closed() -> None:
         "window_end_unix_ms",
         "analysis_set_id",
         "comparison_models",
+        "required_features",
+        "required_feature_records",
         "run_id",
         "model_id",
         "outer_fold_group",
@@ -63,13 +91,28 @@ def test_structural_leakage_and_audit_columns_fail_closed() -> None:
             validate_mainline_feature_scheme(FeatureScheme("bad", (column,)))
 
 
-def test_duplicate_features_duplicate_modality_blocks_and_duplicate_scheme_ids_are_rejected() -> None:
+def test_duplicate_features_modalities_devices_and_scheme_ids_are_rejected() -> None:
     with pytest.raises(SupervisedLearningContractError, match="duplicate columns"):
         validate_mainline_feature_scheme(FeatureScheme("dup", ("x", "x")))
 
-    with pytest.raises(SupervisedLearningContractError, match="duplicate modality_blocks"):
+    with pytest.raises(SupervisedLearningContractError, match="duplicate modalities"):
         validate_mainline_feature_scheme(
-            FeatureScheme("dup-block", ("x",), modality_blocks=("behavior", "behavior"))
+            FeatureScheme("dup-modality", ("x",), modalities=("behavior", "behavior"))
+        )
+
+    with pytest.raises(SupervisedLearningContractError, match="duplicate required_devices"):
+        validate_mainline_feature_scheme(
+            FeatureScheme("dup-device", ("x",), required_devices=("rgb", "rgb"))
+        )
+
+    with pytest.raises(SupervisedLearningContractError, match="cannot declare both"):
+        validate_mainline_feature_scheme(
+            FeatureScheme(
+                "dual-modality-fields",
+                ("x",),
+                modalities=("behavior",),
+                modality_blocks=("behavior",),
+            )
         )
 
     with pytest.raises(SupervisedLearningContractError, match="feature_set_id values must be unique"):
