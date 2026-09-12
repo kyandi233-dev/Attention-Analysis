@@ -116,14 +116,22 @@ def test_movement_figures_use_real_rgb55_estimate_schema_and_audit_missingness(t
     assert "figures/main/movement_q1_relationships.png" in generated
     assert "figures/main/movement_q2_relationships.png" in generated
     assert "figures/main/movement_block_pair_task_progression.png" in generated
+    assert "figures/qc/movement_exposure_qc.png" in generated
     assert (root / "figures/main/movement_q1_relationships.svg").is_file()
     assert (root / "figures/main/movement_q2_relationships.svg").is_file()
     assert (root / "figures/main/movement_block_pair_task_progression.svg").is_file()
+    assert (root / "figures/qc/movement_exposure_qc.svg").is_file()
 
     manifest = pd.read_csv(root / "manifests/figure_manifest.csv")
     audit = pd.read_csv(root / "manifests/figure_audit.csv")
     assert {"movement_q1_relationships", "movement_q2_relationships"}.issubset(set(manifest["figure_id"]))
     assert set(manifest["status"]) == {"candidate"}
+    purpose = manifest.set_index("figure_id")["purpose"].to_dict()
+    assert purpose["movement_block_pair_task_progression"] == "main_science"
+    assert purpose["movement_exposure_qc"] == "qc"
+    main_counts = manifest.set_index("figure_id").loc["movement_block_pair_task_progression"]
+    assert int(main_counts["participant_group_n"]) == 4
+    assert int(main_counts["session_n"]) == 4
     assert not audit["internal_title_present"].astype(bool).any()
 
     # Pose-sensitivity model rows were intentionally not supplied: absence must
