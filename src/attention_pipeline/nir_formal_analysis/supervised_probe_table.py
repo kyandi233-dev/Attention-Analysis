@@ -36,9 +36,18 @@ def _finite_optional(row: pd.Series, names: tuple[str, ...]) -> float | None:
 
 
 def _probe_onset_ms(row: pd.Series) -> float:
-    value = _finite_optional(row, ("probe_onset_ms", "window_end_ms", "absolute_onset_time"))
+    """Resolve only fields whose semantics are explicitly probe-timed.
+
+    ``probe_time_ms`` is the current Behavior authority. ``probe_onset_ms`` and
+    ``window_end_ms`` are retained as explicit compatibility fields. SART trial
+    ``absolute_onset_time`` is intentionally forbidden because it is stimulus onset,
+    not Q1 probe onset.
+    """
+    value = _finite_optional(row, ("probe_time_ms", "probe_onset_ms", "window_end_ms"))
     if value is None:
-        raise ValueError("probe row missing finite onset time")
+        raise ValueError(
+            "probe row missing finite explicit probe time (probe_time_ms/probe_onset_ms/window_end_ms)"
+        )
     return value
 
 
