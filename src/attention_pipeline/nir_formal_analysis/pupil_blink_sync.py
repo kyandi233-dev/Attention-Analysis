@@ -57,6 +57,25 @@ def _formal_rgb_frames(rgb_frames: pd.DataFrame) -> pd.DataFrame:
     return rgb_frames.loc[phase.isin(FORMAL_PHASES)].copy()
 
 
+def _events_with_formal_rgb_support(events: pd.DataFrame, rgb_frames: pd.DataFrame) -> pd.DataFrame:
+    if events.empty or rgb_frames.empty or "phase" not in rgb_frames.columns:
+        return events
+    phase = rgb_frames["phase"].astype("string").str.strip().str.lower()
+    intervals: list[tuple[float, float]] = []
+    for name in FORMAL_PHASES:
+        times = pd.to_numeric(rgb_frames.loc[phase.eq(name), "unix_ms"], errors="coerce").dropna()
+        if not times.empty:
+            intervals.append((float(times.min()), float(times.max())))
+    if not intervals:
+        return events
+    start = pd.to_numeric(events["start_unix_ms"], errors="coerce")
+    end = pd.to_numeric(events["end_unix_ms"], errors="coerce")
+    keep = pd.Series(False, index=events.index)
+    for lo, hi in intervals:
+        keep |= end.ge(lo) & start.le(hi)
+    return events.loc[keep].copy()
+
+
 def rgb_blink_source_availability(
     events: pd.DataFrame,
     rgb_frames: pd.DataFrame | None,
@@ -88,7 +107,9 @@ def audit_rgb_nir_sync_with_frames(
     Range deltas and frame-to-frame residuals are descriptive diagnostics only; they
     are not converted into an automatic synchronization pass/fail threshold.
     """
-    base = audit_rgb_nir_sync(timepoints, events).copy()
+    formal_rgb = _formal_rgb_frames(rgb_frames) if rgb_frames is not None else None
+    sync_events = _events_with_formal_rgb_support(events, formal_rgb) if formal_rgb is not None else events
+    base = audit_rgb_nir_sync(timepoints, sync_events).copy()
     if len(base) != 1:
         raise ValueError("sync helper expects one session at a time")
     row = base.iloc[0].to_dict()
@@ -97,8 +118,7 @@ def audit_rgb_nir_sync_with_frames(
     for name, value in nir_metrics.items():
         row[f"nir_frame_{name}"] = value
 
-    if rgb_frames is not None:
-        rgb_frames = _formal_rgb_frames(rgb_frames)
+    rgb_frames = formal_rgb
     if rgb_frames is None or rgb_frames.empty:
         row.update(
             {
