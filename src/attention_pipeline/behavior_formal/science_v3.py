@@ -1,4 +1,4 @@
-﻿"""Behavior science v3 contract for the formal FocusWave analysis line.
+"""Behavior science v3 contract for the formal FocusWave analysis line.
 
 This module is the formal replacement for the historical session-as-participant
 statistics. It keeps Go omission and No-Go commission separate, produces the
@@ -218,8 +218,12 @@ def build_probe_windows(trials: pd.DataFrame, cfg: BehaviorScienceConfig | None 
     d = _canonical_ids(trials)
     if "is_probe" not in d:
         raise BehaviorContractError("probe windows require is_probe")
-    if "trial_num" not in d or "absolute_onset_time" not in d:
-        raise BehaviorContractError("probe windows require trial_num and absolute_onset_time")
+    required_time_columns = {"trial_num", "absolute_onset_time", "probe_onset_time"}
+    missing_time_columns = sorted(required_time_columns - set(d.columns))
+    if missing_time_columns:
+        raise BehaviorContractError(
+            f"probe windows require timing columns: missing {missing_time_columns}"
+        )
     d["absolute_onset_time"] = _numeric(d, "absolute_onset_time")
     rows: list[dict[str, Any]] = []
     windows = tuple(sorted(set(cfg.sensitivity_probe_windows_seconds)))
@@ -230,9 +234,13 @@ def build_probe_windows(trials: pd.DataFrame, cfg: BehaviorScienceConfig | None 
         probes = b[b["is_probe"].fillna(0).astype(float).eq(1)]
         for probe_order, (_, p) in enumerate(probes.iterrows(), start=1):
             anchor_trial = float(p["trial_num"])
-            anchor_time = float(p["absolute_onset_time"])
-            probe_time_raw = pd.to_numeric(pd.Series([p.get("probe_onset_time")]), errors="coerce").iloc[0]
-            probe_time = float(probe_time_raw) if np.isfinite(probe_time_raw) else anchor_time
+            probe_time_raw = pd.to_numeric(pd.Series([p["probe_onset_time"]]), errors="coerce").iloc[0]
+            if not np.isfinite(probe_time_raw):
+                raise BehaviorContractError(
+                    "formal probe row requires finite probe_onset_time; "
+                    f"session={session}, block={block}, probe_order={probe_order}"
+                )
+            probe_time = float(probe_time_raw)
             # Both constraints are intentional: trial_num < anchor excludes the anchoring
             # trial even when probe_onset_time occurs after that trial response.
             prior = b[(pd.to_numeric(b["trial_num"], errors="coerce") < anchor_trial)
