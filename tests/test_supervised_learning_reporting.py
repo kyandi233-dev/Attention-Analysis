@@ -68,7 +68,7 @@ def _complete_result() -> SupervisedRunResult:
     )
 
 
-def _paired_result() -> SupervisedRunResult:
+def _paired_result(*, feature_absent_for: str | None = None) -> SupervisedRunResult:
     rows = []
     audits = []
     for model_id, probabilities in {
@@ -99,6 +99,13 @@ def _paired_result() -> SupervisedRunResult:
                     "failure_reason": "",
                 }
             )
+            output_columns = ["behavior_signal"]
+            dropped_columns = {}
+            if model_id == "behavior_plus::blink_rate":
+                if participant == feature_absent_for:
+                    dropped_columns = {"blink_rate": "zero_variance_in_training"}
+                else:
+                    output_columns.append("blink_rate")
             audits.append(
                 {
                     "run_id": "run-paired",
@@ -108,6 +115,12 @@ def _paired_result() -> SupervisedRunResult:
                     "outer_fold_group": participant,
                     "failed": False,
                     "reason": "",
+                    "final_refit": {
+                        "preprocessing": {
+                            "output_columns": output_columns,
+                            "dropped_columns": dropped_columns,
+                        }
+                    },
                 }
             )
     return SupervisedRunResult(
@@ -126,6 +139,7 @@ def _paired_result() -> SupervisedRunResult:
                 {
                     "comparison_type": "behavior_increment",
                     "feature_id": "blink_rate",
+                    "feature_columns": ["blink_rate"],
                     "baseline_model_id": "behavior_reference",
                     "added_model_id": "behavior_plus::blink_rate",
                 }
@@ -157,18 +171,22 @@ def test_write_supervised_run_is_immutable_and_auditable(tmp_path) -> None:
     assert manifest["trajectory_reporting"]["q2_context_available"] is True
     assert manifest["trajectory_reporting"]["questionnaire_join_performed"] is False
 
-    assert (run_root / "probe_predictions.csv").is_file()
-    assert (run_root / "fold_audits.json").is_file()
-    assert (run_root / "failures.csv").is_file()
-    assert (run_root / "participant_log_loss.csv").is_file()
-    assert (run_root / "model_evaluation.csv").is_file()
-    assert (run_root / "participant_bootstrap.json").is_file()
-    assert (run_root / "paired_participant_increments.csv").is_file()
-    assert (run_root / "paired_model_increments.csv").is_file()
-    assert (run_root / "paired_increment_bootstrap.json").is_file()
-    assert (run_root / "probe_trajectory.csv").is_file()
-    assert (run_root / "session_discrimination.csv").is_file()
-    assert (run_root / "run_manifest.json").is_file()
+    for filename in (
+        "probe_predictions.csv",
+        "fold_audits.json",
+        "failures.csv",
+        "participant_log_loss.csv",
+        "model_evaluation.csv",
+        "participant_bootstrap.json",
+        "paired_participant_increments.csv",
+        "paired_model_increments.csv",
+        "paired_fold_estimability.csv",
+        "paired_increment_bootstrap.json",
+        "probe_trajectory.csv",
+        "session_discrimination.csv",
+        "run_manifest.json",
+    ):
+        assert (run_root / filename).is_file()
 
     participant = pd.read_csv(run_root / "participant_log_loss.csv")
     model = pd.read_csv(run_root / "model_evaluation.csv")
@@ -206,6 +224,7 @@ def test_declared_paired_increment_is_written_from_same_oof_archive(tmp_path) ->
 
     summary = pd.read_csv(run_root / "paired_model_increments.csv")
     participants = pd.read_csv(run_root / "paired_participant_increments.csv")
+    folds = pd.read_csv(run_root / "paired_fold_estimability.csv")
     bootstrap = json.loads((run_root / "paired_increment_bootstrap.json").read_text(encoding="utf-8"))
 
     assert manifest["n_declared_paired_comparisons"] == 1
@@ -213,12 +232,41 @@ def test_declared_paired_increment_is_written_from_same_oof_archive(tmp_path) ->
     assert summary.loc[0, "status"] == "estimable"
     assert summary.loc[0, "feature_id"] == "blink_rate"
     assert summary.loc[0, "membership_type"] == "included_complete"
+    assert summary.loc[0, "n_expected_outer_folds"] == 2
+    assert summary.loc[0, "n_estimable_outer_folds"] == 2
+    assert summary.loc[0, "n_feature_absent_outer_folds"] == 0
     assert summary.loc[0, "overall_log_loss_increment"] > 0
     assert set(participants["participant_group_id"]) == {"P01", "P02"}
     assert set(participants["membership_type"]) == {"included_complete"}
+    assert set(folds["status"]) == {"estimable"}
     assert bootstrap[0]["paired_model_resampling"] is True
     assert bootstrap[0]["membership_type"] == "included_complete"
+    assert bootstrap[0]["n_estimable_outer_folds"] == 2
     assert bootstrap[0]["point_estimate"] == pytest.approx(summary.loc[0, "overall_log_loss_increment"])
+
+
+def test_paired_increment_excludes_fold_where_defining_feature_was_dropped(tmp_path) -> None:
+    result = _paired_result(feature_absent_for="P02")
+    manifest = write_supervised_run(result, output_root=tmp_path)
+    run_root = tmp_path / "run-paired"
+
+    summary = pd.read_csv(run_root / "paired_model_increments.csv")
+    participants = pd.read_csv(run_root / "paired_participant_increments.csv")
+    folds = pd.read_csv(run_root / "paired_fold_estimability.csv")
+    bootstrap = json.loads((run_root / "paired_increment_bootstrap.json").read_text(encoding="utf-8"))
+
+    assert manifest["n_estimable_paired_comparisons"] == 1
+    assert summary.loc[0, "status"] == "estimable_partial_fold_coverage"
+    assert summary.loc[0, "n_expected_outer_folds"] == 2
+    assert summary.loc[0, "n_estimable_outer_folds"] == 1
+    assert summary.loc[0, "n_feature_absent_outer_folds"] == 1
+    assert set(participants["participant_group_id"]) == {"P01"}
+    p02 = folds.loc[folds["outer_fold_group"].eq("P02")].iloc[0]
+    assert p02["status"] == "not_estimable_feature_absent"
+    assert "blink_rate:zero_variance_in_training" in p02["reason"]
+    assert bootstrap[0]["n_expected_outer_folds"] == 2
+    assert bootstrap[0]["n_estimable_outer_folds"] == 1
+    assert bootstrap[0]["n_participants"] == 1
 
 
 def test_write_supervised_run_rejects_prediction_row_loss(tmp_path) -> None:
