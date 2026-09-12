@@ -39,6 +39,7 @@ def _probe_frame(seed: int = 13) -> pd.DataFrame:
                         "analysis_set_id": "synthetic-common-set",
                         "membership_type": "included_missing_aware",
                         "q1_nominal_4class": q1,
+                        "q2_ordinal_4level": probe % 4 + 1,
                         "signal": 3.0 * y + rng.normal(0, 0.15),
                         "noise": rng.normal(0, 1.0),
                         "constant": 1.0,
@@ -75,7 +76,9 @@ def test_outer_loso_keeps_all_sessions_of_participant_together_and_preserves_ana
     assert set(result.predictions["analysis_set_id"]) == {"synthetic-common-set"}
     assert set(result.predictions["membership_type"]) == {"included_missing_aware"}
     assert result.metadata["membership_type"] == "included_missing_aware"
+    assert result.metadata["q2_retained_for_reporting_only"] is True
     assert set(result.predictions["run_id"]) == {"synthetic-run"}
+    assert set(result.predictions["q2_ordinal_4level"]) == {1, 2, 3, 4}
     assert (result.predictions["participant_group_id"] == result.predictions["outer_fold_group"]).all()
     for locator in (
         "probe_id",
