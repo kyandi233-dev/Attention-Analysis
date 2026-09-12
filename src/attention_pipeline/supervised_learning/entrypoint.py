@@ -1,4 +1,4 @@
-"""Configuration-to-run entrypoint for the Task A supervised-learning core."""
+"""Configuration-to-run entrypoint for the formal Q1 supervised-learning core."""
 from __future__ import annotations
 
 import hashlib
@@ -29,6 +29,7 @@ from .outcome_scope import validate_task_a_required_outcomes
 from .reporting import write_supervised_run
 from .runner import run_nested_loso
 from .task import Q1_BINARY_SPEC, SupervisedLearningContractError
+from .time_legality import time_legality_audit
 
 
 FORMAL_PARTICIPANT_GROUP_COLUMN = "participant_group_id"
@@ -54,34 +55,34 @@ def _require_frozen_runtime_contract(config_data: Mapping[str, Any]) -> None:
     for key, expected in expected_task.items():
         if task.get(key) != expected:
             raise SupervisedLearningContractError(
-                f"task.{key}={task.get(key)!r} conflicts with frozen Task A value {expected!r}"
+                f"task.{key}={task.get(key)!r} conflicts with frozen formal value {expected!r}"
             )
 
     validation = config_data.get("validation", {})
     outer = validation.get("outer", {})
     inner = validation.get("inner", {})
     if outer.get("method") != "leave_one_participant_out" or outer.get("participant_disjoint") is not True:
-        raise SupervisedLearningContractError("Task A outer validation must remain participant-disjoint LOSO")
+        raise SupervisedLearningContractError("formal outer validation must remain participant-disjoint LOSO")
     if inner.get("method") != "grouped_k_fold" or inner.get("refit_preprocessing_per_split") is not True:
-        raise SupervisedLearningContractError("Task A inner validation must refit preprocessing within each grouped split")
+        raise SupervisedLearningContractError("formal inner validation must refit preprocessing within each grouped split")
     if int(inner.get("n_splits", -1)) != FORMAL_INNER_SPLITS:
         raise SupervisedLearningContractError(
-            f"formal Task A inner validation must use exactly {FORMAL_INNER_SPLITS} participant-grouped folds"
+            f"formal inner validation must use exactly {FORMAL_INNER_SPLITS} participant-grouped folds"
         )
     outer_group = str(outer.get("group_column", ""))
     inner_group = str(inner.get("group_column", ""))
     if outer_group != FORMAL_PARTICIPANT_GROUP_COLUMN or inner_group != outer_group:
         raise SupervisedLearningContractError(
-            "Task A inner and outer validation must use the same participant grouping column: participant_group_id"
+            "formal inner and outer validation must use the same participant grouping column: participant_group_id"
         )
     if validation.get("zero_individual_calibration") is not True:
-        raise SupervisedLearningContractError("Task A mainline requires zero individual calibration")
+        raise SupervisedLearningContractError("formal mainline requires zero individual calibration")
     if validation.get("forbid_test_participant_sequence_statistics") is not True:
         raise SupervisedLearningContractError("test-participant sequence statistics must remain forbidden")
     if validation.get("forbid_test_participant_future_information") is not True:
         raise SupervisedLearningContractError("test-participant future information must remain forbidden")
     if validation.get("require_analysis_set_id") is not True:
-        raise SupervisedLearningContractError("formal Task A runs must require analysis_set_id")
+        raise SupervisedLearningContractError("formal supervised runs must require analysis_set_id")
 
     legacy_prediction_folds = (
         config_data.get("prediction_folds"),
@@ -92,7 +93,7 @@ def _require_frozen_runtime_contract(config_data: Mapping[str, Any]) -> None:
     )
     if any(value is not None for value in legacy_prediction_folds):
         raise SupervisedLearningContractError(
-            "standalone prediction_folds is deprecated; formal Task A uses outer LOSO plus inner GroupKFold only"
+            "standalone prediction_folds is deprecated; formal supervised learning uses outer LOSO plus inner GroupKFold only"
         )
 
     preprocessing = config_data.get("preprocessing", {})
@@ -104,9 +105,9 @@ def _require_frozen_runtime_contract(config_data: Mapping[str, Any]) -> None:
     )
     for key in required_training_only:
         if preprocessing.get(key) is not True:
-            raise SupervisedLearningContractError(f"preprocessing.{key} must remain true for Task A")
+            raise SupervisedLearningContractError(f"preprocessing.{key} must remain true for formal supervised learning")
     if preprocessing.get("unified_global_coverage_cutoff") is not None:
-        raise SupervisedLearningContractError("Task A forbids a unified global coverage cutoff")
+        raise SupervisedLearningContractError("formal supervised learning forbids a unified global coverage cutoff")
     if preprocessing.get("participant_specific_within_between_mainline") is not False:
         raise SupervisedLearningContractError(
             "participant-specific within/between decomposition is disabled in the zero-calibration mainline"
@@ -115,10 +116,10 @@ def _require_frozen_runtime_contract(config_data: Mapping[str, Any]) -> None:
     models = config_data.get("models", {})
     primary = models.get("primary", {})
     if primary.get("kind") != "logistic_l2":
-        raise SupervisedLearningContractError("Task A primary model must remain L2 logistic regression")
+        raise SupervisedLearningContractError("formal primary model must remain L2 logistic regression")
     if models.get("selection_metric") != SELECTION_METRIC:
         raise SupervisedLearningContractError(
-            f"Task A candidate selection metric must be {SELECTION_METRIC}"
+            f"formal candidate selection metric must be {SELECTION_METRIC}"
         )
 
     uncertainty = config_data.get("uncertainty", {})
@@ -137,6 +138,29 @@ def _require_frozen_runtime_contract(config_data: Mapping[str, Any]) -> None:
                 f"uncertainty.participant_cluster_bootstrap.{key}={participant_bootstrap.get(key)!r} "
                 f"conflicts with frozen D10 value {expected!r}"
             )
+
+
+def _runtime_time_legality_audit(config_data: Mapping[str, Any]) -> dict[str, object] | None:
+    """Fail closed on producer-side future information before any model plan or fitting.
+
+    Historical manual ``feature_schemes`` remain available only as a compatibility/test
+    interface. Any real registry-backed run must pass the 1.16.10 producer-side temporal
+    provenance contract inside this runtime; the standalone validator is not trusted as
+    the sole gate.
+    """
+    registry_section = config_data.get("feature_registry", {})
+    if registry_section is None:
+        registry_section = {}
+    if not isinstance(registry_section, Mapping):
+        raise SupervisedLearningContractError("feature_registry must be a mapping")
+    entries = registry_section.get("features", [])
+    if entries is None:
+        entries = []
+    if not isinstance(entries, list):
+        raise SupervisedLearningContractError("feature_registry.features must be a list")
+    if not entries:
+        return None
+    return time_legality_audit(registry_section)
 
 
 def _load_feature_families(section: Mapping[str, Any]) -> dict[str, list[FeatureScheme]]:
@@ -212,7 +236,7 @@ def _read_probe_table(path: Path) -> pd.DataFrame:
 def _require_single_analysis_set_id(frame: pd.DataFrame) -> str:
     if FORMAL_ANALYSIS_SET_COLUMN not in frame.columns:
         raise SupervisedLearningContractError(
-            "formal supervised input must contain analysis_set_id supplied by the B-layer analysis-set contract"
+            "formal supervised input must contain analysis_set_id supplied by the comparison-specific analysis-set contract"
         )
     raw = frame[FORMAL_ANALYSIS_SET_COLUMN]
     if raw.isna().any():
@@ -223,7 +247,7 @@ def _require_single_analysis_set_id(frame: pd.DataFrame) -> str:
     values = normalized.drop_duplicates().tolist()
     if len(values) != 1:
         raise SupervisedLearningContractError(
-            f"formal Task A run requires exactly one analysis_set_id; got {values}"
+            f"formal supervised run requires exactly one analysis_set_id; got {values}"
         )
     return values[0]
 
@@ -256,7 +280,7 @@ def _parse_comparison_models(value: object) -> tuple[str, ...]:
 def _require_comparison_models(frame: pd.DataFrame) -> tuple[str, ...]:
     if FORMAL_COMPARISON_MODELS_COLUMN not in frame.columns:
         raise SupervisedLearningContractError(
-            "registry-backed formal input must contain comparison_models supplied by the B-layer analysis-set contract"
+            "registry-backed formal input must contain comparison_models supplied by the comparison-specific analysis-set contract"
         )
     if frame[FORMAL_COMPARISON_MODELS_COLUMN].isna().any():
         raise SupervisedLearningContractError("comparison_models contains missing values")
@@ -304,7 +328,7 @@ def _parse_required_features(value: object) -> tuple[tuple[str, tuple[str, ...]]
 def _require_required_feature_columns(frame: pd.DataFrame) -> tuple[str, ...]:
     if FORMAL_REQUIRED_FEATURES_COLUMN not in frame.columns:
         raise SupervisedLearningContractError(
-            "registry-backed formal input must contain required_features supplied by the B-layer analysis-set contract"
+            "registry-backed formal input must contain required_features supplied by the comparison-specific analysis-set contract"
         )
     if frame[FORMAL_REQUIRED_FEATURES_COLUMN].isna().any():
         raise SupervisedLearningContractError("required_features contains missing values")
@@ -375,6 +399,35 @@ def _git_sha(repo_root: Path) -> str:
     return "unknown"
 
 
+def _enrich_paired_specs_with_time_legality(
+    paired_specs: Sequence[Mapping[str, object]],
+    time_audit: Mapping[str, object] | None,
+) -> list[dict[str, object]]:
+    specs = [dict(spec) for spec in paired_specs]
+    if time_audit is None:
+        return specs
+    records = time_audit.get("features", [])
+    if not isinstance(records, list):
+        raise SupervisedLearningContractError("feature_time_legality.features must be a list")
+    by_id = {
+        str(record.get("feature_id", "")): dict(record)
+        for record in records
+        if isinstance(record, Mapping) and str(record.get("feature_id", "")).strip()
+    }
+    for spec in specs:
+        raw_ids = spec.get("defining_feature_ids", [])
+        if not isinstance(raw_ids, Sequence) or isinstance(raw_ids, (str, bytes)):
+            raise SupervisedLearningContractError("paired comparison defining_feature_ids must be a sequence")
+        feature_ids = [str(feature_id).strip() for feature_id in raw_ids]
+        missing = [feature_id for feature_id in feature_ids if feature_id not in by_id]
+        if missing:
+            raise SupervisedLearningContractError(
+                f"paired comparison lacks time-legality provenance for defining features: {missing}"
+            )
+        spec["defining_feature_time_legality"] = [by_id[feature_id] for feature_id in feature_ids]
+    return specs
+
+
 def run_supervised_from_config(
     config_path: str | Path = "configs/supervised_learning_v1.yaml",
     *,
@@ -383,9 +436,10 @@ def run_supervised_from_config(
     output_root: str | Path | None = None,
     run_id: str | None = None,
 ) -> dict[str, object]:
-    """Execute Task A from one upstream comparison-specific admitted probe table."""
+    """Execute one comparison-specific formal supervised run."""
     config = load_config(config_path, paths_config=paths_config)
     _require_frozen_runtime_contract(config.data)
+    feature_time_legality = _runtime_time_legality_audit(config.data)
 
     input_path = Path(input_table).resolve() if input_table is not None else config.path_value("input_table")
     output_path = Path(output_root).resolve() if output_root is not None else config.path_value("output_root")
@@ -395,7 +449,7 @@ def run_supervised_from_config(
     all_families, comparison_plan = _resolve_model_plan(config.data)
     if not all_families:
         raise SupervisedLearningContractError(
-            "no supervised feature families are configured; Task C/D must freeze a feature registry or candidate schemes before a formal real-data run"
+            "no supervised feature families are configured; single-modal producers must freeze a feature registry before a formal real-data run"
         )
 
     frame = _read_probe_table(input_path)
@@ -438,6 +492,9 @@ def run_supervised_from_config(
     )
     result.metadata["analysis_set_required_outcomes"] = list(required_outcomes)
     result.metadata["analysis_set_outcome_scope_verified"] = True
+    if feature_time_legality is not None:
+        result.metadata["feature_time_legality"] = feature_time_legality
+        result.metadata["time_legality_runtime_verified"] = True
     if comparison_plan is not None:
         selected = tuple(families)
         result.metadata["feature_comparison_plan"] = comparison_plan.audit_dict()
@@ -445,9 +502,10 @@ def run_supervised_from_config(
         result.metadata["analysis_set_required_feature_columns"] = list(required_feature_columns or ())
         result.metadata["declared_model_predictor_union"] = list(predictor_union or ())
         result.metadata["analysis_set_feature_scope_verified"] = True
-        result.metadata["paired_comparisons"] = build_paired_comparison_specs(
-            comparison_plan,
-            selected,
+        paired_specs = build_paired_comparison_specs(comparison_plan, selected)
+        result.metadata["paired_comparisons"] = _enrich_paired_specs_with_time_legality(
+            paired_specs,
+            feature_time_legality,
         )
         result.metadata["paired_comparison_reporting_contract"] = paired_comparison_reporting_contract()
 
