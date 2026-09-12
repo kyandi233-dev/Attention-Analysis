@@ -12,6 +12,11 @@ import pandas as pd
 
 from attention_pipeline.config import load_config
 
+from .comparison_provenance import (
+    build_paired_comparison_specs,
+    paired_comparison_reporting_contract,
+    write_paired_comparison_provenance,
+)
 from .evaluation import (
     DEFAULT_BOOTSTRAP_REPLICATES,
     DEFAULT_BOOTSTRAP_SEED,
@@ -345,10 +350,6 @@ def _validate_analysis_set_feature_scope(
     return tuple(sorted(required_set)), tuple(sorted(predictor_set))
 
 
-def _feature_columns_by_id(plan: FeatureComparisonPlan) -> dict[str, tuple[str, ...]]:
-    return {feature.feature_id: tuple(feature.columns) for feature in plan.registry}
-
-
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -438,37 +439,20 @@ def run_supervised_from_config(
     result.metadata["analysis_set_required_outcomes"] = list(required_outcomes)
     result.metadata["analysis_set_outcome_scope_verified"] = True
     if comparison_plan is not None:
-        selected = set(families)
-        feature_columns = _feature_columns_by_id(comparison_plan)
+        selected = tuple(families)
         result.metadata["feature_comparison_plan"] = comparison_plan.audit_dict()
         result.metadata["analysis_set_declared_models"] = list(declared_models or ())
         result.metadata["analysis_set_required_feature_columns"] = list(required_feature_columns or ())
         result.metadata["declared_model_predictor_union"] = list(predictor_union or ())
         result.metadata["analysis_set_feature_scope_verified"] = True
-        result.metadata["paired_comparisons"] = [
-            {
-                "comparison_type": "behavior_increment",
-                "baseline_model_id": baseline,
-                "added_model_id": added,
-                "feature_id": feature_id,
-                "feature_columns": list(feature_columns[feature_id]),
-            }
-            for baseline, added, feature_id in comparison_plan.behavior_increment_pairs
-            if baseline in selected and added in selected
-        ] + [
-            {
-                "comparison_type": "full_leave_one_out",
-                "baseline_model_id": reduced,
-                "added_model_id": full,
-                "feature_id": feature_id,
-                "feature_columns": list(feature_columns[feature_id]),
-            }
-            for reduced, full, feature_id in comparison_plan.full_leave_one_out_pairs
-            if reduced in selected and full in selected
-        ]
+        result.metadata["paired_comparisons"] = build_paired_comparison_specs(
+            comparison_plan,
+            selected,
+        )
+        result.metadata["paired_comparison_reporting_contract"] = paired_comparison_reporting_contract()
 
     repo_root = Path(__file__).resolve().parents[3]
-    return write_supervised_run(
+    manifest = write_supervised_run(
         result,
         output_root=output_path,
         provenance={
@@ -479,3 +463,14 @@ def run_supervised_from_config(
             "code_sha": _git_sha(repo_root),
         },
     )
+    if comparison_plan is not None:
+        manifest = write_paired_comparison_provenance(
+            output_root=output_path,
+            run_id=str(resolved_run_id),
+            analysis_set_id=analysis_set_id,
+            membership_type=str(result.metadata.get("membership_type", "")),
+            paired_comparisons=result.metadata.get("paired_comparisons", []),
+            fold_audits=result.fold_audits,
+            manifest=manifest,
+        )
+    return manifest
