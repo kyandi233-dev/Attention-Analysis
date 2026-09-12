@@ -71,6 +71,11 @@ def test_session_auroc_is_estimable_only_when_both_classes_occur() -> None:
     assert audit["session_model_rows_total"] == 2
     assert audit["session_model_rows_estimable"] == 1
     assert audit["session_model_rows_not_estimable_single_class"] == 1
+    assert audit["session_model_estimable_fraction"] == pytest.approx(0.5)
+    assert audit["participant_model_rows_total"] == 1
+    assert audit["participant_model_rows_with_estimable_session"] == 1
+    assert audit["participants_total"] == 1
+    assert audit["participants_with_estimable_session"] == 1
 
 
 def test_failed_oof_row_makes_session_auroc_not_estimable() -> None:
