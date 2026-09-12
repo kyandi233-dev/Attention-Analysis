@@ -47,6 +47,27 @@ def _nearest_signed(reference: np.ndarray, targets: np.ndarray) -> np.ndarray:
     return nearest - targets
 
 
+def rgb_blink_source_availability(
+    events: pd.DataFrame,
+    rgb_frames: pd.DataFrame | None,
+) -> tuple[bool, str]:
+    """Classify whether RGB blink evidence exists without treating missing RGB as zero blinks.
+
+    A non-empty RGB frame axis establishes that a zero-event session is an observed
+    zero. Event boundaries alone are also usable, with weaker synchronization evidence.
+    If neither exists, the RGB-assisted cleaning tracks are not estimable.
+    """
+    frame_axis_available = rgb_frames is not None and not rgb_frames.empty
+    events_available = events is not None and not events.empty
+    if frame_axis_available and events_available:
+        return True, "rgb_frame_axis_plus_blink_events"
+    if frame_axis_available:
+        return True, "rgb_frame_axis_zero_detected_events"
+    if events_available:
+        return True, "blink_event_boundaries_only"
+    return False, "rgb_blink_evidence_unavailable_or_ambiguous"
+
+
 def audit_rgb_nir_sync_with_frames(
     timepoints: pd.DataFrame,
     events: pd.DataFrame,
