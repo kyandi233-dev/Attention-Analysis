@@ -8,16 +8,19 @@ import attention_pipeline.behavior_formal.science_v3_figures as wrapper
 
 
 def _probe() -> pd.DataFrame:
-    return pd.DataFrame({
-        "repeat_participant_id": ["p1", "p1", "p2", "p2"],
-        "session_id": ["s1", "s1", "s2", "s2"],
-        "go_correct_rt_mean_ms": [420, 430, 410, 440],
-        "go_correct_rt_median_ms": [415, 422, 408, 432],
-        "go_correct_rt_cv": [.20, .22, .18, .25],
-        "go_correct_rt_theilsen_slope_ms_per_s": [-.4, .2, .1, -.1],
-        "raw_go_omission_rate": [.01, .02, .00, .03],
-        "commission_rate": [.02, .01, .03, .00],
-    })
+    rows = []
+    for i in range(8):
+        rows.append({
+            "repeat_participant_id": f"p{i % 3}",
+            "session_id": f"s{i % 4}",
+            "go_correct_rt_mean_ms": 420 + i * 4,
+            "go_correct_rt_median_ms": 415 + i * 3,
+            "go_correct_rt_cv": .18 + i * .01,
+            "go_correct_rt_theilsen_slope_ms_per_s": -.3 + i * .1,
+            "raw_go_omission_rate": .01 * (i % 3),
+            "commission_rate": .02 * (i % 2),
+        })
+    return pd.DataFrame(rows)
 
 
 def test_publication_contract_retires_cartesian_metric_pack() -> None:
@@ -29,17 +32,21 @@ def test_publication_contract_retires_cartesian_metric_pack() -> None:
     assert contract["question_driven_allowlist_required"] is True
     assert contract["cartesian_metric_by_scale_pack_allowed"] is False
     assert contract["metric_scale_coverage_audit_required"] is False
+    assert contract["current_output_layer"] == "FormalScience/Behavior"
 
 
-def test_default_runner_figure_entrypoint_is_compact_and_question_driven(tmp_path) -> None:
+def test_default_runner_figure_entrypoint_routes_to_science_layer(tmp_path) -> None:
+    probe = _probe()
+    probe.to_csv(tmp_path / "probe_primary_30s.csv", index=False)
     files = wrapper.generate_behavior_figures(
-        pd.DataFrame(), _probe(), tmp_path / "figures", error_summary=pd.DataFrame()
+        pd.DataFrame(), probe, tmp_path / "figures", error_summary=pd.DataFrame()
     )
-    manifest = pd.read_csv(tmp_path / "behavior_figure_manifest.csv")
-    coverage = pd.read_csv(tmp_path / "behavior_figure_coverage_audit.csv")
-    assert len(manifest) <= 5
+    root = tmp_path / "science_output" / "Behavior"
+    manifest = pd.read_csv(root / "manifests" / "figure_manifest.csv")
+    coverage = pd.read_csv(root / "tables" / "behavior_feature_coverage.csv")
+    assert 1 <= len(manifest) <= 8
     assert len(files) == 2 * len(manifest)
-    assert set(manifest["purpose"]).issubset({"qualification", "qc"})
+    assert set(manifest["purpose"]).issubset({"main", "qualification", "qc", "sensitivity"})
     assert manifest["scientific_question"].astype(str).str.len().gt(10).all()
     assert manifest["internal_title"].eq(False).all()
     assert manifest["legend_frame"].eq(False).all()
