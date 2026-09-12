@@ -17,6 +17,11 @@ from .evaluation import (
 )
 from .runner import SupervisedRunResult
 from .task import SupervisedLearningContractError
+from .trajectory import (
+    build_probe_trajectory,
+    session_discrimination_audit,
+    summarize_session_discrimination,
+)
 
 
 PREDICTIONS_FILENAME = "probe_predictions.csv"
@@ -28,6 +33,8 @@ BOOTSTRAP_FILENAME = "participant_bootstrap.json"
 PAIRED_PARTICIPANT_INCREMENTS_FILENAME = "paired_participant_increments.csv"
 PAIRED_MODEL_INCREMENTS_FILENAME = "paired_model_increments.csv"
 PAIRED_BOOTSTRAP_FILENAME = "paired_increment_bootstrap.json"
+PROBE_TRAJECTORY_FILENAME = "probe_trajectory.csv"
+SESSION_DISCRIMINATION_FILENAME = "session_discrimination.csv"
 MANIFEST_FILENAME = "run_manifest.json"
 
 _FAILURE_COLUMNS = (
@@ -336,6 +343,9 @@ def write_supervised_run(
         result.predictions,
         result.metadata.get("paired_comparisons"),
     )
+    trajectory = build_probe_trajectory(result.predictions)
+    session_discrimination = summarize_session_discrimination(result.predictions)
+    session_audit = session_discrimination_audit(session_discrimination)
 
     run_root = Path(output_root) / run_id
     if run_root.exists():
@@ -353,9 +363,13 @@ def write_supervised_run(
     paired_participant_path = run_root / PAIRED_PARTICIPANT_INCREMENTS_FILENAME
     paired_summary_path = run_root / PAIRED_MODEL_INCREMENTS_FILENAME
     paired_bootstrap_path = run_root / PAIRED_BOOTSTRAP_FILENAME
+    trajectory_path = run_root / PROBE_TRAJECTORY_FILENAME
+    session_discrimination_path = run_root / SESSION_DISCRIMINATION_FILENAME
     manifest_path = run_root / MANIFEST_FILENAME
 
     result.predictions.to_csv(predictions_path, index=False, encoding="utf-8-sig")
+    trajectory.to_csv(trajectory_path, index=False, encoding="utf-8-sig")
+    session_discrimination.to_csv(session_discrimination_path, index=False, encoding="utf-8-sig")
 
     failures = result.failures.copy()
     if failures.empty and len(failures.columns) == 0:
@@ -407,6 +421,15 @@ def write_supervised_run(
             "paired_increment_definition": "baseline_log_loss_minus_added_log_loss",
             "positive_increment_interpretation": "added_model_has_lower_loss",
         },
+        "trajectory_reporting": {
+            "role": "exploratory_probe_sampled_reporting",
+            "continuous_real_time_tracking_claim": False,
+            "observed_q1_four_class_sequence_available": True,
+            "predicted_q1_four_class_probabilities_available": False,
+            "q2_context_available": "q2_ordinal_4level" in result.predictions.columns,
+            "questionnaire_join_performed": False,
+            **session_audit,
+        },
         "outputs": {
             "probe_predictions": PREDICTIONS_FILENAME,
             "fold_audits": FOLD_AUDITS_FILENAME,
@@ -417,6 +440,8 @@ def write_supervised_run(
             "paired_participant_increments": PAIRED_PARTICIPANT_INCREMENTS_FILENAME,
             "paired_model_increments": PAIRED_MODEL_INCREMENTS_FILENAME,
             "paired_increment_bootstrap": PAIRED_BOOTSTRAP_FILENAME,
+            "probe_trajectory": PROBE_TRAJECTORY_FILENAME,
+            "session_discrimination": SESSION_DISCRIMINATION_FILENAME,
             "manifest": MANIFEST_FILENAME,
         },
     }
