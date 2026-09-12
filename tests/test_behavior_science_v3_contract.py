@@ -76,6 +76,14 @@ def test_probe_windows_exclude_anchor_and_do_not_inflate_primary_n():
     assert not sensitivity["formal_independent_sample"].any()
 
 
+def test_probe_windows_require_explicit_probe_onset_time_and_never_fall_back_to_trial_onset():
+    trials = _trials()
+    probe_index = trials.index[trials["is_probe"].eq(1)][0]
+    trials.loc[probe_index, "probe_onset_time"] = np.nan
+    with pytest.raises(BehaviorContractError, match="finite probe_onset_time"):
+        build_probe_windows(trials)
+
+
 def test_participant_disjoint_folds_never_split_one_group():
     primary, _ = build_probe_windows(_trials())
     folded = participant_disjoint_folds(primary, n_splits=2)
