@@ -16,7 +16,7 @@
 
 Formal 当前优先读取：
 
-1. `分析设计/1.16.1-监督学习心理意义、训练权重与多层评价修订_20260911.md`：Q1 预测的心理学解释、参与者等权训练/预处理/评价、特征级解释及 M0–M7 设备/信息包比较。
+1. `分析设计/1.16.1-监督学习心理意义、训练权重与多层评价修订_20260911.md`：Q1 预测的心理学解释、参与者等权训练/预处理/评价、特征级解释、D4-D7 时间报告及 M0–M7 设备/信息包比较。
 2. `分析设计/1.16.2-瞳孔相关_眨眼联合清洗与探针前动态分析当前决策_20260912.md`：NIR（近红外）瞳孔、RGB（可见光视频）眨眼、联合清洗、线性/二次动态的当前科学决策。
 3. `分析设计/1.16.3-瞳孔与眨眼测量审计及代码修改实施计划_20260912.md`：1.16.2 的代码实现与真实数据 measurement audit（测量审计）合同。
 
@@ -24,40 +24,46 @@ Formal 当前优先读取：
 
 ## 当前监督学习代码状态
 
-- **Task A**：Q1 二分类、nested cross-validation（嵌套交叉验证）等基础实现已存在；Issue #43 继续补参与者等权正式评价、fixed-OOF participant-cluster bootstrap（固定折外参与者簇自助法）、特征级解释与 M0–M7 比较。
-- **Task B**：分析集合、质量状态与 prediction archive（预测归档）基础实现已完成；当前 P0（最高优先级）缺陷由 #40、#41、#42 接续处理。
-- **Task C**：行为监督学习接口与 30 s probe（探针）候选输出已完成；原 Task C issue 已关闭。
+- **Task A / Draft PR #33**：D1 参与者等权训练、D8 参与者等权预处理、D9 participant-macro inner log loss（参与者宏平均内层对数损失）、D2/D3 参与者等权折外评价、D10 fixed-OOF participant-cluster bootstrap（固定折外参与者簇自助法）、D11 LOSO→5-fold GroupKFold、feature registry（特征登记）/具体特征比较框架和 D4-D7 probe trajectory（探针轨迹）/session discrimination（场内区分）报告层均已有合成合同实现。真实结果仍未运行。
+- **Task B / Draft PR #35**：comparison-specific analysis set（按比较分析集合）、质量/缺失状态和 prediction archive（预测归档）基础实现已存在；当前监督学习集成修复由 #41、#42、#48 接续。
+- **#41 / Draft PR #47**：Behavior 权威 probe-key mapper（探针键映射器）已实现并通过专用 Task B CI；最终接入 `alignment.py` 等待 #44 冻结当前 NIR 输出 schema，避免和正在推进的 NIR 测量链重复造键。
+- **#42 / Draft PR #46**：prediction archive 已补 Behavior 权威 Q1 回联、期望 `analysis_set × model × outcome` 全集覆盖、空档案/整模型缺失拒绝、membership 检查和 Task-A audit fields（审计字段）保留；专用 Task B CI 已通过。
+- **#48 / Draft PR #49**：已增加 comparison-specific supervised input materialization（按比较监督学习输入物化），将 Task-B `analysis_set_id + membership_type + probe_feature_status.value` 生成 Task A 可直接消费的一行一 probe 宽表；complete 与 missing-aware 规则分开，专用 Task B CI 已通过。
+- **Task C**：行为监督学习接口与 30 s probe（探针）候选输出已完成；原 Task C issue 已关闭。具体哪些 Behavior 特征最终构成监督学习参照集合 `B` 仍需按上游科学合同冻结。
 - **Task D / PR #39**：保留为 1.15.7 NIR 接口 draft（草稿）基线。其实现仍以 `pupil_geom_mean_diameter` 与旧 `robust_binned_slope_per_sec` 为中心，不能再视为最终 1.16 NIR 科学合同。
-- **Issue #44 / Draft PR #45**：堆叠在 PR #39 上，实现 pupil×blink（瞳孔×眨眼）measurement audit，包括 `R_seg,hard`、RGB blink mask（眨眼掩码）、candidate buffer（候选缓冲）、probe-locked fixed bins（探针锁定固定时间箱）、linear slope（线性斜率）与 quadratic curvature（二次曲率）。尚未运行 116 场真实数据审计，因此 buffer、bin、趋势时间支持与 `R_seg` QC（质量控制）仍未冻结。
+- **Issue #44 / Draft PR #45**：堆叠在 PR #39 上，实现 pupil×blink（瞳孔×眨眼）measurement audit，包括 `R_seg,hard`、RGB blink mask（眨眼掩码）、candidate buffer（候选缓冲）、probe-locked fixed bins（探针锁定固定时间箱）、linear slope（线性斜率）与 quadratic curvature（二次曲率）。其真实测量审计与最终参数冻结由当前 NIR 工作线继续负责。
 
 ## 当前 active issues
 
-当前仅保留 5 个开放问题单：
+当前监督学习/测量集成相关开放问题包括：
 
 | Issue | 当前职责 | 执行关系 |
 |---|---|---|
-| #41 | A/B/D probe 键统一 | 集成前置；不得把全局 probe 序号直接改名为块内序号 |
-| #42 | prediction archive 回联权威 Q1 标签与期望全集 | 可与 #41 并行 |
-| #44 | 瞳孔×眨眼真实测量审计及 NIR 动态接口 | 可与 #41/#42 并行；参数冻结后回 Formal |
-| #40 | B 消费 NIR 显式可估计状态 | 核心缺陷成立；最终字段映射应等待 #44 冻结后一次性接线 |
-| #43 | 参与者等权正式评价、bootstrap、特征级解释与 M0–M7 | 核心代码可继续开发；正式结果受 #41/#42、#40 与 feature freeze（特征冻结）约束 |
+| #41 | A/B/D probe 键统一 | mapper 已实现；最终 NIR 接线等待 #44 schema 冻结 |
+| #42 | prediction archive 回联权威 Q1 标签与期望全集 | 核心修复已实现并有合成 CI；最终随 A/B 集成验收 |
+| #48 | Task-B analysis set / audited values → Task-A 输入宽表物化 | 已实现并有合成 CI；不负责科学特征资格 |
+| #44 | 瞳孔×眨眼真实测量审计及 NIR 动态接口 | 与监督学习核心并行；参数冻结后回 Formal |
+| #40 | B 消费 NIR 显式可估计状态 | 核心缺陷成立；最终字段映射等待 #44 冻结后一次性接线 |
+| #43 | 参与者等权正式评价、特征级解释、M0–M7 与时间报告 | 核心代码已基本实现；正式结果仍受 #41/#42/#48、#40、feature freeze 与最终集成约束 |
 
 旧 #19/#20/#21/#22/#30/#32/#34/#36/#38 已按“历史调研 / 已取代 / 已完成”退出 active 队列；关闭不删除其代码证据、讨论和历史意义。
 
 ## 推荐执行顺序
 
-当前可并行推进：
+当前监督学习代码层可以继续验证：
 
-- #41：统一行为权威 probe 表与 A/B/D 键语义；
-- #42：修 prediction archive 的权威标签回联、空归档与期望全集校验；
-- #44：运行真实 pupil×blink measurement audit。
+- #42：保持 prediction archive 的权威 Q1、membership 与完整覆盖合同；
+- #48：保持 comparison-specific input materialization，等待最终 feature registry 后参与真实集成；
+- #43：维持已经通过专用 CI 的 participant-equal 训练/评价、特征比较和 D4-D7 报告核心。
 
-随后：
+与另一条测量工作线的汇合顺序为：
 
-- #44 回 Formal 冻结正式 NIR feature/status contract（特征/状态合同）；
-- #40 按该最终合同接 B，避免只修旧 slope 列名后再次返工；
-- #43 完成正式评价、特征级比较、设备/信息包比较与不确定性；
-- 只有上述接口和科学特征均冻结后，才运行正式 FocusWave 监督学习并形成报告性能结论。
+- #44 完成真实 pupil×blink measurement audit，并回 Formal 冻结最终 NIR feature/status contract（特征/状态合同）；
+- #41 按最终 NIR schema 接入 Behavior 权威 probe-key mapper；
+- #40 按最终 NIR status 字段接 B，不为旧 slope/旧字段另做临时路线；
+- 冻结实际 Behavior reference `B`、NIR、RGB、mmWave 正式 feature registry；
+- 将 Task A、Task B、#41、#42、#48 与最终单模态接口做统一 schema integration test（数据结构集成测试）和小规模真实 smoke test（冒烟测试）；
+- 只有上述接口和科学特征均冻结后，才运行正式 FocusWave 监督学习并形成性能结论。
 
 ## 历史与基础文档
 
