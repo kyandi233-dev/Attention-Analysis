@@ -5,6 +5,7 @@ on:
     paths:
       - "src/attention_pipeline/nir_formal_analysis/pupil_blink_*.py"
       - "scripts/nir_pupil_blink_measurement_audit.py"
+      - "scripts/nir_pupil_blink_decision_summary.py"
       - "configs/nir_pupil_blink_measurement_audit_v1.yaml"
       - "tests/test_pupil_blink_*.py"
       - ".github/workflows/pupil-blink-audit.yml"
@@ -32,12 +33,14 @@ jobs:
         run: |
           python -m py_compile \
             scripts/nir_pupil_blink_measurement_audit.py \
+            scripts/nir_pupil_blink_decision_summary.py \
             src/attention_pipeline/nir_formal_analysis/pupil_blink_measurement.py \
             src/attention_pipeline/nir_formal_analysis/pupil_blink_audit_config.py \
             src/attention_pipeline/nir_formal_analysis/pupil_blink_audit_probe.py \
             src/attention_pipeline/nir_formal_analysis/pupil_blink_binocular.py \
             src/attention_pipeline/nir_formal_analysis/pupil_blink_sync.py \
-            src/attention_pipeline/nir_formal_analysis/pupil_blink_measurement_runner.py
+            src/attention_pipeline/nir_formal_analysis/pupil_blink_measurement_runner.py \
+            src/attention_pipeline/nir_formal_analysis/pupil_blink_decision_summary.py
 
       - name: Run pupil-blink measurement audit contracts
         run: |
@@ -45,4 +48,5 @@ jobs:
             tests/test_pupil_blink_measurement.py \
             tests/test_pupil_blink_binocular.py \
             tests/test_pupil_blink_sync.py \
-            tests/test_pupil_blink_audit_config.py
+            tests/test_pupil_blink_audit_config.py \
+            tests/test_pupil_blink_decision_summary.py
