@@ -105,6 +105,7 @@ def build_analysis_sets(
             )
         required_pairs = [(m, f) for m, features in required.items() for f in features]
         required_modalities = sorted(required)
+        required_features_json = json.dumps(required, ensure_ascii=False, sort_keys=True)
         current_rows: list[dict[str, Any]] = []
 
         for _, identity_row in formal_identity.iterrows():
@@ -171,6 +172,7 @@ def build_analysis_sets(
                 {
                     "analysis_set_id": str(analysis_set_id),
                     "comparison_models": json.dumps(models, ensure_ascii=False),
+                    "required_features": required_features_json,
                     "required_modalities": json.dumps(
                         required_modalities, ensure_ascii=False
                     ),
@@ -208,6 +210,7 @@ def build_analysis_sets(
                     "probe_n": int(len(chosen_rows)),
                     "session_n": int(chosen_rows["session_id"].nunique()),
                     "participant_group_n": int(chosen_rows[GROUP].nunique()),
+                    "required_features": required_features_json,
                     "required_outcomes": json.dumps(outcomes, ensure_ascii=False),
                 }
             )
