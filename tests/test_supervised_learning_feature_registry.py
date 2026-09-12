@@ -101,6 +101,7 @@ def test_plan_generates_standalone_behavior_increment_full_minus_and_m0_m7() -> 
     assert "full_minus::rt_variability" in models
     assert "full_minus::pupil_variability_rgb_assisted" in models
     assert set(plan.device_package_model_ids) == set(DEVICE_PACKAGES)
+    assert plan.unavailable_device_packages == {}
 
     assert set(models["behavior_reference"].feature_ids) == {"rt_variability", "omission"}
     assert models["standalone::rt_variability"].feature_ids == ("rt_variability",)
@@ -180,11 +181,18 @@ def test_registry_rejects_impossible_cross_device_package_claim() -> None:
         validate_registered_features(features)
 
 
-def test_plan_rejects_named_device_package_with_no_information_from_declared_device() -> None:
-    features = _registry()
-    features = [feature for feature in features if feature.feature_id != "breathing_rate"]
-    with pytest.raises(FeatureRegistryContractError, match="declares sensor devices without registered scientific information"):
-        build_feature_comparison_plan(features)
+def test_plan_marks_packages_unavailable_when_a_sensor_has_no_frozen_feature() -> None:
+    features = [feature for feature in _registry() if feature.feature_id != "breathing_rate"]
+    plan = build_feature_comparison_plan(features)
+
+    assert {"M0", "M1", "M3", "M5"}.issubset(plan.device_package_model_ids)
+    for package_id in ("M2", "M4", "M6", "M7"):
+        assert package_id not in plan.device_package_model_ids
+        assert "mmwave" in plan.unavailable_device_packages[package_id]
+
+    assert "behavior_reference" in plan.model_map()
+    assert "behavior_plus::blink_rate" in plan.model_map()
+    assert "behavior_plus::pupil_variability_rgb_assisted" in plan.model_map()
 
 
 def test_registry_rejects_two_full_representations_of_same_scientific_feature() -> None:
