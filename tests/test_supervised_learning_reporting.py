@@ -14,6 +14,7 @@ def _complete_result() -> SupervisedRunResult:
         {
             "run_id": ["run-001", "run-001"],
             "analysis_set_id": ["set-a", "set-a"],
+            "membership_type": ["included_complete", "included_complete"],
             "participant_group_id": ["P01", "P02"],
             "model_id": ["behavior", "behavior"],
             "outer_fold_group": ["P01", "P02"],
@@ -36,6 +37,7 @@ def _complete_result() -> SupervisedRunResult:
             {
                 "run_id": "run-001",
                 "analysis_set_id": "set-a",
+                "membership_type": "included_complete",
                 "model_id": "behavior",
                 "outer_fold_group": "P01",
                 "failed": False,
@@ -44,6 +46,7 @@ def _complete_result() -> SupervisedRunResult:
             {
                 "run_id": "run-001",
                 "analysis_set_id": "set-a",
+                "membership_type": "included_complete",
                 "model_id": "behavior",
                 "outer_fold_group": "P02",
                 "failed": False,
@@ -54,6 +57,7 @@ def _complete_result() -> SupervisedRunResult:
         metadata={
             "run_id": "run-001",
             "analysis_set_id": "set-a",
+            "membership_type": "included_complete",
             "task": "q1_equals_1_vs_2_3_4",
             "n_input_rows": 2,
             "n_participant_groups": 2,
@@ -76,6 +80,7 @@ def _paired_result() -> SupervisedRunResult:
                 {
                     "run_id": "run-paired",
                     "analysis_set_id": "set-a",
+                    "membership_type": "included_complete",
                     "participant_group_id": participant,
                     "model_id": model_id,
                     "outer_fold_group": participant,
@@ -96,6 +101,7 @@ def _paired_result() -> SupervisedRunResult:
                 {
                     "run_id": "run-paired",
                     "analysis_set_id": "set-a",
+                    "membership_type": "included_complete",
                     "model_id": model_id,
                     "outer_fold_group": participant,
                     "failed": False,
@@ -109,6 +115,7 @@ def _paired_result() -> SupervisedRunResult:
         metadata={
             "run_id": "run-paired",
             "analysis_set_id": "set-a",
+            "membership_type": "included_complete",
             "task": "q1_equals_1_vs_2_3_4",
             "n_input_rows": 2,
             "n_participant_groups": 2,
@@ -135,6 +142,7 @@ def test_write_supervised_run_is_immutable_and_auditable(tmp_path) -> None:
 
     run_root = tmp_path / "run-001"
     assert manifest["status"] == "complete"
+    assert manifest["membership_type"] == "included_complete"
     assert manifest["n_prediction_rows"] == 2
     assert manifest["n_failed_folds"] == 0
     assert manifest["n_estimable_models"] == 1
@@ -156,16 +164,22 @@ def test_write_supervised_run_is_immutable_and_auditable(tmp_path) -> None:
 
     participant = pd.read_csv(run_root / "participant_log_loss.csv")
     model = pd.read_csv(run_root / "model_evaluation.csv")
+    predictions = pd.read_csv(run_root / "probe_predictions.csv")
     bootstrap = json.loads((run_root / "participant_bootstrap.json").read_text(encoding="utf-8"))
     assert set(participant["participant_group_id"]) == {"P01", "P02"}
+    assert set(participant["membership_type"]) == {"included_complete"}
+    assert set(predictions["membership_type"]) == {"included_complete"}
     assert model.loc[0, "status"] == "estimable"
+    assert model.loc[0, "membership_type"] == "included_complete"
     assert model.loc[0, "participant_equal_log_loss"] == pytest.approx(participant["mean_log_loss"].mean())
     assert bootstrap[0]["method"] == "fixed_oof_participant_cluster_percentile"
     assert bootstrap[0]["replicates"] == 1000
     assert bootstrap[0]["seed"] == 20260830
+    assert bootstrap[0]["membership_type"] == "included_complete"
 
     saved = json.loads((run_root / "run_manifest.json").read_text(encoding="utf-8"))
     assert saved["analysis_set_id"] == "set-a"
+    assert saved["membership_type"] == "included_complete"
     assert saved["provenance"]["input_sha256"] == "abc"
     assert saved["n_declared_paired_comparisons"] == 0
 
@@ -186,9 +200,12 @@ def test_declared_paired_increment_is_written_from_same_oof_archive(tmp_path) ->
     assert manifest["n_estimable_paired_comparisons"] == 1
     assert summary.loc[0, "status"] == "estimable"
     assert summary.loc[0, "feature_id"] == "blink_rate"
+    assert summary.loc[0, "membership_type"] == "included_complete"
     assert summary.loc[0, "overall_log_loss_increment"] > 0
     assert set(participants["participant_group_id"]) == {"P01", "P02"}
+    assert set(participants["membership_type"]) == {"included_complete"}
     assert bootstrap[0]["paired_model_resampling"] is True
+    assert bootstrap[0]["membership_type"] == "included_complete"
     assert bootstrap[0]["point_estimate"] == pytest.approx(summary.loc[0, "overall_log_loss_increment"])
 
 
