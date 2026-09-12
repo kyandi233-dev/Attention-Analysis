@@ -27,6 +27,7 @@ jobs:
           python -m py_compile \
             scripts/supervised_learning_analysis.py \
             scripts/materialize_supervised_input.py \
+            scripts/validate_supervised_prediction_archive.py \
             src/attention_pipeline/supervised_learning/__init__.py \
             src/attention_pipeline/supervised_learning/task.py \
             src/attention_pipeline/supervised_learning/preprocessing.py \
@@ -60,4 +61,5 @@ jobs:
             tests/test_supervised_learning_reporting.py \
             tests/test_supervised_learning_entrypoint.py \
             tests/test_supervised_vertical_integration.py \
-            tests/test_supervised_input_cli.py
+            tests/test_supervised_input_cli.py \
+            tests/test_supervised_prediction_archive_cli.py
