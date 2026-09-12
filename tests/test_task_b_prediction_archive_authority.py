@@ -116,6 +116,7 @@ def test_archive_expected_scope_starts_from_analysis_sets_not_observed_predictio
     assert audit["status"] == "PASS_PREDICTION_ARCHIVE"
     assert audit["requested_analysis_set_ids"] == ["set-a"]
     assert audit["authoritative_q1_checked"] is True
+    assert audit["run_ids"] == ["run-1"]
     assert len(audit["coverage"]) == 2
 
 
@@ -186,6 +187,71 @@ def test_task_a_adapter_preserves_audit_fields_and_failed_rows_end_to_end():
         requested_analysis_set_ids=["set-a"],
     )
     assert audit["status"] == "PASS_PREDICTION_ARCHIVE"
+    assert audit["run_ids"] == ["task-a-run-001"]
     assert audit["failed_prediction_n"] == 2
     coverage = pd.DataFrame(audit["coverage"])
     assert coverage.loc[coverage["model_id"].eq("M1"), "failed_probe_n"].iloc[0] == 2
+
+
+def test_task_a_adapter_requires_formal_audit_columns_instead_of_synthesizing_them():
+    for column in ("run_id", "feature_set_id", "membership_type", "model_failed", "failure_reason"):
+        native = _task_a_native_predictions().drop(columns=[column])
+        with pytest.raises(ValueError, match="Task-A predictions missing columns"):
+            normalize_task_a_predictions(native)
+
+
+def test_archive_requires_nonblank_run_id_and_successful_feature_set_id():
+    sets = _analysis_sets()
+
+    missing_run = _predictions()
+    missing_run.loc[0, "run_id"] = ""
+    with pytest.raises(ValueError, match="nonblank run_id"):
+        validate_prediction_archive(
+            missing_run,
+            sets,
+            requested_analysis_set_ids=["set-a"],
+        )
+
+    missing_feature_set = _predictions()
+    missing_feature_set.loc[0, "feature_set_id"] = pd.NA
+    with pytest.raises(ValueError, match="nonblank feature_set_id"):
+        validate_prediction_archive(
+            missing_feature_set,
+            sets,
+            requested_analysis_set_ids=["set-a"],
+        )
+
+
+def test_archive_requires_explicit_failure_state_and_consistent_failure_reason():
+    sets = _analysis_sets()
+
+    missing_failure_flag = _predictions()
+    missing_failure_flag.loc[0, "model_failed"] = pd.NA
+    with pytest.raises(ValueError, match="model_failed"):
+        validate_prediction_archive(
+            missing_failure_flag,
+            sets,
+            requested_analysis_set_ids=["set-a"],
+        )
+
+    successful_with_reason = _predictions()
+    successful_with_reason.loc[0, "failure_reason"] = "stale failure"
+    with pytest.raises(ValueError, match="successful model rows"):
+        validate_prediction_archive(
+            successful_with_reason,
+            sets,
+            requested_analysis_set_ids=["set-a"],
+        )
+
+    failed_without_reason = _predictions()
+    failed_without_reason.loc[0, "model_failed"] = True
+    failed_without_reason.loc[0, "feature_set_id"] = pd.NA
+    failed_without_reason.loc[0, "y_pred"] = pd.NA
+    failed_without_reason.loc[0, "probability_positive"] = float("nan")
+    failed_without_reason.loc[0, "failure_reason"] = ""
+    with pytest.raises(ValueError, match="require failure_reason"):
+        validate_prediction_archive(
+            failed_without_reason,
+            sets,
+            requested_analysis_set_ids=["set-a"],
+        )
