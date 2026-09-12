@@ -109,6 +109,34 @@ def _write_configs(tmp_path: Path, config_data: dict, paths_data: dict) -> tuple
     return config_path, paths_path
 
 
+def _registry_config() -> dict:
+    return {
+        "features": [
+            {
+                "feature_id": "behavior_signal",
+                "scientific_feature_id": "behavior_signal",
+                "columns": ["behavior_signal"],
+                "role": "behavior",
+                "raw_source": "synthetic behavior",
+                "required_devices": ["behavior"],
+                "behavior_reference_eligible": True,
+                "behavior_increment_eligible": False,
+                "allowed_device_packages": [],
+            },
+            {
+                "feature_id": "rgb_signal",
+                "scientific_feature_id": "rgb_signal",
+                "columns": ["rgb_signal"],
+                "role": "sensor",
+                "raw_source": "synthetic RGB",
+                "required_devices": ["rgb"],
+                "behavior_increment_eligible": True,
+                "allowed_device_packages": ["M3"],
+            },
+        ]
+    }
+
+
 def test_run_supervised_from_config_end_to_end(tmp_path) -> None:
     input_path = tmp_path / "probe_table.csv"
     output_root = tmp_path / "outputs"
@@ -144,34 +172,11 @@ def test_registry_run_consumes_only_models_declared_by_current_analysis_set(tmp_
     frame["rgb_signal"] = frame["behavior_signal"] * 0.5
     declared = ["behavior_reference", "behavior_plus::rgb_signal"]
     frame["comparison_models"] = json.dumps(declared)
+    frame["required_features"] = json.dumps({"behavior": ["behavior_signal"], "rgb": ["rgb_signal"]})
     frame.to_csv(input_path, index=False)
 
     config_data, paths_data = _config(input_path, output_root)
-    config_data["feature_registry"] = {
-        "features": [
-            {
-                "feature_id": "behavior_signal",
-                "scientific_feature_id": "behavior_signal",
-                "columns": ["behavior_signal"],
-                "role": "behavior",
-                "raw_source": "synthetic behavior",
-                "required_devices": ["behavior"],
-                "behavior_reference_eligible": True,
-                "behavior_increment_eligible": False,
-                "allowed_device_packages": [],
-            },
-            {
-                "feature_id": "rgb_signal",
-                "scientific_feature_id": "rgb_signal",
-                "columns": ["rgb_signal"],
-                "role": "sensor",
-                "raw_source": "synthetic RGB",
-                "required_devices": ["rgb"],
-                "behavior_increment_eligible": True,
-                "allowed_device_packages": ["M3"],
-            },
-        ]
-    }
+    config_data["feature_registry"] = _registry_config()
     config_path, paths_path = _write_configs(tmp_path, config_data, paths_data)
 
     manifest = run_supervised_from_config(config_path, paths_config=paths_path, run_id="registry-run")
@@ -183,6 +188,9 @@ def test_registry_run_consumes_only_models_declared_by_current_analysis_set(tmp_
     assert manifest["n_prediction_rows"] == len(frame) * len(declared)
     saved_manifest = json.loads((output_root / "registry-run" / "run_manifest.json").read_text(encoding="utf-8"))
     assert saved_manifest["analysis_set_declared_models"] == declared
+    assert saved_manifest["analysis_set_feature_scope_verified"] is True
+    assert saved_manifest["analysis_set_required_feature_columns"] == ["behavior_signal", "rgb_signal"]
+    assert saved_manifest["declared_model_predictor_union"] == ["behavior_signal", "rgb_signal"]
 
 
 def test_registry_run_rejects_model_not_declared_in_frozen_registry(tmp_path) -> None:
@@ -190,6 +198,7 @@ def test_registry_run_rejects_model_not_declared_in_frozen_registry(tmp_path) ->
     output_root = tmp_path / "outputs"
     frame = _probe_table()
     frame["comparison_models"] = json.dumps(["behavior_reference", "not_in_registry"])
+    frame["required_features"] = json.dumps({"behavior": ["behavior_signal"]})
     frame.to_csv(input_path, index=False)
 
     config_data, paths_data = _config(input_path, output_root)
@@ -211,6 +220,41 @@ def test_registry_run_rejects_model_not_declared_in_frozen_registry(tmp_path) ->
 
     with pytest.raises(SupervisedLearningContractError, match="absent from frozen feature registry"):
         run_supervised_from_config(config_path, paths_config=paths_path, run_id="blocked-registry")
+
+
+def test_registry_run_rejects_extra_sample_filter_feature(tmp_path) -> None:
+    input_path = tmp_path / "probe_table.csv"
+    output_root = tmp_path / "outputs"
+    frame = _probe_table()
+    frame["rgb_signal"] = frame["behavior_signal"] * 0.5
+    frame["unused_filter"] = 1.0
+    frame["comparison_models"] = json.dumps(["behavior_reference", "behavior_plus::rgb_signal"])
+    frame["required_features"] = json.dumps(
+        {"behavior": ["behavior_signal"], "rgb": ["rgb_signal", "unused_filter"]}
+    )
+    frame.to_csv(input_path, index=False)
+    config_data, paths_data = _config(input_path, output_root)
+    config_data["feature_registry"] = _registry_config()
+    config_path, paths_path = _write_configs(tmp_path, config_data, paths_data)
+
+    with pytest.raises(SupervisedLearningContractError, match="extra_sample_filters=.*unused_filter"):
+        run_supervised_from_config(config_path, paths_config=paths_path, run_id="extra-filter")
+
+
+def test_registry_run_rejects_predictor_missing_from_sample_contract(tmp_path) -> None:
+    input_path = tmp_path / "probe_table.csv"
+    output_root = tmp_path / "outputs"
+    frame = _probe_table()
+    frame["rgb_signal"] = frame["behavior_signal"] * 0.5
+    frame["comparison_models"] = json.dumps(["behavior_reference", "behavior_plus::rgb_signal"])
+    frame["required_features"] = json.dumps({"behavior": ["behavior_signal"]})
+    frame.to_csv(input_path, index=False)
+    config_data, paths_data = _config(input_path, output_root)
+    config_data["feature_registry"] = _registry_config()
+    config_path, paths_path = _write_configs(tmp_path, config_data, paths_data)
+
+    with pytest.raises(SupervisedLearningContractError, match="predictors_missing_from_sample_contract=.*rgb_signal"):
+        run_supervised_from_config(config_path, paths_config=paths_path, run_id="missing-filter")
 
 
 def test_runtime_config_cannot_reenable_global_coverage_gate(tmp_path) -> None:
