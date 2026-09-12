@@ -25,6 +25,7 @@ def _model_archive(model_id: str, probabilities: dict[str, list[float]]) -> pd.D
                     "block_id": "B1",
                     "probe_event_id": f"{participant}|P{probe_index:02d}",
                     "analysis_set_id": "same-set",
+                    "membership_type": "included_missing_aware",
                     "model_id": model_id,
                     "outer_fold_group": participant,
                     "q1_binary": q1_binary,
@@ -46,6 +47,8 @@ def test_participant_equal_outer_loss_differs_from_pooled_probe_loss_when_counts
     participant, overall = participant_log_loss(archive)
 
     assert len(participant) == 2
+    assert set(participant["membership_type"]) == {"included_missing_aware"}
+    assert overall["membership_type"] == "included_missing_aware"
     assert participant.loc[participant["participant_group_id"].eq("A"), "n_probes"].item() == 8
     assert participant.loc[participant["participant_group_id"].eq("B"), "n_probes"].item() == 2
     assert overall["participant_equal_log_loss"] != pytest.approx(
@@ -86,6 +89,14 @@ def test_archive_evaluation_marks_failed_model_not_estimable_without_dropping_ro
     assert {record["model_id"] for record in result.bootstrap_records} == {"good"}
 
 
+def test_archive_evaluation_accepts_unambiguous_serialized_boolean_values() -> None:
+    archive = _model_archive("m1", {"A": [0.8, 0.2], "B": [0.7, 0.3]})
+    archive["model_failed"] = "False"
+    participant, overall = participant_log_loss(archive)
+    assert len(participant) == 2
+    assert np.isfinite(overall["participant_equal_log_loss"])
+
+
 def test_paired_increment_uses_exact_common_probe_set_and_positive_means_improvement() -> None:
     baseline = _model_archive(
         "behavior",
@@ -106,13 +117,14 @@ def test_paired_increment_uses_exact_common_probe_set_and_positive_means_improve
     result = paired_log_loss_increment(baseline, added, replicates=200, seed=20260830)
 
     assert result.overall_increment > 0
+    assert result.membership_type == "included_missing_aware"
     assert result.bootstrap["paired_model_resampling"] is True
     assert result.bootstrap["increment_definition"] == "baseline_log_loss_minus_added_log_loss"
     assert result.bootstrap["point_estimate"] == pytest.approx(result.overall_increment)
     assert set(result.participant_increments["participant_group_id"]) == {"A", "B", "C"}
 
 
-def test_paired_increment_rejects_different_analysis_set_or_probe_membership() -> None:
+def test_paired_increment_rejects_different_analysis_set_membership_or_probe_membership() -> None:
     baseline = _model_archive("behavior", {"A": [0.6, 0.4], "B": [0.6, 0.4]})
     added = _model_archive("behavior_plus_x", {"A": [0.8, 0.2], "B": [0.8, 0.2]})
 
@@ -120,6 +132,11 @@ def test_paired_increment_rejects_different_analysis_set_or_probe_membership() -
     wrong_set["analysis_set_id"] = "other-set"
     with pytest.raises(EvaluationContractError, match="same analysis_set_id"):
         paired_log_loss_increment(baseline, wrong_set)
+
+    wrong_membership = added.copy()
+    wrong_membership["membership_type"] = "included_complete"
+    with pytest.raises(EvaluationContractError, match="same membership_type"):
+        paired_log_loss_increment(baseline, wrong_membership)
 
     missing_probe = added.iloc[:-1].copy()
     with pytest.raises(EvaluationContractError, match="probe count mismatch"):
