@@ -140,6 +140,25 @@ def test_recovery_bins_preserve_raw_and_qc_availability_separately():
     assert row["nir_qc_valid_n"] == 0
 
 
+def test_recovery_bins_skip_event_anchors_without_nir_time_support():
+    tp = pd.DataFrame({
+        "session_id": ["s1"] * 3,
+        "unix_ms": [900, 1000, 1100],
+        "pupil_geom_mean_diameter__raw": [10, 11, 12],
+        "pupil_geom_mean_diameter": [10, 11, 12],
+        "seg_pupil_fraction_within_pupil_iris_hard__raw": [0.4, 0.5, 0.6],
+        "seg_pupil_fraction_within_pupil_iris_hard": [0.4, 0.5, 0.6],
+    })
+    ev = pd.DataFrame({
+        "session_id": ["s1", "s1"],
+        "blink_event_id": [1, 2],
+        "start_unix_ms": [1000, 10000],
+        "end_unix_ms": [1000, 10000],
+    })
+    out = pbm.build_blink_recovery_bins(tp, ev, pre_ms=100, post_ms=200, bin_ms=100, anchors=("start",))
+    assert set(out["blink_event_id"]) == {1}
+
+
 def test_empty_blink_table_without_columns_is_valid_no_event_case():
     tp = pd.DataFrame({"session_id": ["s1", "s1"], "unix_ms": [1000, 1100]})
     out = pbm.add_rgb_blink_mask(tp, pd.DataFrame(), pre_buffer_ms=100, post_buffer_ms=300)
