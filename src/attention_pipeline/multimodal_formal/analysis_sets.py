@@ -34,6 +34,24 @@ def _normalize_spec(
     return normalized, models, outcomes
 
 
+def _strict_bool_scalar(value: Any, *, context: str) -> bool:
+    """Parse persisted booleans without Python's truthy-string semantics."""
+    if pd.isna(value):
+        raise ValueError(f"{context} contains a missing boolean value")
+    if isinstance(value, (bool, np.bool_)):
+        return bool(value)
+    if isinstance(value, (int, np.integer)) and int(value) in {0, 1}:
+        return bool(int(value))
+    if isinstance(value, (float, np.floating)) and np.isfinite(value) and float(value) in {0.0, 1.0}:
+        return bool(int(value))
+    text = str(value).strip().lower()
+    if text in {"true", "1", "1.0", "yes"}:
+        return True
+    if text in {"false", "0", "0.0", "no"}:
+        return False
+    raise ValueError(f"{context} contains invalid boolean value: {value!r}")
+
+
 def _aggregate_reasons(rows: pd.DataFrame, mask_column: str) -> str:
     failed = rows[~rows[mask_column].astype(bool)]
     if failed.empty:
@@ -119,9 +137,16 @@ def build_analysis_sets(
                         {
                             "modality": modality,
                             "feature": feature,
-                            "feature_computable": bool(row["feature_computable"]),
-                            "eligible_for_missing_strategy": bool(
-                                row["eligible_for_missing_strategy"]
+                            "feature_computable": _strict_bool_scalar(
+                                row["feature_computable"],
+                                context=f"{analysis_set_id}:{modality}:{feature}:feature_computable",
+                            ),
+                            "eligible_for_missing_strategy": _strict_bool_scalar(
+                                row["eligible_for_missing_strategy"],
+                                context=(
+                                    f"{analysis_set_id}:{modality}:{feature}:"
+                                    "eligible_for_missing_strategy"
+                                ),
                             ),
                             "missing_kind": str(row["missing_kind"]),
                         }
