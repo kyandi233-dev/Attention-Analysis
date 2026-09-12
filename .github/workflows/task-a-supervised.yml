@@ -33,6 +33,7 @@ jobs:
             src/attention_pipeline/supervised_learning/preprocessing.py \
             src/attention_pipeline/supervised_learning/feature_schemes.py \
             src/attention_pipeline/supervised_learning/feature_registry.py \
+            src/attention_pipeline/supervised_learning/comparison_provenance.py \
             src/attention_pipeline/supervised_learning/models.py \
             src/attention_pipeline/supervised_learning/runner.py \
             src/attention_pipeline/supervised_learning/evaluation.py \
@@ -61,6 +62,7 @@ jobs:
             tests/test_supervised_learning_evaluation.py \
             tests/test_supervised_learning_trajectory.py \
             tests/test_supervised_learning_reporting.py \
+            tests/test_supervised_learning_modality_reporting.py \
             tests/test_supervised_learning_entrypoint.py \
             tests/test_supervised_outcome_scope.py \
             tests/test_task_b_malformed_feature_values.py \
