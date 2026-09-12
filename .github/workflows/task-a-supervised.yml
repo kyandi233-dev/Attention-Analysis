@@ -22,7 +22,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[test]"
 
-      - name: Compile Task A modules
+      - name: Compile Task A and vertical-integration modules
         run: |
           python -m py_compile \
             scripts/supervised_learning_analysis.py \
@@ -36,9 +36,14 @@ jobs:
             src/attention_pipeline/supervised_learning/evaluation.py \
             src/attention_pipeline/supervised_learning/trajectory.py \
             src/attention_pipeline/supervised_learning/reporting.py \
-            src/attention_pipeline/supervised_learning/entrypoint.py
+            src/attention_pipeline/supervised_learning/entrypoint.py \
+            src/attention_pipeline/multimodal_formal/quality_admission.py \
+            src/attention_pipeline/multimodal_formal/analysis_sets.py \
+            src/attention_pipeline/multimodal_formal/supervised_input.py \
+            src/attention_pipeline/multimodal_formal/prediction_archive.py \
+            src/attention_pipeline/multimodal_formal/probe_key_authority.py
 
-      - name: Run Task A contract tests
+      - name: Run Task A and vertical-integration contract tests
         run: |
           python -m pytest -q \
             tests/test_supervised_learning_task.py \
@@ -52,4 +57,5 @@ jobs:
             tests/test_supervised_learning_evaluation.py \
             tests/test_supervised_learning_trajectory.py \
             tests/test_supervised_learning_reporting.py \
-            tests/test_supervised_learning_entrypoint.py
+            tests/test_supervised_learning_entrypoint.py \
+            tests/test_supervised_vertical_integration.py
