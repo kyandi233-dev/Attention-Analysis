@@ -26,6 +26,7 @@ def _probe_table() -> pd.DataFrame:
                     "q1_nominal_4class": q1,
                     "analysis_set_id": "synthetic-common-set",
                     "membership_type": "included_missing_aware",
+                    "required_outcomes": '["q1_nominal_4class"]',
                     "behavior_signal": 1.0 if q1 == 1 else -1.0,
                 }
             )
@@ -154,6 +155,8 @@ def test_run_supervised_from_config_end_to_end(tmp_path) -> None:
     assert manifest["outer_test_outcomes_passed_to_model"] is False
     assert manifest["outer_evaluation"]["bootstrap_replicates"] == 1000
     assert manifest["outer_evaluation"]["bootstrap_seed"] == 20260830
+    assert manifest["analysis_set_required_outcomes"] == ["q1_nominal_4class"]
+    assert manifest["analysis_set_outcome_scope_verified"] is True
     assert (run_root / "probe_predictions.csv").is_file()
     assert (run_root / "participant_log_loss.csv").is_file()
     assert (run_root / "model_evaluation.csv").is_file()
@@ -163,6 +166,22 @@ def test_run_supervised_from_config_end_to_end(tmp_path) -> None:
     saved = json.loads((run_root / "run_manifest.json").read_text(encoding="utf-8"))
     assert saved["provenance"]["input_table"] == str(input_path)
     assert len(saved["provenance"]["input_sha256"]) == 64
+
+
+def test_direct_task_a_api_rejects_extra_q2_sample_filter(tmp_path) -> None:
+    input_path = tmp_path / "probe_table.csv"
+    output_root = tmp_path / "outputs"
+    frame = _probe_table()
+    frame["required_outcomes"] = '["q1_nominal_4class", "q2_ordinal_4level"]'
+    frame.to_csv(input_path, index=False)
+    config_data, paths_data = _config(input_path, output_root)
+    config_path, paths_path = _write_configs(tmp_path, config_data, paths_data)
+
+    with pytest.raises(
+        SupervisedLearningContractError,
+        match="does not match the frozen Task-A target source",
+    ):
+        run_supervised_from_config(config_path, paths_config=paths_path, run_id="blocked-q2-filter")
 
 
 def test_registry_run_consumes_only_models_declared_by_current_analysis_set(tmp_path) -> None:
@@ -191,6 +210,8 @@ def test_registry_run_consumes_only_models_declared_by_current_analysis_set(tmp_
     assert saved_manifest["analysis_set_feature_scope_verified"] is True
     assert saved_manifest["analysis_set_required_feature_columns"] == ["behavior_signal", "rgb_signal"]
     assert saved_manifest["declared_model_predictor_union"] == ["behavior_signal", "rgb_signal"]
+    assert saved_manifest["analysis_set_required_outcomes"] == ["q1_nominal_4class"]
+    assert saved_manifest["analysis_set_outcome_scope_verified"] is True
 
 
 def test_registry_run_rejects_model_not_declared_in_frozen_registry(tmp_path) -> None:
