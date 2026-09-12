@@ -5,6 +5,7 @@ import pytest
 
 from attention_pipeline.multimodal_formal.prediction_archive import (
     TASK_A_Q1_OUTCOME,
+    normalize_task_a_predictions,
     validate_prediction_archive,
 )
 
@@ -55,6 +56,35 @@ def _predictions(set_id: str = "set-a") -> pd.DataFrame:
                     "probability_positive": 0.8 if q1 == 1 else 0.2,
                     "model_failed": False,
                     "failure_reason": "",
+                }
+            )
+    return pd.DataFrame(rows)
+
+
+def _task_a_native_predictions() -> pd.DataFrame:
+    rows = []
+    for model in ("M0", "M1"):
+        for participant, session, q1 in (("p1", "s1", 1), ("p2", "s2", 2)):
+            failed = model == "M1"
+            rows.append(
+                {
+                    "run_id": "task-a-run-001",
+                    "feature_set_id": None if failed else "behavior-reference-v1",
+                    "membership_type": "included_complete",
+                    "session_id": session,
+                    "participant_group_id": participant,
+                    "block_id": "b1",
+                    "probe_order_in_block": 1,
+                    "probe_event_id": f"{session}|b1|probe|1",
+                    "analysis_set_id": "set-a",
+                    "outer_fold_group": participant,
+                    "model_id": model,
+                    "q1_nominal_4class": q1,
+                    "q1_binary": 1 if q1 == 1 else 0,
+                    "predicted_q1_binary": pd.NA if failed else (1 if q1 == 1 else 0),
+                    "p_q1_equals_1": float("nan") if failed else (0.8 if q1 == 1 else 0.2),
+                    "model_failed": failed,
+                    "failure_reason": "synthetic failed fold" if failed else "",
                 }
             )
     return pd.DataFrame(rows)
@@ -130,3 +160,32 @@ def test_archive_rejects_cross_set_authority_disagreement_for_same_probe():
             sets,
             requested_analysis_set_ids=["set-a", "set-b"],
         )
+
+
+def test_task_a_adapter_preserves_audit_fields_and_failed_rows_end_to_end():
+    native = _task_a_native_predictions()
+    normalized = normalize_task_a_predictions(native)
+
+    for column in ("run_id", "feature_set_id", "membership_type", "model_failed", "failure_reason"):
+        assert column in normalized.columns
+    assert set(normalized["run_id"]) == {"task-a-run-001"}
+    assert set(normalized["membership_type"]) == {"included_complete"}
+    assert normalized.loc[normalized["model_id"].eq("M0"), "feature_set_id"].eq(
+        "behavior-reference-v1"
+    ).all()
+
+    failed = normalized[normalized["model_id"].eq("M1")]
+    assert failed["model_failed"].all()
+    assert failed["y_pred"].isna().all()
+    assert failed["probability_positive"].isna().all()
+    assert failed["failure_reason"].eq("synthetic failed fold").all()
+
+    audit = validate_prediction_archive(
+        normalized,
+        _analysis_sets(),
+        requested_analysis_set_ids=["set-a"],
+    )
+    assert audit["status"] == "PASS_PREDICTION_ARCHIVE"
+    assert audit["failed_prediction_n"] == 2
+    coverage = pd.DataFrame(audit["coverage"])
+    assert coverage.loc[coverage["model_id"].eq("M1"), "failed_probe_n"].iloc[0] == 2
