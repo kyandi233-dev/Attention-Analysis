@@ -118,8 +118,9 @@ def _registry_config() -> dict:
                 "scientific_feature_id": "behavior_signal",
                 "columns": ["behavior_signal"],
                 "role": "behavior",
+                "modality": "behavior",
                 "raw_source": "synthetic behavior",
-                "required_devices": ["behavior"],
+                "required_devices": [],
                 "behavior_reference_eligible": True,
                 "behavior_increment_eligible": False,
                 "allowed_device_packages": [],
@@ -129,9 +130,11 @@ def _registry_config() -> dict:
                 "scientific_feature_id": "rgb_signal",
                 "columns": ["rgb_signal"],
                 "role": "sensor",
+                "modality": "ocular",
                 "raw_source": "synthetic RGB",
                 "required_devices": ["rgb"],
                 "behavior_increment_eligible": True,
+                "modality_model_eligible": True,
                 "allowed_device_packages": ["M3"],
             },
         ]
@@ -191,7 +194,7 @@ def test_registry_run_consumes_only_models_declared_by_current_analysis_set(tmp_
     frame["rgb_signal"] = frame["behavior_signal"] * 0.5
     declared = ["behavior_reference", "behavior_plus::rgb_signal"]
     frame["comparison_models"] = json.dumps(declared)
-    frame["required_features"] = json.dumps({"behavior": ["behavior_signal"], "rgb": ["rgb_signal"]})
+    frame["required_features"] = json.dumps({"behavior": ["behavior_signal"], "ocular": ["rgb_signal"]})
     frame.to_csv(input_path, index=False)
 
     config_data, paths_data = _config(input_path, output_root)
@@ -230,8 +233,9 @@ def test_registry_run_rejects_model_not_declared_in_frozen_registry(tmp_path) ->
                 "scientific_feature_id": "behavior_signal",
                 "columns": ["behavior_signal"],
                 "role": "behavior",
+                "modality": "behavior",
                 "raw_source": "synthetic behavior",
-                "required_devices": ["behavior"],
+                "required_devices": [],
                 "behavior_reference_eligible": True,
                 "allowed_device_packages": [],
             }
@@ -251,7 +255,7 @@ def test_registry_run_rejects_extra_sample_filter_feature(tmp_path) -> None:
     frame["unused_filter"] = 1.0
     frame["comparison_models"] = json.dumps(["behavior_reference", "behavior_plus::rgb_signal"])
     frame["required_features"] = json.dumps(
-        {"behavior": ["behavior_signal"], "rgb": ["rgb_signal", "unused_filter"]}
+        {"behavior": ["behavior_signal"], "ocular": ["rgb_signal", "unused_filter"]}
     )
     frame.to_csv(input_path, index=False)
     config_data, paths_data = _config(input_path, output_root)
@@ -379,14 +383,14 @@ def test_runtime_config_cannot_mix_modality_compositions_within_one_model_family
     input_path = tmp_path / "probe_table.csv"
     output_root = tmp_path / "outputs"
     frame = _probe_table()
-    frame["nir_signal"] = 0.5
+    frame["ocular_signal"] = 0.5
     frame.to_csv(input_path, index=False)
     config_data, paths_data = _config(input_path, output_root)
     config_data["feature_schemes"]["model_families"]["behavior"]["candidates"].append(
         {
-            "feature_set_id": "behavior_plus_nir_wrong_family",
-            "columns": ["behavior_signal", "nir_signal"],
-            "modality_blocks": ["behavior", "nir"],
+            "feature_set_id": "behavior_plus_ocular_wrong_family",
+            "columns": ["behavior_signal", "ocular_signal"],
+            "modality_blocks": ["behavior", "ocular"],
         }
     )
     config_path, paths_path = _write_configs(tmp_path, config_data, paths_data)
