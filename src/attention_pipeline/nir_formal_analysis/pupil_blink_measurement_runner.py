@@ -42,7 +42,7 @@ from attention_pipeline.nir_formal_analysis.pupil_blink_sync import (
     rgb_blink_source_availability,
 )
 
-RUNNER_VERSION = "nir-pupil-blink-measurement-audit-runner-v1"
+RUNNER_VERSION = "nir-pupil-blink-measurement-audit-runner-v2"
 FORMAL_PHASES = {"block1", "block2"}
 
 
@@ -84,6 +84,7 @@ def _tables(
     recovery_parts: list[pd.DataFrame],
     probe_rows: list[dict[str, object]],
     trajectory_rows: list[dict[str, object]],
+    warning_rows: list[dict[str, object]],
     failure_rows: list[dict[str, object]],
 ) -> dict[str, pd.DataFrame]:
     concat = lambda parts: pd.concat(parts, ignore_index=True, sort=False) if parts else pd.DataFrame()
@@ -96,6 +97,9 @@ def _tables(
         "blink_recovery_bins.csv": concat(recovery_parts),
         "probe_measurement_candidates.csv": pd.DataFrame(probe_rows),
         "probe_fixed_bin_trajectories.csv": pd.DataFrame(trajectory_rows),
+        "measurement_audit_warnings.csv": pd.DataFrame(
+            warning_rows, columns=["session_id", "stage", "warning_type", "warning"]
+        ),
         "measurement_audit_failures.csv": pd.DataFrame(
             failure_rows, columns=["session_id", "stage", "error_type", "error"]
         ),
@@ -146,6 +150,7 @@ def run_pupil_blink_measurement_audit(
     recovery_parts: list[pd.DataFrame] = []
     probe_rows: list[dict[str, object]] = []
     trajectory_rows: list[dict[str, object]] = []
+    warning_rows: list[dict[str, object]] = []
     failure_rows: list[dict[str, object]] = []
     processed_sessions: list[str] = []
     rgb_blink_available_sessions: list[str] = []
@@ -168,7 +173,23 @@ def run_pupil_blink_measurement_audit(
             eye = derive_eye_measurements(adapted)
             timepoints = build_binocular_measurement_timepoints(adapted)
             events = _session_events(blinks, session_id)
-            rgb_frames = load_session_rgb_blink_frames(rgb_blink_frames_root, session_id)
+
+            # RGB is an optional device dependency for the RGB-assisted tracks. A
+            # present-but-unreadable frame table is therefore a non-fatal RGB source
+            # problem, not a reason to discard otherwise valid NIR-only measurements.
+            try:
+                rgb_frames = load_session_rgb_blink_frames(rgb_blink_frames_root, session_id)
+            except Exception as rgb_exc:
+                rgb_frames = None
+                warning_rows.append(
+                    {
+                        "session_id": session_id,
+                        "stage": "rgb_blink_frame_source",
+                        "warning_type": type(rgb_exc).__name__,
+                        "warning": str(rgb_exc),
+                    }
+                )
+
             rgb_blink_available, rgb_blink_basis = rgb_blink_source_availability(events, rgb_frames)
             if rgb_blink_available:
                 rgb_blink_available_sessions.append(session_id)
@@ -264,11 +285,13 @@ def run_pupil_blink_measurement_audit(
         recovery_parts=recovery_parts,
         probe_rows=probe_rows,
         trajectory_rows=trajectory_rows,
+        warning_rows=warning_rows,
         failure_rows=failure_rows,
     )
     for name, table in tables.items():
         table.to_csv(root / name, index=False, encoding="utf-8-sig")
 
+    warning_sessions = sorted({str(row["session_id"]) for row in warning_rows})
     manifest = {
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "runner_version": RUNNER_VERSION,
@@ -293,6 +316,8 @@ def run_pupil_blink_measurement_audit(
         "source_session_n_requested": int(len(records)),
         "source_session_n_processed": int(len(processed_sessions)),
         "source_session_n_failed": int(len(failure_rows)),
+        "source_session_n_warning": int(len(warning_sessions)),
+        "source_warning_sessions": warning_sessions,
         "rgb_frame_axis_requested": rgb_blink_frames_root is not None,
         "rgb_blink_source_available_session_n": int(len(rgb_blink_available_sessions)),
         "rgb_blink_source_unavailable_session_n": int(len(rgb_blink_unavailable_sessions)),
