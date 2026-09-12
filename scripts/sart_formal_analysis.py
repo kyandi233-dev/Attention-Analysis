@@ -634,8 +634,9 @@ def main() -> int:
         )
         with (output_root / "结果说明.md").open("a", encoding="utf-8") as handle:
             handle.write(
-                "\n## Go omission 正式结局\n\n"
-                "正式保留 raw_go_omission、clean_go_omission 与 timing_ambiguous_go_omission。"
+                "\n## Go omission 指标角色\n\n"
+                "首轮正式 Behavior 主遗漏指标为 `raw_go_omission_rate`；"
+                "`clean_go_omission_rate` 与 `timing_ambiguous_go_omission_rate` 保留为描述/QC/敏感性分解。"
                 "三者共享 Go 机会数分母，且 raw = clean + timing-ambiguous。"
                 "clean 仅表示未检测到预定义的 motor-timing ambiguity，不等同于已证明的注意失败；"
                 "更细的 prestimulus/carry-over 子型只作 QC/机制描述。\n"
