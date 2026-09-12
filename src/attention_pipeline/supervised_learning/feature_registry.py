@@ -112,6 +112,7 @@ class FeatureComparisonPlan:
     behavior_increment_pairs: tuple[tuple[str, str, str], ...] = ()
     full_leave_one_out_pairs: tuple[tuple[str, str, str], ...] = ()
     device_package_model_ids: dict[str, str] = field(default_factory=dict)
+    unavailable_device_packages: dict[str, str] = field(default_factory=dict)
 
     def model_map(self) -> dict[str, PlannedModel]:
         return {model.model_id: model for model in self.models}
@@ -133,6 +134,7 @@ class FeatureComparisonPlan:
                 for reduced, full, feature_id in self.full_leave_one_out_pairs
             ],
             "device_package_model_ids": dict(self.device_package_model_ids),
+            "unavailable_device_packages": dict(self.unavailable_device_packages),
         }
 
 
@@ -363,7 +365,7 @@ def _planned_model(
 
 
 def build_feature_comparison_plan(features: Sequence[RegisteredFeature]) -> FeatureComparisonPlan:
-    """Generate the frozen concrete-feature and M0-M7 model plan."""
+    """Generate concrete-feature models and every currently executable M0-M7 package."""
     registry = validate_registered_features(features)
     behavior = tuple(feature for feature in registry if feature.behavior_reference_eligible)
     full = tuple(feature for feature in registry if feature.full_model_eligible)
@@ -445,6 +447,7 @@ def build_feature_comparison_plan(features: Sequence[RegisteredFeature]) -> Feat
         full_pairs.append((model_id, full_model_id, feature.feature_id))
 
     package_models: dict[str, str] = {}
+    unavailable_packages: dict[str, str] = {}
     for package_id, package_devices in DEVICE_PACKAGES.items():
         selected: list[RegisteredFeature] = []
         seen_scientific: set[str] = set()
@@ -465,18 +468,21 @@ def build_feature_comparison_plan(features: Sequence[RegisteredFeature]) -> Feat
                 )
             seen_scientific.add(feature.scientific_feature_id)
             selected.append(feature)
+
         if not selected:
-            raise FeatureRegistryContractError(f"device package {package_id} has no registered features")
+            unavailable_packages[package_id] = "no frozen registered feature is eligible for this package"
+            continue
 
         covered_devices: set[str] = set()
         for feature in selected:
             covered_devices.update(feature.required_devices)
         missing_sensor_information = sorted((package_devices - {"behavior"}) - covered_devices)
         if missing_sensor_information:
-            raise FeatureRegistryContractError(
-                f"device package {package_id} declares sensor devices without registered scientific information: "
-                f"{missing_sensor_information}"
+            unavailable_packages[package_id] = (
+                "no frozen package-eligible scientific feature currently uses sensor device(s): "
+                + ",".join(missing_sensor_information)
             )
+            continue
 
         model_id = package_id
         add(
@@ -495,4 +501,5 @@ def build_feature_comparison_plan(features: Sequence[RegisteredFeature]) -> Feat
         behavior_increment_pairs=tuple(behavior_pairs),
         full_leave_one_out_pairs=tuple(full_pairs),
         device_package_model_ids=package_models,
+        unavailable_device_packages=unavailable_packages,
     )
