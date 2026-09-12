@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+from attention_pipeline.behavior_formal.behavior_error_taxonomy import OMISSION_PARTITION_RATE_METRICS
 from attention_pipeline.behavior_formal.omission_endpoints import (
     build_omission_b1_b2_pairs,
     formal_omission_partition_audit,
@@ -24,17 +25,15 @@ def _block() -> pd.DataFrame:
     ])
 
 
-def test_formal_omission_b1_b2_pairs_include_all_three_endpoints() -> None:
+def test_omission_b1_b2_pairs_retain_full_partition_with_current_roles() -> None:
     pairs, failures = build_omission_b1_b2_pairs(_block())
     assert failures.empty
-    assert set(pairs["metric"]) == {
-        "raw_go_omission_rate",
-        "clean_go_omission_rate",
-        "timing_ambiguous_go_omission_rate",
-    }
+    assert set(pairs["metric"]) == set(OMISSION_PARTITION_RATE_METRICS)
     raw = pairs[pairs["metric"].eq("raw_go_omission_rate")].iloc[0]
     assert np.isclose(raw["b2_minus_b1"], 0.04)
-    assert pairs["endpoint_role"].eq("prespecified_formal_omission_endpoint").all()
+    assert raw["endpoint_role"] == "current_primary_omission_endpoint"
+    qc = pairs[pairs["metric"].isin(["clean_go_omission_rate", "timing_ambiguous_go_omission_rate"])]
+    assert qc["endpoint_role"].eq("descriptive_qc_sensitivity_partition").all()
 
 
 def test_partition_audit_accepts_exact_raw_clean_ambiguous_identity() -> None:

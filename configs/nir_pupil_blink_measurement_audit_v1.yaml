@@ -1,0 +1,53 @@
+version: nir-pupil-blink-measurement-audit-v1
+status: measurement_audit_candidates_not_formal_parameters
+formal_contract:
+  repository: kyandi233-dev/FocusWave-Formal-Analysis
+  branch: codex/code-fix-ledger
+  documents:
+    - 分析设计/1.16.2-瞳孔相关_眨眼联合清洗与探针前动态分析当前决策_20260912.md
+    - 分析设计/1.16.3-瞳孔与眨眼测量审计及代码修改实施计划_20260912.md
+
+probe_window_sec: 30
+include_soft_sensitivity: true
+
+cleaning_tracks:
+  - original_nir
+  - rgb_blink_only
+  - nir_qc_only
+  - rgb_plus_nir_qc
+
+blink_buffers:
+  - id: pre50_post50
+    pre_ms: 50
+    post_ms: 50
+  - id: pre100_post300
+    pre_ms: 100
+    post_ms: 300
+  - id: pre200_post200
+    pre_ms: 200
+    post_ms: 200
+
+# Audit-only candidates. These values are not frozen formal bin parameters.
+# The purpose is to inspect coefficient stability before Formal chooses one route.
+fixed_bin_width_sec_candidates: [1.0, 2.0, 5.0]
+fixed_bin_value_statistic: median
+fixed_bin_empty_policy: missing_no_interpolation
+
+blink_recovery:
+  pre_ms: 500
+  post_ms: 1000
+  bin_ms: 50
+  anchors: [start, end]
+  status: audit_only_not_formal_buffer
+
+selection_prohibitions:
+  q1_q2_significance: true
+  behavior_significance: true
+  supervised_outer_test_performance: true
+
+formal_freeze_after_real_data_audit:
+  - blink_buffer
+  - fixed_bin_width_or_count
+  - minimum_linear_quadratic_temporal_support
+  - rseg_extra_qc
+  - formal_primary_cleaning_track

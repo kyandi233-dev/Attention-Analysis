@@ -1,4 +1,4 @@
-﻿"""Behavior science v3 contract for the formal FocusWave analysis line.
+"""Behavior science v3 contract for the formal FocusWave analysis line.
 
 This module is the formal replacement for the historical session-as-participant
 statistics. It keeps Go omission and No-Go commission separate, produces the
@@ -218,8 +218,12 @@ def build_probe_windows(trials: pd.DataFrame, cfg: BehaviorScienceConfig | None 
     d = _canonical_ids(trials)
     if "is_probe" not in d:
         raise BehaviorContractError("probe windows require is_probe")
-    if "trial_num" not in d or "absolute_onset_time" not in d:
-        raise BehaviorContractError("probe windows require trial_num and absolute_onset_time")
+    required_time_columns = {"trial_num", "absolute_onset_time", "probe_onset_time"}
+    missing_time_columns = sorted(required_time_columns - set(d.columns))
+    if missing_time_columns:
+        raise BehaviorContractError(
+            f"probe windows require timing columns: missing {missing_time_columns}"
+        )
     d["absolute_onset_time"] = _numeric(d, "absolute_onset_time")
     rows: list[dict[str, Any]] = []
     windows = tuple(sorted(set(cfg.sensitivity_probe_windows_seconds)))
@@ -230,9 +234,13 @@ def build_probe_windows(trials: pd.DataFrame, cfg: BehaviorScienceConfig | None 
         probes = b[b["is_probe"].fillna(0).astype(float).eq(1)]
         for probe_order, (_, p) in enumerate(probes.iterrows(), start=1):
             anchor_trial = float(p["trial_num"])
-            anchor_time = float(p["absolute_onset_time"])
-            probe_time_raw = pd.to_numeric(pd.Series([p.get("probe_onset_time")]), errors="coerce").iloc[0]
-            probe_time = float(probe_time_raw) if np.isfinite(probe_time_raw) else anchor_time
+            probe_time_raw = pd.to_numeric(pd.Series([p["probe_onset_time"]]), errors="coerce").iloc[0]
+            if not np.isfinite(probe_time_raw):
+                raise BehaviorContractError(
+                    "formal probe row requires finite probe_onset_time; "
+                    f"session={session}, block={block}, probe_order={probe_order}"
+                )
+            probe_time = float(probe_time_raw)
             # Both constraints are intentional: trial_num < anchor excludes the anchoring
             # trial even when probe_onset_time occurs after that trial response.
             prior = b[(pd.to_numeric(b["trial_num"], errors="coerce") < anchor_trial)
@@ -497,7 +505,7 @@ def write_chinese_result_summary(output: Path, topology: dict[str, Any],
              f"当前分析队列：{topology['sessions']} 场，{topology['analysis_groups']} 个匿名参与者分析组；其中 {topology.get('repeated_participant_groups', 'unknown')} 组包含多次参加，最多 {topology.get('max_sessions_per_participant', 'unknown')} 场。参与次数分布只作描述，不作为分析放行门。", "",
              "## 指标口径", "",
              "Go 遗漏与 No-Go 误按使用不同机会数作为分母；RT 仅汇总正确 Go 反应。RT 输出均值、中位数、SD、MAD、IQR、CV 与 Theil–Sen 时间斜率；同时输出 d′、c 与 β。", "",
-             "原始 Go omission、clean Go omission 与 timing-ambiguous Go omission 均为预先定义结局，并共享 Go 分母；clean + timing-ambiguous 必须等于 raw。clean 仅表示未检出当前定义的运动时序歧义，不等同于已证明的注意失败。", "",
+             "raw Go omission 是当前主要 Go 遗漏指标；clean Go omission 与 timing-ambiguous Go omission 作为同一 raw omission 的描述/QC/敏感性分解，并共享 Go 分母。clean + timing-ambiguous 必须等于 raw；clean 仅表示未检出当前定义的运动时序歧义，不等同于已证明的注意失败。", "",
              "探针主分析每个 probe 只占一行，默认 30 秒窗；10/20 秒仅用于窗口敏感性，不增加主分析样本量。探针锚定试次被严格排除。", "",
              "## Q1 / Q2", "",
              f"Q1 名义四分类模型可估计结果行数：{len(q1_results)}；Q2 有序重复测量 GEE 可估计结果行数：{len(q2_results)}。", "",
