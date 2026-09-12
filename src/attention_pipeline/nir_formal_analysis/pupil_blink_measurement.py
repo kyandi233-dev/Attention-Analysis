@@ -709,6 +709,8 @@ def build_blink_recovery_bins(
                 else:
                     raise ValueError(f"unsupported recovery anchor: {anchor}")
                 rel_ms = times - anchor_ms
+                if not (rel_ms.ge(-float(pre_ms)) & rel_ms.lt(float(post_ms))).any():
+                    continue
                 for i in range(len(edges) - 1):
                     lo, hi = float(edges[i]), float(edges[i + 1])
                     current = session.loc[rel_ms.ge(lo) & rel_ms.lt(hi)]
