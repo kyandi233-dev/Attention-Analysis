@@ -25,6 +25,7 @@ def _probe_table() -> pd.DataFrame:
                     "probe_event_id": f"{session}|B1|P{probe}",
                     "q1_nominal_4class": q1,
                     "analysis_set_id": "synthetic-common-set",
+                    "membership_type": "included_missing_aware",
                     "behavior_signal": 1.0 if q1 == 1 else -1.0,
                 }
             )
@@ -120,6 +121,7 @@ def test_run_supervised_from_config_end_to_end(tmp_path) -> None:
     run_root = output_root / "synthetic-run"
     assert manifest["status"] == "complete"
     assert manifest["analysis_set_id"] == "synthetic-common-set"
+    assert manifest["membership_type"] == "included_missing_aware"
     assert manifest["n_prediction_rows"] == len(_probe_table())
     assert manifest["outer_test_outcomes_passed_to_model"] is False
     assert manifest["outer_evaluation"]["bootstrap_replicates"] == 1000
@@ -177,6 +179,7 @@ def test_registry_run_consumes_only_models_declared_by_current_analysis_set(tmp_
 
     assert manifest["status"] == "complete"
     assert set(saved_predictions["model_id"]) == set(declared)
+    assert set(saved_predictions["membership_type"]) == {"included_missing_aware"}
     assert manifest["n_prediction_rows"] == len(frame) * len(declared)
     saved_manifest = json.loads((output_root / "registry-run" / "run_manifest.json").read_text(encoding="utf-8"))
     assert saved_manifest["analysis_set_declared_models"] == declared
@@ -349,3 +352,26 @@ def test_formal_run_requires_one_nonblank_analysis_set_id(tmp_path) -> None:
         config_path, paths_path = _write_configs(tmp_path, config_data, paths_data)
         with pytest.raises(SupervisedLearningContractError, match=message):
             run_supervised_from_config(config_path, paths_config=paths_path, run_id=f"blocked-{index}")
+
+
+def test_formal_run_requires_one_explicit_membership_type(tmp_path) -> None:
+    output_root = tmp_path / "outputs"
+    config_data, paths_data = _config(tmp_path / "probe_table.csv", output_root)
+
+    cases = []
+    missing = _probe_table().drop(columns=["membership_type"])
+    cases.append((missing, "requires membership_type"))
+    blank = _probe_table()
+    blank["membership_type"] = " "
+    cases.append((blank, "blank"))
+    mixed = _probe_table()
+    mixed.loc[mixed.index[-1], "membership_type"] = "included_complete"
+    cases.append((mixed, "one membership_type per run"))
+
+    for index, (frame, message) in enumerate(cases):
+        input_path = tmp_path / f"membership_table_{index}.csv"
+        frame.to_csv(input_path, index=False)
+        paths_data["paths"]["supervised_learning_input_probe_table"] = str(input_path)
+        config_path, paths_path = _write_configs(tmp_path, config_data, paths_data)
+        with pytest.raises(SupervisedLearningContractError, match=message):
+            run_supervised_from_config(config_path, paths_config=paths_path, run_id=f"membership-blocked-{index}")
