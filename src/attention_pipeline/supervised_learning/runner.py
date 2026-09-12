@@ -35,6 +35,10 @@ OPTIONAL_PROBE_LOCATORS = (
     "window_effective_start_unix_ms",
     "window_end_unix_ms",
 )
+# Context retained for reporting/construct comparison only. These columns are never
+# passed into the model unless an upstream frozen feature scheme explicitly names them;
+# Q2 is not an eligible first-round predictor and is retained only beside OOF outputs.
+OPTIONAL_REPORT_CONTEXT = ("q2_ordinal_4level",)
 _EXPECTED_FOLD_FAILURES = (
     ModelSelectionError,
     PreprocessingContractError,
@@ -148,8 +152,12 @@ def _validate_frame(
         )
     out = frame.copy().reset_index(drop=True)
     out["q1_binary"] = encoded.reset_index(drop=True).astype(int)
-    locators = list(REQUIRED_PROBE_LOCATORS) + [c for c in OPTIONAL_PROBE_LOCATORS if c in out.columns]
-    return out, locators
+    archive_columns = (
+        list(REQUIRED_PROBE_LOCATORS)
+        + [c for c in OPTIONAL_PROBE_LOCATORS if c in out.columns]
+        + [c for c in OPTIONAL_REPORT_CONTEXT if c in out.columns]
+    )
+    return out, archive_columns
 
 
 def run_nested_loso(
@@ -166,7 +174,7 @@ def run_nested_loso(
     membership_type: str | None = None,
 ) -> SupervisedRunResult:
     """Run one full participant-disjoint LOSO analysis on one explicit membership."""
-    data, locator_columns = _validate_frame(frame, model_feature_schemes, group_col=group_col)
+    data, archive_columns = _validate_frame(frame, model_feature_schemes, group_col=group_col)
     resolved_analysis_set = _resolve_analysis_set_id(data, analysis_set_id)
     resolved_membership = _resolve_membership_type(data, membership_type)
     groups = sorted(data[group_col].astype(str).unique().tolist())
@@ -197,7 +205,9 @@ def run_nested_loso(
 
         for model_index, (model_id, schemes) in enumerate(model_items):
             fold_seed = int(seed) + outer_index * 10000 + model_index * 1000
-            base_prediction = outer_test[locator_columns + [group_col, Q1_BINARY_SPEC.source_column, "q1_binary"]].copy()
+            base_prediction = outer_test[
+                archive_columns + [group_col, Q1_BINARY_SPEC.source_column, "q1_binary"]
+            ].copy()
             base_prediction["run_id"] = str(run_id)
             base_prediction["analysis_set_id"] = resolved_analysis_set
             base_prediction[MEMBERSHIP_COLUMN] = resolved_membership
@@ -315,6 +325,7 @@ def run_nested_loso(
         "outer_method": "leave_one_participant_out",
         "zero_individual_calibration": True,
         "outer_test_outcomes_passed_to_model": False,
+        "q2_retained_for_reporting_only": "q2_ordinal_4level" in data.columns,
         "upstream_analysis_set_generation_in_task_a": False,
     }
     return SupervisedRunResult(predictions=predictions, fold_audits=fold_audits, failures=failures, metadata=metadata)
