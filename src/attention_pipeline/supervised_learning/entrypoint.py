@@ -134,7 +134,6 @@ def _require_frozen_runtime_contract(config_data: Mapping[str, Any]) -> None:
 
 
 def _load_feature_families(section: Mapping[str, Any]) -> dict[str, list[FeatureScheme]]:
-    """Compatibility loader for manually declared model families."""
     raw_families = section.get("model_families")
     if raw_families is None:
         schemes = load_feature_schemes(section)
@@ -176,7 +175,6 @@ def _load_feature_families(section: Mapping[str, Any]) -> dict[str, list[Feature
 
 
 def _resolve_model_plan(config_data: Mapping[str, Any]) -> tuple[dict[str, list[FeatureScheme]], FeatureComparisonPlan | None]:
-    """Prefer the frozen provenance registry; retain manual families for compatibility/tests."""
     registry_section = config_data.get("feature_registry", {})
     if registry_section is None:
         registry_section = {}
@@ -250,7 +248,6 @@ def _parse_comparison_models(value: object) -> tuple[str, ...]:
 
 
 def _require_comparison_models(frame: pd.DataFrame) -> tuple[str, ...]:
-    """Read the one comparison-specific model list supplied by Task B."""
     if FORMAL_COMPARISON_MODELS_COLUMN not in frame.columns:
         raise SupervisedLearningContractError(
             "registry-backed formal input must contain comparison_models supplied by the B-layer analysis-set contract"
@@ -299,7 +296,6 @@ def _parse_required_features(value: object) -> tuple[tuple[str, tuple[str, ...]]
 
 
 def _require_required_feature_columns(frame: pd.DataFrame) -> tuple[str, ...]:
-    """Read the exact sample-defining feature scope supplied by Task B."""
     if FORMAL_REQUIRED_FEATURES_COLUMN not in frame.columns:
         raise SupervisedLearningContractError(
             "registry-backed formal input must contain required_features supplied by the B-layer analysis-set contract"
@@ -334,13 +330,6 @@ def _validate_analysis_set_feature_scope(
     *,
     analysis_set_id: str,
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """Ensure Task B did not define the common sample using a different feature scope.
-
-    For a direct comparison, the common sample must be conditioned on the union of
-    predictors that the declared models can actually use. Extra Task-B features would
-    over-restrict the sample; missing Task-B features would leave the model/sample
-    contract incomplete. This function verifies equality only; it never selects features.
-    """
     required_columns = _require_required_feature_columns(frame)
     predictor_columns = _model_predictor_union(families)
     required_set = set(required_columns)
@@ -353,6 +342,10 @@ def _validate_analysis_set_feature_scope(
             f"extra_sample_filters={extra}, predictors_missing_from_sample_contract={missing}"
         )
     return tuple(sorted(required_set)), tuple(sorted(predictor_set))
+
+
+def _feature_columns_by_id(plan: FeatureComparisonPlan) -> dict[str, tuple[str, ...]]:
+    return {feature.feature_id: tuple(feature.columns) for feature in plan.registry}
 
 
 def _sha256(path: Path) -> str:
@@ -442,6 +435,7 @@ def run_supervised_from_config(
     )
     if comparison_plan is not None:
         selected = set(families)
+        feature_columns = _feature_columns_by_id(comparison_plan)
         result.metadata["feature_comparison_plan"] = comparison_plan.audit_dict()
         result.metadata["analysis_set_declared_models"] = list(declared_models or ())
         result.metadata["analysis_set_required_feature_columns"] = list(required_feature_columns or ())
@@ -453,6 +447,7 @@ def run_supervised_from_config(
                 "baseline_model_id": baseline,
                 "added_model_id": added,
                 "feature_id": feature_id,
+                "feature_columns": list(feature_columns[feature_id]),
             }
             for baseline, added, feature_id in comparison_plan.behavior_increment_pairs
             if baseline in selected and added in selected
@@ -462,6 +457,7 @@ def run_supervised_from_config(
                 "baseline_model_id": reduced,
                 "added_model_id": full,
                 "feature_id": feature_id,
+                "feature_columns": list(feature_columns[feature_id]),
             }
             for reduced, full, feature_id in comparison_plan.full_leave_one_out_pairs
             if reduced in selected and full in selected
