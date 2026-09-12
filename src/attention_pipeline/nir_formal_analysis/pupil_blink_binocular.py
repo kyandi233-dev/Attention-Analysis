@@ -136,3 +136,33 @@ def build_binocular_measurement_timepoints(frame: pd.DataFrame) -> pd.DataFrame:
         out[f"{signal}__right_invalid_reason"] = right_reason.to_numpy()
 
     return out.sort_values(key, kind="stable").reset_index(drop=True)
+
+
+def audit_binocular_source_modes(timepoints: pd.DataFrame) -> pd.DataFrame:
+    """Summarize binocular/monocular/missing source composition without thresholds."""
+    modes = ("binocular", "left_only", "right_only", "missing")
+    signals = [GEOMETRY_SIGNAL, RSEG_HARD_SIGNAL]
+    if f"{RSEG_SOFT_SIGNAL}__source_mode" in timepoints.columns:
+        signals.append(RSEG_SOFT_SIGNAL)
+    rows: list[dict[str, object]] = []
+    for session_id, group in timepoints.groupby("session_id", sort=True):
+        for signal in signals:
+            for measurement_state, column in (
+                ("raw_computable", f"{signal}__raw_source_mode"),
+                ("nir_qc_valid", f"{signal}__source_mode"),
+            ):
+                counts = group[column].fillna("missing").astype(str).value_counts()
+                total = int(len(group))
+                for mode in modes:
+                    count = int(counts.get(mode, 0))
+                    rows.append(
+                        {
+                            "session_id": str(session_id),
+                            "signal": signal,
+                            "measurement_state": measurement_state,
+                            "source_mode": mode,
+                            "n_timepoints": count,
+                            "fraction": float(count / total) if total else np.nan,
+                        }
+                    )
+    return pd.DataFrame(rows)
