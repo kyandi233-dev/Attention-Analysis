@@ -77,39 +77,33 @@ def _parse_json_string_list(value: object, *, context: str) -> list[str]:
 
 
 def _declared_models(analysis_sets: pd.DataFrame) -> dict[str, list[str]]:
-    """Read per-set comparison models when analysis-set metadata declares them."""
+    """Read the authoritative per-set model scope; never infer it from predictions."""
     if "comparison_models" not in analysis_sets.columns:
-        return {}
+        raise ValueError("analysis_sets must declare comparison_models for formal prediction archive validation")
     declared: dict[str, list[str]] = {}
     for set_id, rows in analysis_sets.groupby("analysis_set_id", sort=False):
         values = rows["comparison_models"].dropna().astype(str).unique().tolist()
-        if not values:
-            continue
         if len(values) != 1:
-            raise ValueError(f"inconsistent comparison_models within analysis_set_id={set_id}")
-        declared[str(set_id)] = _parse_json_string_list(
-            values[0], context=f"comparison_models for {set_id}"
-        )
+            raise ValueError(f"analysis_set_id={set_id} requires exactly one nonmissing comparison_models declaration")
+        models = _parse_json_string_list(values[0], context=f"comparison_models for {set_id}")
+        if not models:
+            raise ValueError(f"analysis_set_id={set_id} declares no expected models")
+        declared[str(set_id)] = models
     return declared
 
 
 def _declared_outcomes(analysis_sets: pd.DataFrame) -> dict[str, list[str]]:
-    """Map Task-B required outcomes onto archive outcome identifiers.
-
-    The first-round supervised archive currently has one formal target: binary Q1.
-    Task B records that target upstream as ``q1_nominal_4class``; the archive records
-    the derived task name ``q1_equals_1_vs_2_3_4``.
-    """
+    """Map the authoritative Task-B outcome scope onto archive outcome identifiers."""
     if "required_outcomes" not in analysis_sets.columns:
-        return {}
+        raise ValueError("analysis_sets must declare required_outcomes for formal prediction archive validation")
     declared: dict[str, list[str]] = {}
     for set_id, rows in analysis_sets.groupby("analysis_set_id", sort=False):
         values = rows["required_outcomes"].dropna().astype(str).unique().tolist()
-        if not values:
-            continue
         if len(values) != 1:
-            raise ValueError(f"inconsistent required_outcomes within analysis_set_id={set_id}")
+            raise ValueError(f"analysis_set_id={set_id} requires exactly one nonmissing required_outcomes declaration")
         raw = _parse_json_string_list(values[0], context=f"required_outcomes for {set_id}")
+        if not raw:
+            raise ValueError(f"analysis_set_id={set_id} declares no expected outcomes")
         mapped: list[str] = []
         for outcome in raw:
             if outcome == Q1_AUTHORITY_COLUMN:
@@ -203,11 +197,13 @@ def _resolve_requested_sets(
 def _validate_q1_authority_consistency(analysis_sets: pd.DataFrame) -> None:
     """Ensure copied Behavior-authoritative Q1 cannot disagree across analysis sets."""
     if Q1_AUTHORITY_COLUMN not in analysis_sets.columns:
-        return
+        raise ValueError(
+            "analysis_sets must carry Behavior-authoritative q1_nominal_4class for first-round Q1 archive validation"
+        )
     authority = analysis_sets[KEYS + [GROUP, Q1_AUTHORITY_COLUMN]].copy()
     authority = authority.dropna(subset=[Q1_AUTHORITY_COLUMN])
     if authority.empty:
-        return
+        raise ValueError("analysis_sets contains no Behavior-authoritative Q1 values")
     numeric = pd.to_numeric(authority[Q1_AUTHORITY_COLUMN], errors="coerce")
     if numeric.isna().any() or not numeric.isin([1, 2, 3, 4]).all():
         raise ValueError("analysis_sets contains invalid authoritative Q1 values")
@@ -227,9 +223,9 @@ def validate_prediction_archive(
 ) -> dict[str, Any]:
     """Validate identity, authority, LOSO ownership and expected archive coverage.
 
-    Expected coverage is generated from the requested Task-B analysis sets, their
-    declared models and their required outcomes. It is never inferred only from rows
-    that happen to be present in ``predictions``.
+    Expected coverage is generated only from requested Task-B analysis sets, their
+    declared models and declared outcomes. Formal first-round Q1 validation never
+    reconstructs the expected universe from whatever prediction rows happened to run.
     """
     if predictions.empty:
         raise ValueError("predictions archive is empty")
@@ -247,11 +243,20 @@ def validate_prediction_archive(
     missing = sorted(required_prediction_columns - set(predictions.columns))
     if missing:
         raise ValueError(f"predictions missing columns: {missing}")
-    if membership_column not in analysis_sets.columns:
-        raise ValueError(f"analysis_sets missing membership column: {membership_column}")
-    set_required = set(KEYS + [GROUP, "analysis_set_id", membership_column])
-    if not set_required <= set(analysis_sets.columns):
-        raise ValueError("analysis_sets missing identity/set columns")
+    set_required = set(
+        KEYS
+        + [
+            GROUP,
+            "analysis_set_id",
+            membership_column,
+            "comparison_models",
+            "required_outcomes",
+            Q1_AUTHORITY_COLUMN,
+        ]
+    )
+    missing_set = sorted(set_required - set(analysis_sets.columns))
+    if missing_set:
+        raise ValueError(f"analysis_sets missing formal archive-scope columns: {missing_set}")
     if predictions[REQUIRED_IDENTITY_COLUMNS].isna().any().any():
         raise ValueError("predictions contain null required identity/label values")
     if predictions.duplicated(PREDICTION_KEY).any():
@@ -311,24 +316,20 @@ def validate_prediction_archive(
     declared_models = _declared_models(scoped_sets)
     declared_outcomes = _declared_outcomes(scoped_sets)
     for set_id, set_predictions in predictions.groupby("analysis_set_id", sort=False):
-        models = declared_models.get(str(set_id), [])
-        if models:
-            observed_models = set(set_predictions["model_id"].astype(str).unique().tolist())
-            undeclared = observed_models - set(models)
-            if undeclared:
-                raise ValueError(f"prediction model_id not declared for {set_id}: {sorted(undeclared)}")
-        expected_outcomes = declared_outcomes.get(str(set_id), [])
-        if expected_outcomes:
-            observed_outcomes = set(set_predictions["outcome"].astype(str).unique().tolist())
-            undeclared_outcomes = observed_outcomes - set(expected_outcomes)
-            if undeclared_outcomes:
-                raise ValueError(
-                    f"prediction outcome not declared for {set_id}: {sorted(undeclared_outcomes)}"
-                )
+        expected_models = declared_models[str(set_id)]
+        observed_models = set(set_predictions["model_id"].astype(str).unique().tolist())
+        undeclared = observed_models - set(expected_models)
+        if undeclared:
+            raise ValueError(f"prediction model_id not declared for {set_id}: {sorted(undeclared)}")
+        expected_outcomes = declared_outcomes[str(set_id)]
+        observed_outcomes = set(set_predictions["outcome"].astype(str).unique().tolist())
+        undeclared_outcomes = observed_outcomes - set(expected_outcomes)
+        if undeclared_outcomes:
+            raise ValueError(
+                f"prediction outcome not declared for {set_id}: {sorted(undeclared_outcomes)}"
+            )
 
-    membership_columns = KEYS + [GROUP, "analysis_set_id", membership_column]
-    if Q1_AUTHORITY_COLUMN in scoped_sets.columns:
-        membership_columns.append(Q1_AUTHORITY_COLUMN)
+    membership_columns = KEYS + [GROUP, "analysis_set_id", membership_column, Q1_AUTHORITY_COLUMN]
     membership = scoped_sets[membership_columns].copy()
     membership["__requested_membership"] = _strict_bool_series(
         membership[membership_column], context=f"analysis_sets {membership_column}"
@@ -345,16 +346,17 @@ def validate_prediction_archive(
         raise ValueError("prediction emitted for probe outside requested analysis-set membership")
 
     _validate_q1_authority_consistency(scoped_sets)
-    if Q1_AUTHORITY_COLUMN in merged.columns:
-        q1_rows = merged["outcome"].astype(str).isin({TASK_A_Q1_OUTCOME, "q1_binary"})
-        if q1_rows.any():
-            q1 = pd.to_numeric(merged.loc[q1_rows, Q1_AUTHORITY_COLUMN], errors="coerce")
-            if q1.isna().any() or not q1.isin([1, 2, 3, 4]).all():
-                raise ValueError("Q1 prediction rows lack a valid Behavior-authoritative Q1 label")
-            expected_y = q1.eq(1).astype(int).reset_index(drop=True)
-            observed_y = pd.to_numeric(merged.loc[q1_rows, "y_true"], errors="coerce").astype(int).reset_index(drop=True)
-            if not observed_y.equals(expected_y):
-                raise ValueError("prediction y_true disagrees with Behavior-authoritative Q1 label")
+    q1_rows = merged["outcome"].astype(str).eq(TASK_A_Q1_OUTCOME)
+    if not q1_rows.all():
+        unexpected = sorted(merged.loc[~q1_rows, "outcome"].astype(str).unique().tolist())
+        raise ValueError(f"first-round archive contains non-Q1 outcome rows: {unexpected}")
+    q1 = pd.to_numeric(merged[Q1_AUTHORITY_COLUMN], errors="coerce")
+    if q1.isna().any() or not q1.isin([1, 2, 3, 4]).all():
+        raise ValueError("Q1 prediction rows lack a valid Behavior-authoritative Q1 label")
+    expected_y = q1.eq(1).astype(int).reset_index(drop=True)
+    observed_y = pd.to_numeric(merged["y_true"], errors="coerce").astype(int).reset_index(drop=True)
+    if not observed_y.equals(expected_y):
+        raise ValueError("prediction y_true disagrees with Behavior-authoritative Q1 label")
 
     expected_membership = membership[membership["__requested_membership"]][
         KEYS + [GROUP, "analysis_set_id"]
@@ -364,16 +366,8 @@ def validate_prediction_archive(
     for set_id in requested_sets:
         expected_set = expected_membership[expected_membership["analysis_set_id"].astype(str).eq(set_id)]
         set_predictions = predictions[predictions["analysis_set_id"].astype(str).eq(set_id)]
-        expected_models = declared_models.get(str(set_id), [])
-        if not expected_models:
-            expected_models = sorted(set_predictions["model_id"].astype(str).unique().tolist())
-        expected_outcomes = declared_outcomes.get(str(set_id), [])
-        if not expected_outcomes:
-            expected_outcomes = sorted(set_predictions["outcome"].astype(str).unique().tolist())
-        if not expected_models:
-            raise ValueError(f"no expected models declared or observed for analysis_set_id={set_id}")
-        if not expected_outcomes:
-            raise ValueError(f"no expected outcomes declared or observed for analysis_set_id={set_id}")
+        expected_models = declared_models[str(set_id)]
+        expected_outcomes = declared_outcomes[str(set_id)]
 
         for outcome in expected_outcomes:
             outcome_rows = set_predictions[set_predictions["outcome"].astype(str).eq(outcome)]
@@ -420,7 +414,7 @@ def validate_prediction_archive(
         "analysis_set_n": int(len(requested_sets)),
         "model_n": int(predictions["model_id"].nunique()),
         "outcome_n": int(predictions["outcome"].nunique()),
-        "authoritative_q1_checked": bool(Q1_AUTHORITY_COLUMN in merged.columns),
+        "authoritative_q1_checked": True,
         "coverage": coverage_rows,
     }
 
