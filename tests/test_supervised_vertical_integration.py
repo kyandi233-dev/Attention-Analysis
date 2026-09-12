@@ -167,6 +167,10 @@ def test_task_a_rejects_task_b_required_features_that_exceed_actual_model_union(
 def test_task_b_serialized_false_states_fail_closed_before_materialization():
     audited, _, _ = _build_vertical_contract()
     status = audited["probe_feature_status"].copy()
+    # Model the post-CSV/string state explicitly rather than relying on pandas
+    # inference, which may keep an all-boolean column as BooleanDtype.
+    status["feature_computable"] = status["feature_computable"].astype(object)
+    status["eligible_for_missing_strategy"] = status["eligible_for_missing_strategy"].astype(object)
     target = (
         status["session_id"].eq("s1")
         & status["block_id"].eq("b1")
