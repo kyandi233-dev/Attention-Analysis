@@ -37,6 +37,7 @@ def _probe_frame(seed: int = 13) -> pd.DataFrame:
                         "window_effective_start_unix_ms": probe_time - 30000,
                         "window_end_unix_ms": probe_time,
                         "analysis_set_id": "synthetic-common-set",
+                        "membership_type": "included_missing_aware",
                         "q1_nominal_4class": q1,
                         "signal": 3.0 * y + rng.normal(0, 0.15),
                         "noise": rng.normal(0, 1.0),
@@ -72,6 +73,8 @@ def test_outer_loso_keeps_all_sessions_of_participant_together_and_preserves_ana
     assert len(result.predictions) == len(frame)
     assert result.failures.empty
     assert set(result.predictions["analysis_set_id"]) == {"synthetic-common-set"}
+    assert set(result.predictions["membership_type"]) == {"included_missing_aware"}
+    assert result.metadata["membership_type"] == "included_missing_aware"
     assert set(result.predictions["run_id"]) == {"synthetic-run"}
     assert (result.predictions["participant_group_id"] == result.predictions["outer_fold_group"]).all()
     for locator in (
@@ -91,6 +94,7 @@ def test_outer_loso_keeps_all_sessions_of_participant_together_and_preserves_ana
         assert rows["session_id"].nunique() == 2
 
     for audit in result.fold_audits:
+        assert audit["membership_type"] == "included_missing_aware"
         assert not (set(audit["outer_train_group_ids"]) & set(audit["outer_test_group_ids"]))
         assert audit["final_refit"]["preprocessing"]["fit_group_ids"] == audit["outer_train_group_ids"]
 
@@ -168,6 +172,7 @@ def test_failed_model_fold_is_preserved_in_predictions_and_failure_table() -> No
     assert invalid["p_q1_equals_1"].isna().all()
     assert len(result.failures) == frame["participant_group_id"].nunique()
     assert result.failures["reason"].str.contains("no usable features").all()
+    assert set(result.failures["membership_type"]) == {"included_missing_aware"}
 
 
 def test_duplicate_probe_locator_or_missing_q1_fails_before_training() -> None:
@@ -180,6 +185,17 @@ def test_duplicate_probe_locator_or_missing_q1_fails_before_training() -> None:
     missing_q1.loc[0, "q1_nominal_4class"] = np.nan
     with pytest.raises(SupervisedLearningContractError, match="missing Q1"):
         run_nested_loso(missing_q1, model_feature_schemes=_schemes(), inner_splits=3)
+
+
+def test_missing_or_mixed_membership_type_fails_before_training() -> None:
+    missing = _probe_frame().drop(columns=["membership_type"])
+    with pytest.raises(SupervisedLearningContractError, match="requires membership_type"):
+        run_nested_loso(missing, model_feature_schemes=_schemes(), inner_splits=3)
+
+    mixed = _probe_frame()
+    mixed.loc[mixed.index[-1], "membership_type"] = "included_complete"
+    with pytest.raises(SupervisedLearningContractError, match="one membership_type per run"):
+        run_nested_loso(mixed, model_feature_schemes=_schemes(), inner_splits=3)
 
 
 def test_unexpected_programming_error_in_outer_fold_propagates(monkeypatch) -> None:
