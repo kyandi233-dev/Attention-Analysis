@@ -26,8 +26,8 @@ def _time_on_task() -> pd.DataFrame:
                         "block_num": block,
                         "track": "binocular_primary",
                         "time_in_block_mid_sec": sec + 0.5,
-                        "pir_median": offset + 0.0001 * sec + 0.005 * (block - 1),
-                        "pir_valid_fraction": 0.95,
+                        "pupil_median": offset + 0.0001 * sec + 0.005 * (block - 1),
+                        "pupil_valid_fraction": 0.95,
                     }
                 )
     return pd.DataFrame(rows)
@@ -66,14 +66,14 @@ def _trial_windows() -> pd.DataFrame:
                     "global_trial_index": trial,
                     "track": "binocular_primary",
                     "window_name": window,
-                    "pir_median": value,
-                    "pir_mean": value,
-                    "pir_mad": value / 10,
-                    "pir_iqr": value / 8,
-                    "pir_sd": value / 7,
-                    "pir_slope_per_sec": value / 100,
-                    "pir_diff_mad": value / 50,
-                    "pir_diff_rate_mad_per_sec": value / 40,
+                    "pupil_median": value,
+                    "pupil_mean": value,
+                    "pupil_mad": value / 10,
+                    "pupil_iqr": value / 8,
+                    "pupil_sd": value / 7,
+                    "pupil_slope_per_sec": value / 100,
+                    "pupil_diff_mad": value / 50,
+                    "pupil_diff_rate_mad_per_sec": value / 40,
                 }
             )
     return pd.DataFrame(rows)
@@ -96,7 +96,7 @@ def _probe_windows() -> pd.DataFrame:
                     "probe_vigilance": 3 + idx,
                     "probe_rt": 500 + 10 * idx,
                     "probe_vigilance_rt": 600 + 10 * idx,
-                    "pir_median": 0.01 * idx,
+                    "pupil_median": 0.01 * idx,
                 }
             )
     return pd.DataFrame(rows)
@@ -143,7 +143,7 @@ def test_continuous_event_trajectory_uses_real_time_bins():
     )
     assert set(result["time_bin_mid_sec"]) == {-2.5, -1.5, -0.5, 0.5}
     assert result["n_rows"].sum() == 40
-    assert result["pir_median"].notna().all()
+    assert result["pupil_median"].notna().all()
 
 
 def test_event_catalogs_preserve_nogo_omission_and_probe_conditions():
@@ -166,7 +166,7 @@ def test_feature_redundancy_is_within_person_centered():
     )
     assert not within.empty
     assert not between.empty
-    assert {"pir_median", "pir_mad"}.issubset(set(within["feature_a"]))
+    assert {"pupil_median", "pupil_mad"}.issubset(set(within["feature_a"]))
 
 
 def test_window_stability_keeps_prespecified_windows():
@@ -186,7 +186,7 @@ def test_publication_figure_exports_fixed_canvas_vector_and_raster(tmp_path):
     )
     distribution = (
         _time_on_task()
-        .groupby(["subject", "block_num"], as_index=False)["pir_median"]
+        .groupby(["subject", "block_num"], as_index=False)["pupil_median"]
         .median()
     )
     transition = detail.copy()

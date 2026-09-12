@@ -25,7 +25,7 @@ def test_probe_response_codes_preserve_raw_categories_without_semantic_labels():
 def _probe_windows() -> pd.DataFrame:
     rows = []
     for response, vigilance, probe_index in [(1, 2, 1), (2, 4, 2)]:
-        for window, pir, rt in [("pre_10s", 0.1 * response, 420 + 10 * response), ("pre_20s", 0.2 * response, 430 + 10 * response)]:
+        for window, pupil, rt in [("pre_10s", 0.1 * response, 420 + 10 * response), ("pre_20s", 0.2 * response, 430 + 10 * response)]:
             rows.append(
                 {
                     "subject": "sub-031",
@@ -39,8 +39,8 @@ def _probe_windows() -> pd.DataFrame:
                     "probe_vigilance_rt": 600 + response,
                     "track": "binocular_primary",
                     "window_name": window,
-                    "pir_median": pir,
-                    "pir_valid_fraction": 0.9,
+                    "pupil_median": pupil,
+                    "pupil_valid_fraction": 0.9,
                     "internal_coverage_fraction": 1.0,
                     "n_trials": 10,
                     "n_go": 8,
@@ -63,7 +63,7 @@ def test_probe_event_table_deduplicates_windows_and_keeps_both_probe_dimensions(
     assert events["probe_vigilance"].tolist() == [2, 4]
 
 
-def test_probe_response_summaries_cover_distribution_pir_behavior_and_joint_structure():
+def test_probe_response_summaries_cover_distribution_pupil_behavior_and_joint_structure():
     windows = _probe_windows()
     events = probe_event_table(windows, track="binocular_primary")
     response = probe_response_subject_summary(events)
@@ -76,7 +76,7 @@ def test_probe_response_summaries_cover_distribution_pir_behavior_and_joint_stru
         window_summary["probe_response_code"].astype(str).eq("2")
         & window_summary["window_name"].eq("pre_20s")
     ].iloc[0]
-    assert np.isclose(row["pir_median"], 0.4)
+    assert np.isclose(row["pupil_median"], 0.4)
     assert np.isclose(row["commission_rate_window"], 0.5)
     assert np.isclose(row["omission_rate_window"], 0.125)
 
