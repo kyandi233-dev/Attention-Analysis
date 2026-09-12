@@ -321,14 +321,29 @@ def audit_quality(
             qc_valid, qc_basis = _native_qc_state(frame, modality, feature)
             support_valid, support_basis = _feature_support_state(frame, modality, feature)
             column_present = feature in frame.columns
-            raw = (
-                pd.to_numeric(frame[feature], errors="coerce")
-                if column_present
-                else pd.Series(np.nan, index=frame.index, dtype=float)
-            )
+            if column_present:
+                source_value = frame[feature]
+                source_text = source_value.astype("string").str.strip()
+                source_missing = source_value.isna() | source_text.eq("")
+                raw = pd.to_numeric(source_value, errors="coerce")
+                parse_invalid = ~source_missing & raw.isna()
+                nonfinite_invalid = ~source_missing & raw.notna() & ~np.isfinite(raw)
+            else:
+                source_missing = pd.Series(True, index=frame.index, dtype=bool)
+                raw = pd.Series(np.nan, index=frame.index, dtype=float)
+                parse_invalid = pd.Series(False, index=frame.index, dtype=bool)
+                nonfinite_invalid = pd.Series(False, index=frame.index, dtype=bool)
+
             finite = pd.Series(np.isfinite(raw), index=frame.index)
+            value_valid_for_missing_strategy = ~(parse_invalid | nonfinite_invalid)
             computable = opportunity & qc_valid & support_valid & finite
-            missing_strategy_eligible = opportunity & qc_valid & support_valid & column_present
+            missing_strategy_eligible = (
+                opportunity
+                & qc_valid
+                & support_valid
+                & column_present
+                & value_valid_for_missing_strategy
+            )
 
             reason = np.select(
                 [
@@ -339,6 +354,9 @@ def audit_quality(
                     ~qc_valid,
                     ~support_valid,
                     pd.Series(not column_present, index=frame.index),
+                    parse_invalid,
+                    nonfinite_invalid,
+                    source_missing,
                     ~finite,
                 ],
                 [
@@ -349,7 +367,10 @@ def audit_quality(
                     "native_qc_invalid",
                     "feature_support_invalid",
                     "feature_column_missing",
+                    "feature_parse_invalid",
+                    "feature_nonfinite_invalid",
                     "single_feature_missing",
+                    "feature_value_invalid",
                 ],
                 default="available",
             )
