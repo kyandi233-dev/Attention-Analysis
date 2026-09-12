@@ -35,6 +35,29 @@ REQUIRED_TASK_A_AUDIT_COLUMNS = (
 _ALLOWED_MEMBERSHIP_COLUMNS = frozenset({"included_complete", "included_missing_aware"})
 
 
+def _strict_bool_series(values: pd.Series, *, context: str) -> pd.Series:
+    """Parse booleans without Python's ``bool('False') == True`` trap."""
+    if values.isna().any():
+        raise ValueError(f"{context} contains missing boolean values")
+    if pd.api.types.is_bool_dtype(values.dtype):
+        return values.astype(bool)
+    normalized = values.astype("string").str.strip().str.lower()
+    mapped = normalized.map(
+        {
+            "true": True,
+            "false": False,
+            "1": True,
+            "0": False,
+            "1.0": True,
+            "0.0": False,
+        }
+    )
+    if mapped.isna().any():
+        bad = sorted(normalized.loc[mapped.isna()].dropna().unique().tolist())
+        raise ValueError(f"{context} contains invalid boolean values: {bad}")
+    return mapped.astype(bool)
+
+
 def _parse_json_string_list(value: object, *, context: str) -> list[str]:
     if pd.isna(value):
         return []
@@ -237,10 +260,11 @@ def validate_prediction_archive(
         raise ValueError("duplicate analysis-set membership rows")
 
     _require_nonblank(predictions, "run_id")
+    run_ids = predictions["run_id"].astype(str).str.strip().unique().tolist()
+    if len(run_ids) != 1:
+        raise ValueError(f"prediction archive must contain exactly one run_id; got {run_ids}")
     _require_nonblank(predictions, MEMBERSHIP_TYPE_COLUMN)
-    if not predictions["model_failed"].isin([True, False, 0, 1]).all():
-        raise ValueError("prediction model_failed must be explicit boolean values")
-    failed = predictions["model_failed"].astype(bool)
+    failed = _strict_bool_series(predictions["model_failed"], context="prediction model_failed")
     successful = ~failed
     _require_nonblank(predictions, "feature_set_id", mask=successful)
 
@@ -306,15 +330,18 @@ def validate_prediction_archive(
     if Q1_AUTHORITY_COLUMN in scoped_sets.columns:
         membership_columns.append(Q1_AUTHORITY_COLUMN)
     membership = scoped_sets[membership_columns].copy()
+    membership["__requested_membership"] = _strict_bool_series(
+        membership[membership_column], context=f"analysis_sets {membership_column}"
+    )
     merged = predictions.merge(
         membership,
         on=KEYS + [GROUP, "analysis_set_id"],
         how="left",
         validate="many_to_one",
     )
-    if merged[membership_column].isna().any():
+    if merged["__requested_membership"].isna().any():
         raise ValueError("prediction references unknown analysis_set/probe membership")
-    if not merged[membership_column].astype(bool).all():
+    if not merged["__requested_membership"].all():
         raise ValueError("prediction emitted for probe outside requested analysis-set membership")
 
     _validate_q1_authority_consistency(scoped_sets)
@@ -329,7 +356,7 @@ def validate_prediction_archive(
             if not observed_y.equals(expected_y):
                 raise ValueError("prediction y_true disagrees with Behavior-authoritative Q1 label")
 
-    expected_membership = membership[membership[membership_column].astype(bool)][
+    expected_membership = membership[membership["__requested_membership"]][
         KEYS + [GROUP, "analysis_set_id"]
     ]
     coverage_rows: list[dict[str, Any]] = []
@@ -366,6 +393,9 @@ def validate_prediction_archive(
                         f"incomplete prediction coverage for {set_id}/{outcome}/{model_id}: "
                         f"missing={missing_n}, extra={extra_n}"
                     )
+                failed_probe_n = int(
+                    _strict_bool_series(rows["model_failed"], context="prediction model_failed").sum()
+                ) if not rows.empty else 0
                 coverage_rows.append(
                     {
                         "analysis_set_id": set_id,
@@ -373,7 +403,7 @@ def validate_prediction_archive(
                         "model_id": model_id,
                         "expected_probe_n": int(len(expected_set)),
                         "predicted_probe_n": int(len(actual)),
-                        "failed_probe_n": int(rows["model_failed"].astype(bool).sum()),
+                        "failed_probe_n": failed_probe_n,
                         "missing_probe_n": missing_n,
                         "extra_probe_n": extra_n,
                     }
@@ -383,7 +413,7 @@ def validate_prediction_archive(
         "status": "PASS_PREDICTION_ARCHIVE",
         "membership_column": membership_column,
         "requested_analysis_set_ids": requested_sets,
-        "run_ids": sorted(predictions["run_id"].astype(str).str.strip().unique().tolist()),
+        "run_ids": run_ids,
         "prediction_n": int(len(predictions)),
         "successful_prediction_n": int(successful.sum()),
         "failed_prediction_n": int(failed.sum()),
