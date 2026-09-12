@@ -1,9 +1,9 @@
 """Frozen feature registry and comparison-plan generation for Q1 supervision.
 
-Scientific modality and hardware provenance are deliberately separate. Upstream
-measurement work freezes concrete predictor representations and their eligibility;
-this module records those facts and generates feature-, modality-, and device-level
-comparison plans without inferring one layer from another.
+Scientific modality, producer namespace, and hardware provenance are deliberately
+separate. Upstream measurement work freezes concrete predictor representations and
+their eligibility; this module records those facts and generates feature-, modality-,
+and device-level comparison plans without inferring one layer from another.
 """
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from .task import SupervisedLearningContractError
 
 
 ALLOWED_DEVICE_KEYS = ALLOWED_SENSOR_DEVICES
+ALLOWED_SOURCE_NAMESPACES = frozenset({"behavior", "nir", "rgb", "mmwave"})
 DEVICE_PACKAGES: dict[str, frozenset[str]] = {
     "M0": frozenset(),
     "M1": frozenset({"nir"}),
@@ -47,6 +48,7 @@ class RegisteredFeature:
     role: str  # behavior | sensor; retained as a coarse compatibility/audit role
     modality: str  # behavior | ocular | movement | cardiopulmonary
     raw_source: str
+    source_namespace: str  # Task-B producer table namespace: behavior | nir | rgb | mmwave
     required_devices: tuple[str, ...]
     feature_type: str = ""
     preprocessing_dependencies: tuple[str, ...] = ()
@@ -68,6 +70,7 @@ class RegisteredFeature:
             "modality": self.modality,
             "feature_type": self.feature_type,
             "raw_source": self.raw_source,
+            "source_namespace": self.source_namespace,
             "required_devices": list(self.required_devices),
             "preprocessing_dependencies": list(self.preprocessing_dependencies),
             "standalone_eligible": self.standalone_eligible,
@@ -136,9 +139,84 @@ class FeatureComparisonPlan:
     def model_map(self) -> dict[str, PlannedModel]:
         return {model.model_id: model for model in self.models}
 
+    def feature_map(self) -> dict[str, RegisteredFeature]:
+        return {feature.feature_id: feature for feature in self.registry}
+
     def to_runner_feature_schemes(self) -> dict[str, list[FeatureScheme]]:
         """Convert every planned model to a one-candidate Task A model family."""
         return {model.model_id: [model.as_feature_scheme()] for model in self.models}
+
+    def task_b_comparison_spec(
+        self,
+        model_ids: Sequence[str],
+        *,
+        required_outcomes: Sequence[str],
+    ) -> dict[str, object]:
+        """Generate the exact Task-B sample/identity contract for compared models.
+
+        ``required_features`` remains the scientific-modality -> predictor-column
+        contract checked by Task A. ``required_feature_records`` is the separate
+        producer lookup map consumed by Task B. The producer namespace is taken
+        directly from each frozen registry entry and is never inferred from devices.
+        """
+        normalized_models = tuple(str(model_id).strip() for model_id in model_ids)
+        if not normalized_models or any(not model_id for model_id in normalized_models):
+            raise FeatureRegistryContractError("Task-B comparison requires nonblank model_ids")
+        if len(set(normalized_models)) != len(normalized_models):
+            raise FeatureRegistryContractError("Task-B comparison model_ids contain duplicates")
+
+        model_map = self.model_map()
+        unknown_models = sorted(set(normalized_models) - set(model_map))
+        if unknown_models:
+            raise FeatureRegistryContractError(
+                f"Task-B comparison references unknown planned models: {unknown_models}"
+            )
+
+        outcomes = tuple(str(outcome).strip() for outcome in required_outcomes)
+        if not outcomes or any(not outcome for outcome in outcomes):
+            raise FeatureRegistryContractError("Task-B comparison requires nonblank required_outcomes")
+        if len(set(outcomes)) != len(outcomes):
+            raise FeatureRegistryContractError("Task-B required_outcomes contain duplicates")
+
+        required_feature_ids: set[str] = set()
+        for model_id in normalized_models:
+            required_feature_ids.update(model_map[model_id].feature_ids)
+
+        selected = tuple(
+            feature for feature in self.registry if feature.feature_id in required_feature_ids
+        )
+        selected_ids = {feature.feature_id for feature in selected}
+        if selected_ids != required_feature_ids:
+            missing = sorted(required_feature_ids - selected_ids)
+            raise FeatureRegistryContractError(
+                f"planned model references feature IDs absent from registry: {missing}"
+            )
+
+        required_features: dict[str, list[str]] = {}
+        required_feature_records: list[dict[str, str]] = []
+        for feature in selected:
+            modality_columns = required_features.setdefault(feature.modality, [])
+            for column in feature.columns:
+                if column in modality_columns:
+                    raise FeatureRegistryContractError(
+                        f"duplicate predictor column within modality {feature.modality}: {column}"
+                    )
+                modality_columns.append(column)
+                required_feature_records.append(
+                    {
+                        "feature_id": feature.feature_id,
+                        "scientific_modality": feature.modality,
+                        "source_namespace": feature.source_namespace,
+                        "predictor_column": column,
+                    }
+                )
+
+        return {
+            "models": list(normalized_models),
+            "required_features": required_features,
+            "required_feature_records": required_feature_records,
+            "required_outcomes": list(outcomes),
+        }
 
     def audit_dict(self) -> dict[str, object]:
         return {
@@ -217,10 +295,11 @@ def validate_registered_features(
         feature_id = feature.feature_id.strip()
         scientific_id = feature.scientific_feature_id.strip()
         raw_source = feature.raw_source.strip()
+        source_namespace = feature.source_namespace.strip()
         modality = feature.modality.strip()
-        if not feature_id or not scientific_id or not raw_source or not modality:
+        if not feature_id or not scientific_id or not raw_source or not source_namespace or not modality:
             raise FeatureRegistryContractError(
-                "feature_id, scientific_feature_id, modality and raw_source must be non-empty"
+                "feature_id, scientific_feature_id, modality, raw_source and source_namespace must be non-empty"
             )
         if feature_id in feature_ids:
             raise FeatureRegistryContractError(f"duplicate feature_id: {feature_id}")
@@ -232,6 +311,10 @@ def validate_registered_features(
             raise FeatureRegistryContractError(
                 f"{feature_id}: unknown scientific modality {modality!r}"
             )
+        if source_namespace not in ALLOWED_SOURCE_NAMESPACES:
+            raise FeatureRegistryContractError(
+                f"{feature_id}: unknown source_namespace {source_namespace!r}"
+            )
         if modality == "behavior" and feature.role != "behavior":
             raise FeatureRegistryContractError(
                 f"{feature_id}: behavior modality must use role='behavior'"
@@ -239,6 +322,14 @@ def validate_registered_features(
         if modality != "behavior" and feature.role != "sensor":
             raise FeatureRegistryContractError(
                 f"{feature_id}: non-behavior scientific modality must use role='sensor'"
+            )
+        if feature.role == "behavior" and source_namespace != "behavior":
+            raise FeatureRegistryContractError(
+                f"{feature_id}: Behavior features must use source_namespace='behavior'"
+            )
+        if feature.role == "sensor" and source_namespace == "behavior":
+            raise FeatureRegistryContractError(
+                f"{feature_id}: sensor features cannot use the Behavior source namespace"
             )
 
         if not feature.columns:
@@ -375,6 +466,7 @@ def registered_feature_from_mapping(raw: Mapping[str, Any]) -> RegisteredFeature
         "role",
         "modality",
         "raw_source",
+        "source_namespace",
         "required_devices",
     }
     missing = sorted(required - set(raw))
@@ -403,6 +495,7 @@ def registered_feature_from_mapping(raw: Mapping[str, Any]) -> RegisteredFeature
         modality=str(raw["modality"]),
         feature_type=str(raw.get("feature_type", "")),
         raw_source=str(raw["raw_source"]),
+        source_namespace=str(raw["source_namespace"]),
         required_devices=tuple(str(v) for v in devices),
         preprocessing_dependencies=tuple(str(v) for v in dependencies),
         standalone_eligible=_strict_bool(
