@@ -149,6 +149,26 @@ def _clean_tuple(values: Sequence[object], *, field_name: str, feature_id: str) 
     return cleaned
 
 
+def _strict_bool(value: object, *, field_name: str, feature_id: str, default: bool) -> bool:
+    """Parse registry flags without treating serialized non-empty strings as true."""
+    if value is None:
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in {0, 1}:
+        return bool(value)
+    if isinstance(value, float) and value in {0.0, 1.0}:
+        return bool(int(value))
+    text = str(value).strip().lower()
+    if text in {"true", "1", "1.0", "yes"}:
+        return True
+    if text in {"false", "0", "0.0", "no"}:
+        return False
+    raise FeatureRegistryContractError(
+        f"{feature_id}: {field_name} must be a boolean; got {value!r}"
+    )
+
+
 def validate_registered_features(features: Sequence[RegisteredFeature]) -> tuple[RegisteredFeature, ...]:
     frozen = tuple(features)
     if not frozen:
@@ -310,19 +330,20 @@ def registered_feature_from_mapping(raw: Mapping[str, Any]) -> RegisteredFeature
     ):
         if not isinstance(value, Sequence) or isinstance(value, (str, bytes)):
             raise FeatureRegistryContractError(f"feature registry {name} must be a sequence")
+    feature_id = str(raw["feature_id"])
     return RegisteredFeature(
-        feature_id=str(raw["feature_id"]),
+        feature_id=feature_id,
         scientific_feature_id=str(raw["scientific_feature_id"]),
         columns=tuple(str(v) for v in columns),
         role=str(raw["role"]),
         raw_source=str(raw["raw_source"]),
         required_devices=tuple(str(v) for v in devices),
         preprocessing_dependencies=tuple(str(v) for v in dependencies),
-        standalone_eligible=bool(raw.get("standalone_eligible", True)),
-        behavior_increment_eligible=bool(raw.get("behavior_increment_eligible", False)),
-        behavior_reference_eligible=bool(raw.get("behavior_reference_eligible", False)),
-        full_model_eligible=bool(raw.get("full_model_eligible", True)),
-        full_leave_one_out_eligible=bool(raw.get("full_leave_one_out_eligible", True)),
+        standalone_eligible=_strict_bool(raw.get("standalone_eligible"), field_name="standalone_eligible", feature_id=feature_id, default=True),
+        behavior_increment_eligible=_strict_bool(raw.get("behavior_increment_eligible"), field_name="behavior_increment_eligible", feature_id=feature_id, default=False),
+        behavior_reference_eligible=_strict_bool(raw.get("behavior_reference_eligible"), field_name="behavior_reference_eligible", feature_id=feature_id, default=False),
+        full_model_eligible=_strict_bool(raw.get("full_model_eligible"), field_name="full_model_eligible", feature_id=feature_id, default=True),
+        full_leave_one_out_eligible=_strict_bool(raw.get("full_leave_one_out_eligible"), field_name="full_leave_one_out_eligible", feature_id=feature_id, default=True),
         allowed_device_packages=tuple(str(v) for v in packages),
         description=str(raw.get("description", "")),
     )
