@@ -56,6 +56,14 @@ def _read_run(run_dir: Path) -> dict[str, object] | None:
             "macro_f1": discrimination.get("macro_f1"),
             "n_probes": discrimination.get("n_probes"),
             "n_participants": discrimination.get("n_participants"),
+            "ovr_macro_auroc": discrimination.get("ovr_macro_auroc"),
+            "per_class_log_loss": discrimination.get("per_class_log_loss"),
+            "per_class_ovr_auroc": discrimination.get("per_class_ovr_auroc"),
+            "class_support": discrimination.get("class_support"),
+            "predicted_class_distribution": discrimination.get("predicted_class_distribution"),
+            "probability_row_sum_max_abs_deviation": discrimination.get(
+                "probability_row_sum_max_abs_deviation"
+            ),
         }
     return {
         "run_id": payload.get("run_id"),
@@ -260,7 +268,52 @@ def main() -> int:
 
     lines += [
         "",
-        "## 5. 结论与判据",
+        "## 5. 补充指标（预注册 §4.2 要求的报告项，不替代主指标）",
+        "",
+        "| 分析集合 | 模型 | 合并 OVR 宏平均 AUROC | balanced acc | macro-F1 | 预测为类别 1 的比例 |",
+        "|---|---|---:|---:|---:|---:|",
+    ]
+    per_class_rows: list[dict[str, object]] = []
+    for row in route_a.itertuples():
+        auroc = row.ovr_macro_auroc
+        pred = row.predicted_class_distribution or {}
+        total = sum(int(v) for v in pred.values()) if pred else 0
+        share_class_1 = (int(pred.get("1", 0)) / total) if total else float("nan")
+        lines.append(
+            f"| `{row.analysis_set_id}` | `{row.model_id}` | "
+            f"{'–' if auroc is None else f'{auroc:.4f}'} | "
+            f"{'–' if row.balanced_accuracy is None else f'{row.balanced_accuracy:.4f}'} | "
+            f"{'–' if row.macro_f1 is None else f'{row.macro_f1:.4f}'} | "
+            f"{share_class_1:.4f} |"
+        )
+        for klass in ("1", "2", "3", "4"):
+            per_class_rows.append(
+                {
+                    "analysis_set_id": row.analysis_set_id,
+                    "model_id": row.model_id,
+                    "class": klass,
+                    "class_support": (row.class_support or {}).get(klass),
+                    "predicted_n": (pred or {}).get(klass),
+                    "per_class_log_loss": (row.per_class_log_loss or {}).get(klass),
+                    "per_class_ovr_auroc": (row.per_class_ovr_auroc or {}).get(klass),
+                }
+            )
+    pd.DataFrame(per_class_rows).to_csv(
+        ROOT / "four_class_per_class_metrics.csv", index=False, encoding="utf-8-sig"
+    )
+    lines += [
+        "",
+        f"每类明细（支持数、预测数、每类对数损失、每类 OVR AUROC）见 `four_class_per_class_metrics.csv`。",
+        "",
+        "**读法警告**：balanced accuracy 的 4 类机会水平是 0.25，合并 OVR 宏平均 AUROC 的机会水平是 0.50。",
+        "若某个模型的对数损失低于其逐折先验基线、但 balanced accuracy 与宏平均 AUROC 都在机会水平或以下，",
+        "则该模型只是**在概率上略微优于常数先验**，**不具备类别判别力**，必须按此如实陈述。",
+        "类别 3 的支持数很小，其每类损失与每类 AUROC 的抽样波动大，**不得**对类别 3 的细小差异做实质解释。",
+    ]
+
+    lines += [
+        "",
+        "## 6. 结论与判据",
         "",
         "- 超过无信息基线的判据是预注册 §4.4：参与者宏平均多类 log loss **低于**逐折类别先验基线。",
         "- 两条路线**都必须报告**，即使其中一条未超过基线；只报告较好的一条不成立。",
