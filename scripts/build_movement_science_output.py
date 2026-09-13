@@ -11,6 +11,7 @@ from attention_pipeline.rgb_formal.movement_science_figures import (
     IMAGE_LANGUAGE,
     build_movement_science_figures,
 )
+from attention_pipeline.rgb_formal.movement_science_freeze import finalize_movement_science_handoff
 from attention_pipeline.rgb_formal.movement_science_output import build_movement_science_output
 
 
@@ -18,6 +19,8 @@ DESCRIPTIVE_COLUMNS = (
     "participant_group_id",
     "session_id",
     "block_id",
+    "probe_index_in_block",
+    "probe_order_in_block",
     "body_motion_energy_median",
     "exposure_change_abs_median",
     "pose_lateral_right_per_sec_median",
@@ -34,6 +37,8 @@ def _materialize_descriptive_source(rgb55_root: Path, science_root: Path) -> Pat
     missing = sorted(required - set(keep))
     if missing:
         raise ValueError(f"Movement descriptive source missing required columns: {missing}")
+    if not {"probe_index_in_block", "probe_order_in_block"}.intersection(keep):
+        raise ValueError("Movement descriptive source lacks a probe-within-block identity column")
     destination = science_root / "Movement/tables/movement_probe_descriptive_source.csv"
     destination.parent.mkdir(parents=True, exist_ok=True)
     frame.loc[:, keep].to_csv(destination, index=False, encoding="utf-8-sig")
@@ -123,6 +128,7 @@ def main() -> int:
         json.dumps(manifest, ensure_ascii=False, indent=2, default=str) + "\n",
         encoding="utf-8",
     )
+    manifest = finalize_movement_science_handoff(science_root / "Movement")
     print(json.dumps(manifest, ensure_ascii=False, indent=2, default=str))
     return 0
 
