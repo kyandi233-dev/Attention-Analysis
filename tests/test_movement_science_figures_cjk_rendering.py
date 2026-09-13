@@ -61,6 +61,24 @@ def _coefficient_frame(rows: int = 6) -> pd.DataFrame:
     )
 
 
+def _font_path(family: str) -> str:
+    """Resolve a matplotlib family name to the font file backing it."""
+    from matplotlib import font_manager
+
+    for item in font_manager.fontManager.ttflist:
+        if item.name == family:
+            return item.fname
+    return ""
+
+
+def _first_installed(order: tuple[str, ...], fallback: str) -> str:
+    """Mirror the production rule: first installed face of an ordered list."""
+    from matplotlib import font_manager
+
+    installed = {item.name for item in font_manager.fontManager.ttflist}
+    return next((name for name in order if name in installed), fallback)
+
+
 def test_contains_cjk_detects_chinese_and_mixed_strings() -> None:
     from attention_pipeline.rgb_formal.movement_science_figures import contains_cjk
 
@@ -131,7 +149,6 @@ def test_movement_figure_text_objects_receive_explicit_font_chain(tmp_path: Path
     import matplotlib.pyplot as plt
 
     from attention_pipeline.rgb_formal import movement_science_figures as figures
-    from attention_pipeline.rgb_formal.movement_science_figures import contains_cjk
 
     fig = plt.figure()
     ax = fig.add_subplot(111)
@@ -152,8 +169,13 @@ def test_movement_figure_text_objects_receive_explicit_font_chain(tmp_path: Path
 
     assert chinese, "Chinese label received no explicit font family"
     assert latin, "Latin label received no explicit font family"
-    # The CJK-first chain must lead with a face whose name identifies it as CJK,
-    # so the assertion must not hard-code one platform's family name.
-    assert contains_cjk(chinese[0]), chinese
-    assert latin[0] == "Times New Roman", latin
+    # The CJK-first chain must lead with a face whose FILE actually covers CJK.
+    # Checking the family name string would be wrong (family names are latin text)
+    # and would also tie the test to one platform's font naming.
+    assert figures._font_covers_cjk(_font_path(chinese[0])), chinese
+    # The latin-first chain keeps the highest-ranked installed latin face on top;
+    # the runner has no Times New Roman, so the expectation must be resolved from
+    # the real font list rather than hard-coded.
+    assert latin[0] == _first_installed(figures.LATIN_FONT_ORDER, "DejaVu Serif"), latin
     assert mixed[0] == chinese[0], (mixed, chinese)
+    assert not figures._font_covers_cjk(_font_path(latin[0])), latin
