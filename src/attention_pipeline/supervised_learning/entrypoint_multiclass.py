@@ -712,9 +712,43 @@ def run_multiclass_from_config(
         metadata["declared_model_predictor_union"] = list(predictor_union or ())
         metadata["analysis_set_feature_scope_verified"] = True
         paired_specs = build_paired_comparison_specs(comparison_plan, selected)
-        metadata["paired_comparisons"] = _enrich_paired_specs_with_time_legality(
-            paired_specs, feature_time_legality
-        )
+        enriched = _enrich_paired_specs_with_time_legality(paired_specs, feature_time_legality)
+        # 冻结归档器要求被提交的成对比较，其 baseline 与 added 模型**都必须出现在本次运行的
+        # 折外归档中**。过滤基准必须是**本次运行实际拟合的模型**（`result.metadata["model_ids"]`），
+        # 而**不能**用 `selected = tuple(families)`：route B 下 `families` 仍是分析集合声明的
+        # route A 模型（见上文 declared_models 分支），而 route B 实际只拟合
+        # `forward_selected_4class`，用它过滤等于什么都没滤掉——实测 route B 因此在 860 秒
+        # 计算全部完成后才在归档器处失败。引用缺席模型的比较在定义上不可估计，按实际模型过滤，
+        # 并把被跳过的比较与原因**显式登记**，绝不静默丢弃。
+        run_model_ids = tuple(str(v) for v in (result.metadata.get("model_ids") or ()))
+        if not run_model_ids:
+            raise SupervisedLearningContractError(
+                "four-class run metadata lacks model_ids; cannot decide which paired "
+                "comparisons are emittable"
+            )
+        emitted_pairs: list[dict[str, object]] = []
+        skipped_pairs: list[dict[str, object]] = []
+        for spec in enriched:
+            baseline_id = str(spec.get("baseline_model_id", ""))
+            added_id = str(spec.get("added_model_id", ""))
+            if baseline_id in run_model_ids and added_id in run_model_ids:
+                emitted_pairs.append(spec)
+            else:
+                skipped_pairs.append(
+                    {
+                        "baseline_model_id": baseline_id,
+                        "added_model_id": added_id,
+                        "reason": "model_id_absent_from_this_run_oof_archive",
+                        "absent_model_ids": [
+                            model_id
+                            for model_id in (baseline_id, added_id)
+                            if model_id not in run_model_ids
+                        ],
+                        "run_model_ids": list(run_model_ids),
+                    }
+                )
+        metadata["paired_comparisons"] = emitted_pairs
+        metadata["paired_comparisons_not_emitted"] = skipped_pairs
         metadata["paired_comparison_reporting_contract"] = paired_comparison_reporting_contract()
     metadata["binary_reporting_adapter"] = {
         "applies": True,
