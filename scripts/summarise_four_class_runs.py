@@ -199,7 +199,68 @@ def main() -> int:
 
     lines += [
         "",
-        "## 4. 结论与判据",
+        "## 4. 一致性恒等式检查",
+        "",
+        "以下检查用**同一分析集合内、定义上等价的模型**互相印证，用于发现「跑错集合/模型接错列」这类",
+        "静默错误。它们**不是**增量比较，也不跨分析集合做增量排序。",
+        "",
+    ]
+    consistency: list[dict[str, object]] = []
+
+    def compare(label: str, left: tuple[str, str], right: tuple[str, str]) -> None:
+        def value(key: tuple[str, str]) -> float | None:
+            subset = table[
+                (table["analysis_set_id"] == key[0]) & (table["model_id"] == key[1])
+            ]
+            if subset.empty:
+                return None
+            return float(subset.iloc[0]["participant_macro_multiclass_log_loss"])
+
+        a, b = value(left), value(right)
+        if a is None or b is None:
+            consistency.append({"check": label, "status": "NOT_AVAILABLE",
+                                "left": list(left), "right": list(right)})
+            return
+        identical = abs(a - b) <= 1e-12
+        consistency.append({"check": label, "status": "IN_ORDER" if identical else "MISMATCH",
+                            "left": a, "right": b, "abs_diff": abs(a - b)})
+
+    if not route_a.empty:
+        # M0 = 仅行为；AS.behavior_reference 的 behavior_reference 也是仅行为。
+        compare(
+            "device M0 == behavior_reference",
+            ("AS.device::M0", "M0"),
+            ("AS.behavior_reference", "behavior_reference"),
+        )
+        # 同一集合内：动作只有 1 个注册特征，故模态条件增量 == 单特征增量。
+        compare(
+            "AS.behavior_plus_movement: behavior_plus_modality::movement == behavior_plus::<movement feature>",
+            ("AS.behavior_plus_movement", "behavior_plus_modality::movement"),
+            ("AS.behavior_plus_movement", "behavior_plus::movement.body_motion_energy.median.pre30s.v1"),
+        )
+        # M5 = 全部设备；与 full 应等价（与二分类线同一个恒等式）。
+        compare(
+            "device M5 == full",
+            ("AS.device::M5", "M5"),
+            ("AS.full", "full"),
+        )
+
+    for entry in consistency:
+        if entry["status"] == "NOT_AVAILABLE":
+            lines.append(f"- {entry['check']}：**尚未产出**（{entry['left']} / {entry['right']}）")
+        elif entry["status"] == "IN_ORDER":
+            lines.append(f"- {entry['check']}：**一致**（{entry['left']:.6f}）")
+        else:
+            lines.append(
+                f"- {entry['check']}：**不一致**！左 {entry['left']:.6f} vs 右 {entry['right']:.6f}"
+                f"（差 {entry['abs_diff']:.3e}）"
+            )
+    if not consistency:
+        lines.append("- （无可用检查）")
+
+    lines += [
+        "",
+        "## 5. 结论与判据",
         "",
         "- 超过无信息基线的判据是预注册 §4.4：参与者宏平均多类 log loss **低于**逐折类别先验基线。",
         "- 两条路线**都必须报告**，即使其中一条未超过基线；只报告较好的一条不成立。",
@@ -221,6 +282,7 @@ def main() -> int:
             "report_md": str(ROOT / "FOUR_CLASS_REPORT.md"),
             "route_A_exceeds_baseline": int(route_a["exceeds_no_information_baseline"].sum()),
             "route_A_total": int(len(route_a)),
+            "consistency": consistency,
         },
         ensure_ascii=False,
         indent=2,
