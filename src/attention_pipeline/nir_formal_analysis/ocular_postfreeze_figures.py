@@ -93,7 +93,16 @@ def _forest(
     }
 
 
-def _coverage_figure(coverage: pd.DataFrame, root: Path, purpose: str, figure_id: str):
+def _coverage_figure(
+    coverage: pd.DataFrame,
+    root: Path,
+    purpose: str,
+    figure_id: str,
+    *,
+    label_col: str = "label",
+    source_table: str = "ocular_feature_analysis_coverage.csv",
+    caption_zh: str = "五个第一轮冻结眼部特征的探针级有效覆盖率。缺失保持为缺失，不补零、不插补。",
+):
     if coverage.empty:
         return None
     d = coverage.copy()
@@ -101,11 +110,8 @@ def _coverage_figure(coverage: pd.DataFrame, root: Path, purpose: str, figure_id
     d = d.dropna(subset=["finite_fraction"])
     if d.empty:
         return None
-    labels = [
-        FROZEN_OCULAR_FEATURES.get(str(fid), {}).get("label", str(fid))
-        for fid in d["feature_id"]
-    ]
-    fig, ax = plt.subplots(figsize=(7.2, 4.8))
+    labels = d[label_col].astype(str).tolist() if label_col in d else d.index.astype(str).tolist()
+    fig, ax = plt.subplots(figsize=(7.6, max(4.8, 0.28 * len(d) + 1.8)))
     y = np.arange(len(d))
     ax.barh(y, d["finite_fraction"].to_numpy(float))
     ax.set_yticks(y, labels)
@@ -114,17 +120,56 @@ def _coverage_figure(coverage: pd.DataFrame, root: Path, purpose: str, figure_id
     ax.set_ylabel("")
     ax.invert_yaxis()
     png, svg = _save(fig, root, purpose, figure_id)
+    participant_n = pd.to_numeric(d.get("participant_group_n"), errors="coerce").max()
+    session_n = pd.to_numeric(d.get("session_n"), errors="coerce").max()
+    probe_total = pd.to_numeric(d.get("probe_total_n"), errors="coerce").max()
     return {
         "figure_id": figure_id, "purpose": purpose,
-        "scientific_question": "What is the valid-probe coverage of each frozen first-round Ocular feature?",
-        "source_table": "ocular_feature_analysis_coverage.csv", "analysis_unit": "feature",
-        "participant_group_n": int(pd.to_numeric(d["participant_group_n"], errors="coerce").max()),
-        "session_n": int(pd.to_numeric(d["session_n"], errors="coerce").max()),
-        "probe_n": int(pd.to_numeric(d["probe_total_n"], errors="coerce").max()),
-        "inference_status": "descriptive qualification only",
-        "caption_zh": "五个第一轮冻结眼部特征的探针级有效覆盖率。缺失保持为缺失，不补零、不插补。",
+        "scientific_question": "What is the valid-probe coverage of the audited Ocular features?",
+        "source_table": source_table, "analysis_unit": "feature",
+        "participant_group_n": int(participant_n) if pd.notna(participant_n) else pd.NA,
+        "session_n": int(session_n) if pd.notna(session_n) else pd.NA,
+        "probe_n": int(probe_total) if pd.notna(probe_total) else pd.NA,
+        "inference_status": "descriptive qualification/sensitivity only",
+        "caption_zh": caption_zh,
         "png_path": png, "svg_path": svg, "code_contract": SCHEMA_VERSION,
     }
+
+
+def _alternative_role(column: str) -> str:
+    """Classify non-main Ocular columns without using Q1/Q2/Behavior results."""
+    if "__geometry__" in column:
+        return "cross_representation_sensitivity"
+    if "__level_median__" in column or "__variability_sd__" in column:
+        return "metric_sensitivity"
+    if "__rseg_hard__nir_qc__" in column or "__geometry__nir_qc__" in column:
+        return "nir_only_device_alternative"
+    return "qualification_or_other_alternative"
+
+
+def _sensitivity_role_audit(table: pd.DataFrame) -> pd.DataFrame:
+    main_columns = {spec["column"] for spec in FROZEN_OCULAR_FEATURES.values()}
+    candidates = [
+        c for c in table.columns
+        if c.startswith("ocular__") and c not in main_columns
+    ]
+    rows: list[dict[str, Any]] = []
+    for col in candidates:
+        x = pd.to_numeric(table[col], errors="coerce")
+        finite = np.isfinite(x)
+        rows.append({
+            "predictor_column": col,
+            "analysis_role": _alternative_role(col),
+            "main_model_eligible": False,
+            "significance_can_promote_to_main": False,
+            "probe_total_n": int(len(table)),
+            "finite_probe_n": int(finite.sum()),
+            "finite_fraction": float(finite.mean()) if len(table) else np.nan,
+            "participant_group_n": int(table.loc[finite, "participant_group_id"].nunique()) if len(table) else 0,
+            "session_n": int(table.loc[finite, "session_id"].nunique()) if len(table) else 0,
+            "label": col.replace("ocular__", "").replace("__", " | "),
+        })
+    return pd.DataFrame(rows)
 
 
 def build_ocular_postfreeze_figures(
@@ -137,7 +182,6 @@ def build_ocular_postfreeze_figures(
     behavior_links: pd.DataFrame,
     frozen_probe_table: pd.DataFrame,
 ) -> dict[str, Any]:
-    del frozen_probe_table  # reserved for future QC panels; no data-driven feature selection.
     manifest_rows: list[dict[str, Any]] = []
     audit_rows: list[dict[str, Any]] = []
 
@@ -152,8 +196,23 @@ def build_ocular_postfreeze_figures(
             "reason": "" if row is not None else "no_estimable_source_rows",
         })
 
-    row = _coverage_figure(coverage, ocular_root, "qualification", "ocular_frozen_feature_coverage")
+    row = _coverage_figure(
+        coverage, ocular_root, "qualification", "ocular_frozen_feature_coverage",
+        caption_zh="五个第一轮冻结眼部特征的探针级有效覆盖率。缺失保持为缺失，不补零、不插补。",
+    )
     register("ocular_frozen_feature_coverage", "qualification", coverage, row)
+
+    sensitivity = _sensitivity_role_audit(frozen_probe_table)
+    sensitivity_path = ocular_root / "tables/ocular_sensitivity_role_audit.csv"
+    sensitivity.to_csv(sensitivity_path, index=False, encoding="utf-8-sig")
+    row = _coverage_figure(
+        sensitivity, ocular_root, "sensitivity", "ocular_alternative_feature_coverage",
+        source_table="ocular_sensitivity_role_audit.csv",
+        caption_zh="替代眼部表示的覆盖率与预先规定角色。它们仅用于敏感性、测量资格或设备替代审计，不因显著性进入第一轮主模型。",
+    )
+    if row is not None:
+        row["scientific_question"] = "What alternative Ocular representations remain available for predeclared sensitivity/qualification roles?"
+    register("ocular_alternative_feature_coverage", "sensitivity", sensitivity, row)
 
     d = task[
         task.get("term", pd.Series(dtype=str)).astype(str).isin(
@@ -215,10 +274,12 @@ def build_ocular_postfreeze_figures(
     )
     register("ocular_behavior_link_coefficients", "main", d, row)
 
-    row = _coverage_figure(coverage, ocular_root, "qc", "ocular_missingness_qc")
+    row = _coverage_figure(
+        coverage, ocular_root, "qc", "ocular_missingness_qc",
+        caption_zh="冻结眼部特征的有效覆盖情况，用于审计结构性缺失与特征级可估性差异；不将缺失解释为零值。",
+    )
     if row is not None:
         row["scientific_question"] = "Where does model availability differ across frozen Ocular features because of retained missingness?"
-        row["caption_zh"] = "冻结眼部特征的有效覆盖情况，用于审计结构性缺失与特征级可估性差异；不将缺失解释为零值。"
     register("ocular_missingness_qc", "qc", coverage, row)
 
     figure_manifest = pd.DataFrame(manifest_rows, columns=FIGURE_MANIFEST_COLUMNS)
@@ -230,4 +291,6 @@ def build_ocular_postfreeze_figures(
         "status": "complete" if all_generated else "complete_with_unrendered_figures",
         "figure_n": int(len(figure_manifest)), "audit_n": int(len(figure_audit)),
         "unrendered_n": int((~figure_audit["generated_png"]).sum()),
+        "sensitivity_role_audit": str(sensitivity_path),
+        "sensitivity_feature_n": int(len(sensitivity)),
     }
