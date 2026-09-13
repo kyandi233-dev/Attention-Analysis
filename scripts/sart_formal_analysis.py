@@ -393,7 +393,11 @@ def main() -> int:
             primary_probe = attach_identity_metadata(primary_probe, cohort) if not primary_probe.empty else primary_probe
             probe_sensitivity = attach_identity_metadata(probe_sensitivity, cohort) if not probe_sensitivity.empty else probe_sensitivity
 
-            rt_cv_min_n = int(behavior_cfg.get("rt_cv_min_n", 20))
+            rt_cv_min_n = int(behavior_cfg.get("rt_cv_min_n", 2))
+            if rt_cv_min_n != 2:
+                raise ValueError(
+                    "formal Behavior rt_cv_min_n is frozen at the mathematical sample-SD minimum 2"
+                )
             rt_slope_min_n = int(behavior_cfg.get("rt_slope_min_n", 5))
             tables["session"] = _annotate_scale(tables["session"], unit="session", rt_cv_min_n=rt_cv_min_n, rt_slope_min_n=rt_slope_min_n)
             tables["block"] = _annotate_scale(tables["block"], unit="block", rt_cv_min_n=rt_cv_min_n, rt_slope_min_n=rt_slope_min_n)
@@ -693,7 +697,7 @@ def main() -> int:
             "candidate_selection_contract": "prespecified roles + coverage/distribution/within-between/redundancy; no p-value screening",
             "sensitivity_contract": "verified questionnaire-registry visit_order only; missing order is never inferred from session_id; first-ever and first-same-stage visits remain distinct",
             "questionnaire_contract": "session tables are left-joined; missing questionnaire never deletes a governed behavior session; questionnaire variables are not automatically selected into models",
-            "figure_contract": "English in-image text; Times New Roman; no internal titles; frameless legends; external Chinese captions; machine-readable metric-by-scale coverage audit",
+            "figure_contract": "question-driven allowlist; English in-image text; Times New Roman; no internal titles; frameless legends; external Chinese captions; no metric-by-scale Cartesian plot pack",
             "rt_cv_min_n": rt_cv_min_n,
             "rt_slope_min_n": rt_slope_min_n,
             "selected_optional_steps": sorted(selected_optional),

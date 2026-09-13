@@ -19,19 +19,22 @@ def _registry() -> list[RegisteredFeature]:
             scientific_feature_id="rt_variability",
             columns=("go_correct_rt_cv",),
             role="behavior",
+            modality="behavior",
             raw_source="SART behavior",
-            required_devices=("behavior",),
+            source_namespace="behavior",
+            required_devices=(),
             behavior_reference_eligible=True,
             behavior_increment_eligible=False,
-            allowed_device_packages=(),
         ),
         RegisteredFeature(
             feature_id="omission",
             scientific_feature_id="go_omission",
             columns=("raw_go_omission_rate",),
             role="behavior",
+            modality="behavior",
             raw_source="SART behavior",
-            required_devices=("behavior",),
+            source_namespace="behavior",
+            required_devices=(),
             behavior_reference_eligible=True,
             behavior_increment_eligible=False,
         ),
@@ -40,11 +43,15 @@ def _registry() -> list[RegisteredFeature]:
             scientific_feature_id="pupil_variability",
             columns=("pupil_sd_nir_only",),
             role="sensor",
+            modality="ocular",
+            feature_type="pupil",
             raw_source="NIR pupil",
+            source_namespace="nir",
             required_devices=("nir",),
             preprocessing_dependencies=("NIR-only blink/artifact QC",),
             standalone_eligible=False,
             behavior_increment_eligible=False,
+            modality_model_eligible=False,
             full_model_eligible=False,
             full_leave_one_out_eligible=False,
             allowed_device_packages=("M1", "M4"),
@@ -54,11 +61,15 @@ def _registry() -> list[RegisteredFeature]:
             scientific_feature_id="pupil_variability",
             columns=("pupil_sd_rgb_assisted",),
             role="sensor",
+            modality="ocular",
+            feature_type="pupil",
             raw_source="NIR pupil",
+            source_namespace="nir",
             required_devices=("nir", "rgb"),
             preprocessing_dependencies=("RGB blink mask",),
             standalone_eligible=True,
             behavior_increment_eligible=True,
+            modality_model_eligible=True,
             full_model_eligible=True,
             full_leave_one_out_eligible=True,
             allowed_device_packages=("M5", "M7"),
@@ -68,9 +79,27 @@ def _registry() -> list[RegisteredFeature]:
             scientific_feature_id="blink_rate",
             columns=("blink_event_rate_per_min",),
             role="sensor",
+            modality="ocular",
+            feature_type="blink",
             raw_source="RGB eye landmarks",
+            source_namespace="rgb",
             required_devices=("rgb",),
             behavior_increment_eligible=True,
+            modality_model_eligible=True,
+            allowed_device_packages=("M3", "M5", "M6", "M7"),
+        ),
+        RegisteredFeature(
+            feature_id="body_motion",
+            scientific_feature_id="body_motion_energy",
+            columns=("body_motion_energy_median",),
+            role="sensor",
+            modality="movement",
+            feature_type="body_motion",
+            raw_source="RGB body landmarks",
+            source_namespace="rgb",
+            required_devices=("rgb",),
+            behavior_increment_eligible=True,
+            modality_model_eligible=True,
             allowed_device_packages=("M3", "M5", "M6", "M7"),
         ),
         RegisteredFeature(
@@ -78,68 +107,141 @@ def _registry() -> list[RegisteredFeature]:
             scientific_feature_id="breathing_rate",
             columns=("mmwave_breath_rate",),
             role="sensor",
+            modality="cardiopulmonary",
+            feature_type="breathing_rate",
             raw_source="mmWave",
+            source_namespace="mmwave",
             required_devices=("mmwave",),
             behavior_increment_eligible=True,
+            modality_model_eligible=True,
             allowed_device_packages=("M2", "M4", "M6", "M7"),
         ),
     ]
 
 
-def test_plan_generates_standalone_behavior_increment_full_minus_and_m0_m7() -> None:
+def test_plan_separates_feature_modality_and_device_models() -> None:
     plan = build_feature_comparison_plan(_registry())
     models = plan.model_map()
 
     assert "behavior_reference" in models
-    assert "standalone::rt_variability" in models
-    assert "standalone::omission" in models
     assert "standalone::pupil_variability_rgb_assisted" in models
     assert "behavior_plus::pupil_variability_rgb_assisted" in models
-    assert "behavior_plus::blink_rate" in models
-    assert "behavior_plus::breathing_rate" in models
+    assert "modality::ocular" in models
+    assert "modality::movement" in models
+    assert "modality::cardiopulmonary" in models
+    assert "behavior_plus_modality::ocular" in models
     assert "full" in models
-    assert "full_minus::rt_variability" in models
-    assert "full_minus::pupil_variability_rgb_assisted" in models
+    assert "full_minus_modality::ocular" in models
     assert set(plan.device_package_model_ids) == set(DEVICE_PACKAGES)
     assert plan.unavailable_device_packages == {}
 
-    assert set(models["behavior_reference"].feature_ids) == {"rt_variability", "omission"}
-    assert models["standalone::rt_variability"].feature_ids == ("rt_variability",)
+    assert set(plan.modality_model_ids) == {
+        "behavior",
+        "ocular",
+        "movement",
+        "cardiopulmonary",
+    }
+    assert ("behavior_reference", "behavior_plus_modality::ocular", "ocular") in plan.modality_increment_pairs
 
-    assert set(models["behavior_plus::blink_rate"].feature_ids) == {
-        "rt_variability",
-        "omission",
+
+def test_cross_device_ocular_model_keeps_science_modality_distinct_from_devices() -> None:
+    plan = build_feature_comparison_plan(_registry())
+    models = plan.model_map()
+    ocular = models["modality::ocular"]
+
+    assert set(ocular.feature_ids) == {
+        "pupil_variability_rgb_assisted",
         "blink_rate",
     }
+    assert ocular.modalities == ("ocular",)
+    assert set(ocular.required_devices) == {"nir", "rgb"}
+    assert not ocular.includes_behavior_reference
 
-    assert "pupil_variability_rgb_assisted" in models["full"].feature_ids
-    assert "pupil_variability_rgb_assisted" not in models["full_minus::pupil_variability_rgb_assisted"].feature_ids
+    families = plan.to_runner_feature_schemes()
+    scheme = families["modality::ocular"][0]
+    assert scheme.modalities == ("ocular",)
+    assert set(scheme.required_devices) == {"nir", "rgb"}
+    assert scheme.modality_blocks == ()
 
 
-def test_cross_device_pupil_provenance_controls_m0_m7_membership() -> None:
+def test_registry_generates_task_b_spec_without_inferring_source_from_devices() -> None:
+    plan = build_feature_comparison_plan(_registry())
+    spec = plan.task_b_comparison_spec(
+        ["behavior_reference", "behavior_plus_modality::ocular"],
+        required_outcomes=["q1_nominal_4class"],
+    )
+
+    assert spec["models"] == ["behavior_reference", "behavior_plus_modality::ocular"]
+    assert spec["required_features"] == {
+        "behavior": ["go_correct_rt_cv", "raw_go_omission_rate"],
+        "ocular": ["pupil_sd_rgb_assisted", "blink_event_rate_per_min"],
+    }
+    records = {row["predictor_column"]: row for row in spec["required_feature_records"]}
+    assert records["pupil_sd_rgb_assisted"] == {
+        "feature_id": "pupil_variability_rgb_assisted",
+        "scientific_modality": "ocular",
+        "source_namespace": "nir",
+        "predictor_column": "pupil_sd_rgb_assisted",
+    }
+    assert records["blink_event_rate_per_min"]["scientific_modality"] == "ocular"
+    assert records["blink_event_rate_per_min"]["source_namespace"] == "rgb"
+    assert spec["required_outcomes"] == ["q1_nominal_4class"]
+
+
+def test_same_rgb_source_namespace_can_supply_distinct_scientific_modalities() -> None:
+    plan = build_feature_comparison_plan(_registry())
+    spec = plan.task_b_comparison_spec(
+        ["modality::ocular", "modality::movement"],
+        required_outcomes=["q1_nominal_4class"],
+    )
+    records = {row["feature_id"]: row for row in spec["required_feature_records"]}
+
+    assert records["blink_rate"]["source_namespace"] == "rgb"
+    assert records["body_motion"]["source_namespace"] == "rgb"
+    assert records["blink_rate"]["scientific_modality"] == "ocular"
+    assert records["body_motion"]["scientific_modality"] == "movement"
+
+
+def test_device_packages_are_hardware_only_but_explicitly_include_behavior_reference() -> None:
     plan = build_feature_comparison_plan(_registry())
     models = plan.model_map()
 
+    assert DEVICE_PACKAGES["M0"] == frozenset()
+    assert models["M0"].required_devices == ()
+    assert models["M0"].modalities == ("behavior",)
+    assert models["M0"].includes_behavior_reference
+    assert set(models["M0"].feature_ids) == {"rt_variability", "omission"}
+
     assert "pupil_variability_nir_only" in models["M1"].feature_ids
     assert "pupil_variability_rgb_assisted" not in models["M1"].feature_ids
-    assert "pupil_variability_nir_only" in models["M4"].feature_ids
+    assert models["M1"].required_devices == ("nir",)
 
     assert "pupil_variability_rgb_assisted" in models["M5"].feature_ids
-    assert "pupil_variability_nir_only" not in models["M5"].feature_ids
-    assert "pupil_variability_rgb_assisted" in models["M7"].feature_ids
-
-    assert set(models["standalone::pupil_variability_rgb_assisted"].required_devices) == {"nir", "rgb"}
-    assert set(models["M5"].required_devices) == {"behavior", "nir", "rgb"}
+    assert set(models["M5"].required_devices) == {"nir", "rgb"}
+    assert "behavior" not in models["M5"].required_devices
+    assert models["M5"].includes_behavior_reference
 
 
-def test_plan_converts_to_existing_runner_feature_scheme_interface() -> None:
+def test_rgb_device_package_can_contain_ocular_and_movement_without_conflating_them() -> None:
     plan = build_feature_comparison_plan(_registry())
-    families = plan.to_runner_feature_schemes()
+    rgb = plan.model_map()["M3"]
 
-    assert set(families) == set(plan.model_map())
-    assert len(families["behavior_reference"]) == 1
-    assert families["behavior_reference"][0].columns == ("go_correct_rt_cv", "raw_go_omission_rate")
-    assert set(families["M7"][0].modality_blocks) == {"behavior", "mmwave", "nir", "rgb"}
+    assert set(rgb.required_devices) == {"rgb"}
+    assert set(rgb.modalities) == {"behavior", "ocular", "movement"}
+    assert "blink_rate" in rgb.feature_ids
+    assert "body_motion" in rgb.feature_ids
+    assert "pupil_variability_rgb_assisted" not in rgb.feature_ids
+
+
+def test_leave_one_modality_out_removes_predictors_not_other_features_production_dependencies() -> None:
+    plan = build_feature_comparison_plan(_registry())
+    models = plan.model_map()
+    reduced = models["full_minus_modality::movement"]
+
+    assert "body_motion" not in reduced.feature_ids
+    assert "pupil_variability_rgb_assisted" in reduced.feature_ids
+    assert "rgb" in reduced.required_devices
+    assert "ocular" in reduced.modalities
 
 
 def test_entrypoint_prefers_nonempty_frozen_registry_over_manual_feature_families() -> None:
@@ -154,7 +256,8 @@ def test_entrypoint_prefers_nonempty_frozen_registry_over_manual_feature_familie
                         {
                             "feature_set_id": "manual",
                             "columns": ["go_correct_rt_cv"],
-                            "modality_blocks": ["behavior"],
+                            "modalities": ["behavior"],
+                            "required_devices": [],
                         }
                     ]
                 }
@@ -169,19 +272,37 @@ def test_entrypoint_prefers_nonempty_frozen_registry_over_manual_feature_familie
     assert set(plan.device_package_model_ids) == set(DEVICE_PACKAGES)
 
 
+def test_registry_rejects_behavior_as_device() -> None:
+    features = _registry()
+    behavior = features[0]
+    features[0] = RegisteredFeature(
+        **{**behavior.__dict__, "required_devices": ("behavior",)}
+    )
+    with pytest.raises(FeatureRegistryContractError, match="unknown required_devices"):
+        validate_registered_features(features)
+
+
+def test_registry_rejects_invalid_source_namespace() -> None:
+    features = _registry()
+    blink = features[4]
+    features[4] = RegisteredFeature(
+        **{**blink.__dict__, "source_namespace": "ocular"}
+    )
+    with pytest.raises(FeatureRegistryContractError, match="unknown source_namespace"):
+        validate_registered_features(features)
+
+
 def test_registry_rejects_impossible_cross_device_package_claim() -> None:
     features = _registry()
+    pupil = features[3]
     features[3] = RegisteredFeature(
-        **{
-            **features[3].__dict__,
-            "allowed_device_packages": ("M1",),
-        }
+        **{**pupil.__dict__, "allowed_device_packages": ("M1",)}
     )
     with pytest.raises(FeatureRegistryContractError, match="lacks required devices"):
         validate_registered_features(features)
 
 
-def test_plan_marks_packages_unavailable_when_a_sensor_has_no_frozen_feature() -> None:
+def test_plan_marks_sensor_packages_unavailable_when_a_device_has_no_frozen_feature() -> None:
     features = [feature for feature in _registry() if feature.feature_id != "breathing_rate"]
     plan = build_feature_comparison_plan(features)
 
@@ -190,55 +311,27 @@ def test_plan_marks_packages_unavailable_when_a_sensor_has_no_frozen_feature() -
         assert package_id not in plan.device_package_model_ids
         assert "mmwave" in plan.unavailable_device_packages[package_id]
 
-    assert "behavior_reference" in plan.model_map()
-    assert "behavior_plus::blink_rate" in plan.model_map()
-    assert "behavior_plus::pupil_variability_rgb_assisted" in plan.model_map()
+    assert "cardiopulmonary" not in plan.modality_model_ids
+    assert "cardiopulmonary" in plan.unavailable_modalities
 
 
-def test_nonreference_behavior_feature_does_not_silently_change_m0_m7() -> None:
+def test_modality_model_eligibility_is_not_automatic_from_membership() -> None:
     features = _registry()
-    features.append(
-        RegisteredFeature(
-            feature_id="criterion_c_extra",
-            scientific_feature_id="criterion_c_extra",
-            columns=("criterion_c_extra",),
-            role="behavior",
-            raw_source="SART behavior",
-            required_devices=("behavior",),
-            behavior_reference_eligible=False,
-            behavior_increment_eligible=False,
-            standalone_eligible=True,
-            full_model_eligible=True,
-            full_leave_one_out_eligible=True,
-            allowed_device_packages=(),
-        )
-    )
+    nir_only = features[2]
+    assert nir_only.modality == "ocular"
+    assert not nir_only.modality_model_eligible
+
     plan = build_feature_comparison_plan(features)
-    models = plan.model_map()
-
-    assert "standalone::criterion_c_extra" in models
-    assert "criterion_c_extra" in models["full"].feature_ids
-    assert "criterion_c_extra" not in models["behavior_reference"].feature_ids
-    assert "criterion_c_extra" not in models["M0"].feature_ids
-    assert "criterion_c_extra" not in models["M7"].feature_ids
-    assert set(models["M0"].feature_ids) == set(models["behavior_reference"].feature_ids)
+    assert "pupil_variability_nir_only" not in plan.model_map()["modality::ocular"].feature_ids
 
 
-def test_registry_rejects_nonreference_behavior_feature_claiming_device_packages() -> None:
+def test_registry_rejects_two_modality_model_representations_of_same_scientific_feature() -> None:
     features = _registry()
-    features.append(
-        RegisteredFeature(
-            feature_id="behavior_extra",
-            scientific_feature_id="behavior_extra",
-            columns=("behavior_extra",),
-            role="behavior",
-            raw_source="SART behavior",
-            required_devices=("behavior",),
-            behavior_reference_eligible=False,
-            allowed_device_packages=("M0",),
-        )
+    nir_only = features[2]
+    features[2] = RegisteredFeature(
+        **{**nir_only.__dict__, "modality_model_eligible": True}
     )
-    with pytest.raises(FeatureRegistryContractError, match="non-reference Behavior feature"):
+    with pytest.raises(FeatureRegistryContractError, match="multiple ocular modality-model representations"):
         validate_registered_features(features)
 
 
