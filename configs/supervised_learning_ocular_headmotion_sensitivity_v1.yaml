@@ -1,0 +1,140 @@
+pipeline:
+  name: focuswave-supervised-learning-v1-ocular-headmotion-sensitivity
+  version: 1.2.0
+  evidence_repo: kyandi233-dev/FocusWave-Formal-Analysis
+  evidence_branch: codex/code-fix-ledger
+  evidence_method_entry: 分析设计/1.16.26-瞳孔头动协变量敏感性预注册_20260913.md
+  evidence_interface_entry: 分析设计/1.16.11-监督学习特征文件接口与运行前闸门_20260913.md
+  inherited_training_evaluation_entry: 分析设计/1.16.1-监督学习心理意义、训练权重与多层评价修订_20260911.md
+  implementation_interface_document: docs/supervised_learning/1.16.10-feature-and-file-interface.md
+  implementation_plan: https://github.com/kyandi233-dev/Attention-Analysis/issues/65
+  random_seed: 20260910
+  sensitivity_note: 1.16.26 Ocular head-motion covariate sensitivity. This config deliberately omits feature_registry
+    and uses the compatibility feature_schemes path, which does NOT run the registry time-legality gate;
+    the two pose covariates' pre-probe legality rests on the frozen producer handoff evidence strings
+    quoted in the preregistration §3. The head-motion arm is a nuisance-adjusted sensitivity arm, never
+    a scientific modality model.
+paths:
+  input_table:
+    path_key: supervised_learning_input_probe_table
+  output_root:
+    path_key: supervised_learning_output_root
+task:
+  name: q1_equals_1_vs_2_3_4
+  analysis_unit: probe_preceding_window
+  primary_window_seconds: 30
+  source_column: q1_nominal_4class
+  positive_values:
+  - 1
+  negative_values:
+  - 2
+  - 3
+  - 4
+  positive_label: 1
+  negative_label: 0
+  positive_probability_name: p_q1_equals_1
+validation:
+  outer:
+    method: leave_one_participant_out
+    group_column: participant_group_id
+    participant_disjoint: true
+  inner:
+    method: grouped_k_fold
+    n_splits: 5
+    group_column: participant_group_id
+    refit_preprocessing_per_split: true
+  zero_individual_calibration: true
+  forbid_test_participant_sequence_statistics: true
+  forbid_test_participant_future_information: true
+  require_analysis_set_id: true
+preprocessing:
+  participant_equal_weighted_median_imputation_fit_on_training_only: true
+  participant_equal_standardization_fit_on_training_only: true
+  data_dependent_column_handling_fit_on_training_only: true
+  participant_equal_training_weights_normalized_to_mean_one: true
+  unified_global_coverage_cutoff: null
+  participant_specific_within_between_mainline: false
+feature_schemes:
+  model_families:
+    ocular_reference:
+      candidates:
+      - feature_set_id: ocular_reference
+        columns:
+        - ocular__rseg_hard__rgb_nir_qc__level_mean__2s
+        - ocular__rseg_hard__rgb_nir_qc__variability_mad__2s
+        - ocular__rseg_hard__rgb_nir_qc__linear_slope_per_sec__2s
+        - ocular__rseg_hard__rgb_nir_qc__quadratic_curvature_per_sec2__2s
+        - ocular__blink_event_rate_per_min__pre30s
+        description: '1.16.26 sensitivity baseline: the five registered Ocular predictors only.'
+        modality_blocks:
+        - ocular
+        required_devices:
+        - nir
+        - rgb
+    ocular_plus_headmotion:
+      candidates:
+      - feature_set_id: ocular_plus_headmotion
+        columns:
+        - ocular__rseg_hard__rgb_nir_qc__level_mean__2s
+        - ocular__rseg_hard__rgb_nir_qc__variability_mad__2s
+        - ocular__rseg_hard__rgb_nir_qc__linear_slope_per_sec__2s
+        - ocular__rseg_hard__rgb_nir_qc__quadratic_curvature_per_sec2__2s
+        - ocular__blink_event_rate_per_min__pre30s
+        - pose_lateral_right_per_sec_median
+        - pose_vertical_up_per_sec_median
+        description: '1.16.26 sensitivity arm: the same five Ocular predictors plus the two pre-specified
+          head-motion covariates from the frozen Movement handoff. Nuisance-adjusted sensitivity only;
+          this is NOT a modality model and must never be reported as Movement contributing information.'
+        modality_blocks:
+        - ocular
+        - movement
+        required_devices:
+        - nir
+        - rgb
+  note: 'Compatibility interface by design (preregistration §5): the registry cannot express ''Ocular
+    plus non-Ocular nuisance covariates''.'
+models:
+  primary:
+    kind: logistic_l2
+    C_candidates:
+    - 0.01
+    - 0.1
+    - 1.0
+    - 10.0
+    max_iter: 2000
+  selection_metric: participant_macro_log_loss
+uncertainty:
+  participant_cluster_bootstrap:
+    method: fixed_oof_participant_cluster_percentile
+    replicates: 1000
+    seed: 20260830
+    confidence_level: 0.95
+    paired_model_resampling: true
+    retrain_within_bootstrap: false
+outputs:
+  preserve_probe_keys: true
+  preserve_raw_q1: true
+  preserve_binary_label: true
+  preserve_positive_probability: true
+  preserve_outer_fold: true
+  preserve_feature_set_id: true
+  preserve_analysis_set_id: true
+  preserve_membership_type: true
+  preserve_run_id: true
+  preserve_failures: true
+  preserve_q2_for_reporting_context: true
+  preserve_feature_comparison_plan: true
+  preserve_scientific_modality: true
+  preserve_source_namespace: true
+  preserve_required_devices: true
+  preserve_preprocessing_dependencies: true
+  preserve_temporal_anchor: true
+  preserve_temporal_scope: true
+  preserve_time_legality_status: true
+  preserve_time_legality_evidence: true
+  preserve_comparison_role: true
+  preserve_includes_behavior_reference: true
+  paired_comparisons_require_same_analysis_set: true
+  cross_analysis_set_increment_ranking_allowed: false
+  write_probe_trajectory: true
+  write_session_discrimination: true
