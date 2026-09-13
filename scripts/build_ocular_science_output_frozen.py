@@ -4,10 +4,18 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from attention_pipeline.nir_formal_analysis.ocular_freeze_evidence import archive_ocular_freeze_evidence
-from attention_pipeline.nir_formal_analysis.ocular_probe_identity import ensure_ocular_canonical_probe_identity
-from attention_pipeline.nir_formal_analysis.ocular_science_coverage import refresh_ocular_coverage
-from attention_pipeline.nir_formal_analysis.ocular_science_freeze import build_frozen_ocular_science_output
+from attention_pipeline.nir_formal_analysis.ocular_freeze_evidence import (
+    archive_ocular_freeze_evidence,
+)
+from attention_pipeline.nir_formal_analysis.ocular_probe_identity import (
+    ensure_ocular_canonical_probe_identity,
+)
+from attention_pipeline.nir_formal_analysis.ocular_science_coverage import (
+    refresh_ocular_coverage,
+)
+from attention_pipeline.nir_formal_analysis.ocular_science_freeze import (
+    build_frozen_ocular_science_output,
+)
 
 
 def main() -> int:
@@ -38,6 +46,7 @@ def main() -> int:
     ensure_ocular_canonical_probe_identity(
         Path(args.g1_probe_candidates),
         ocular_root / "tables/ocular_probe_features_wide.csv",
+        supplemental_probe_identity_path=Path(args.rgb_probe_features),
     )
     refresh_ocular_coverage(ocular_root)
     archive_ocular_freeze_evidence(
