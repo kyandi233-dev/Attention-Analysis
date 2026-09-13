@@ -1,11 +1,13 @@
-"""Build the post-G1 Ocular scientific handoff from existing audit products."""
+"""Build the frozen post-G1 Ocular scientific handoff from existing audit products."""
 from __future__ import annotations
 
 import argparse
 import json
 from pathlib import Path
 
-from attention_pipeline.nir_formal_analysis.ocular_science_output import build_ocular_science_output
+from attention_pipeline.nir_formal_analysis.ocular_science_freeze import (
+    build_frozen_ocular_science_output,
+)
 
 
 def main() -> int:
@@ -19,12 +21,16 @@ def main() -> int:
     parser.add_argument("--keep-existing", action="store_true")
     args = parser.parse_args()
 
-    manifest = build_ocular_science_output(
+    manifest = build_frozen_ocular_science_output(
         Path(args.g1_probe_candidates),
         Path(args.science_root),
         rgb_probe_features_path=Path(args.rgb_probe_features) if args.rgb_probe_features else None,
-        movement_artifact_audit_path=Path(args.movement_artifact_audit) if args.movement_artifact_audit else None,
-        temporal_support_summary_path=Path(args.temporal_support_summary) if args.temporal_support_summary else None,
+        movement_artifact_audit_path=(
+            Path(args.movement_artifact_audit) if args.movement_artifact_audit else None
+        ),
+        temporal_support_summary_path=(
+            Path(args.temporal_support_summary) if args.temporal_support_summary else None
+        ),
         authoritative=not args.non_authoritative,
         replace=not args.keep_existing,
     )
