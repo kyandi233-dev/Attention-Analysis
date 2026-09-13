@@ -7,7 +7,10 @@ from pathlib import Path
 
 import pandas as pd
 
-from attention_pipeline.rgb_formal.movement_science_figures import build_movement_science_figures
+from attention_pipeline.rgb_formal.movement_science_figures import (
+    IMAGE_LANGUAGE,
+    build_movement_science_figures,
+)
 from attention_pipeline.rgb_formal.movement_science_output import build_movement_science_output
 
 
@@ -111,6 +114,8 @@ def main() -> int:
         "status": "candidate",
         "p4_refit_performed": False,
         "feature_selection_performed": False,
+        "image_language": IMAGE_LANGUAGE,
+        "font_contract": "per-text explicit fallback chain: CJK-first for strings containing Chinese, Latin-first (Times New Roman) for digits/latin",
     }
 
     manifest_path = science_root / "Movement/manifests/movement_science_output_manifest.json"

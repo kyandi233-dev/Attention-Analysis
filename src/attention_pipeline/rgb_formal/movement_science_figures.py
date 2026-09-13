@@ -10,6 +10,18 @@ from matplotlib import font_manager
 from attention_pipeline.formal_analysis.publication_style import finalize_publication_figure
 
 
+# --- Figure typography contract -------------------------------------------------
+# Formal 1.16.12 In-image Chinese labels are required, while digits and Latin
+# text should still prefer Times New Roman. Matplotlib (verified on 3.11.1) does
+# NOT fall back to later entries of rcParams["font.serif"] when the first font
+# lacks a glyph, so a "Times New Roman first + CJK fallback" rcParams list renders
+# every Chinese label as a tofu box. The working mechanism is to give each Text
+# object an explicit font-family LIST, which matplotlib does treat as a fallback
+# chain. The helpers below do exactly that.
+LATIN_FONT_ORDER = ("Times New Roman", "Times", "Liberation Serif", "DejaVu Serif")
+CJK_FONT_CANDIDATES = ("SimSun", "Microsoft YaHei", "SimHei", "Noto Serif CJK SC", "Noto Sans CJK SC")
+IMAGE_LANGUAGE = "Chinese_primary_latin_secondary"
+
 PRIMARY = "body_motion_energy_median"
 EXPOSURE = "exposure_change_abs_median"
 AUXILIARY = {
@@ -77,6 +89,57 @@ def _detect_cjk_font() -> str:
         if name in installed:
             return name
     return "DejaVu Sans"
+
+
+_CJK_RANGES = (
+    (0x2E80, 0x303F),   # CJK radicals, punctuation
+    (0x3040, 0x30FF),   # Hiragana, Katakana
+    (0x3400, 0x4DBF),   # CJK Unified Ideographs Extension A
+    (0x4E00, 0x9FFF),   # CJK Unified Ideographs
+    (0xAC00, 0xD7AF),   # Hangul syllables
+    (0xF900, 0xFAFF),   # CJK compatibility ideographs
+    (0xFE30, 0xFE4F),   # CJK compatibility forms
+    (0xFF00, 0xFFEF),   # fullwidth forms
+)
+
+
+def contains_cjk(text: str) -> bool:
+    """Return True when the string holds any character needing a CJK font."""
+    return any(any(low <= ord(ch) <= high for low, high in _CJK_RANGES) for ch in str(text))
+
+
+def _installed_font_orders() -> tuple[list[str], list[str]]:
+    installed = {item.name for item in font_manager.fontManager.ttflist}
+    cjk = next((name for name in CJK_FONT_CANDIDATES if name in installed), None)
+    latin = [name for name in LATIN_FONT_ORDER if name in installed] or ["DejaVu Serif"]
+    cjk_order = ([cjk] if cjk else []) + latin
+    latin_order = latin + ([cjk] if cjk else [])
+    return cjk_order, latin_order
+
+
+def apply_text_fonts(fig: Any) -> dict[str, int]:
+    """Assign each Text object an explicit fallback chain; mixed strings use CJK-first.
+
+    Mixed strings such as "参与者均值 ± SEM" take the CJK-first chain as a whole so
+    they stay fully readable; the Latin fallbacks still cover ASCII, digits and ±.
+    """
+    from matplotlib.text import Text
+
+    cjk_order, latin_order = _installed_font_orders()
+    cjk_n = 0
+    latin_n = 0
+    for text in fig.findobj(match=Text):
+        current = text.get_text()
+        if not str(current).strip():
+            continue
+        if contains_cjk(current):
+            text.set_fontfamily(cjk_order)
+            cjk_n += 1
+        else:
+            text.set_fontfamily(latin_order)
+            latin_n += 1
+    fig.canvas.draw()
+    return {"cjk_text_n": cjk_n, "latin_text_n": latin_n}
 
 
 def _configure_style() -> None:
@@ -149,6 +212,9 @@ def _save_figure(fig: Any, path: Path) -> tuple[Path, Path]:
     import matplotlib.pyplot as plt
 
     finalize_publication_figure(fig, remove_titles=True)
+    # Must run after the finalize pass, because removing internal titles and
+    # redrawing can (re)create tick and legend text objects.
+    apply_text_fonts(fig)
     path.parent.mkdir(parents=True, exist_ok=True)
     png = path.with_suffix(".png")
     svg = path.with_suffix(".svg")

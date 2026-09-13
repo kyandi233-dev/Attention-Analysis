@@ -112,11 +112,14 @@ def test_movement_figures_use_real_rgb55_estimate_schema_and_audit_missingness(t
     ).to_csv(tables / "movement_behavior_links.csv", index=False)
 
     generated = build_movement_science_figures(root)
+    # Paths come back with the platform separator (backslash on Windows), so
+    # compare normalised relative paths instead of raw strings.
+    generated_posix = {Path(item).as_posix() for item in generated}
 
-    assert "figures/main/movement_q1_relationships.png" in generated
-    assert "figures/main/movement_q2_relationships.png" in generated
-    assert "figures/main/movement_block_pair_task_progression.png" in generated
-    assert "figures/qc/movement_exposure_qc.png" in generated
+    assert "figures/main/movement_q1_relationships.png" in generated_posix
+    assert "figures/main/movement_q2_relationships.png" in generated_posix
+    assert "figures/main/movement_block_pair_task_progression.png" in generated_posix
+    assert "figures/qc/movement_exposure_qc.png" in generated_posix
     assert (root / "figures/main/movement_q1_relationships.svg").is_file()
     assert (root / "figures/main/movement_q2_relationships.svg").is_file()
     assert (root / "figures/main/movement_block_pair_task_progression.svg").is_file()
