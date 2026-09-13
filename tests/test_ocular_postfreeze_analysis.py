@@ -89,11 +89,13 @@ def test_first_round_ocular_contract_is_exactly_five_frozen_features():
         "quadratic_curvature_per_sec2", "blink_event_rate_per_min",
     }
     assert all("geometry" not in spec["column"] for spec in FROZEN_OCULAR_FEATURES.values())
-    assert all(
-        "nir_qc__" not in spec["column"]
+    pupil_columns = [
+        spec["column"]
         for spec in FROZEN_OCULAR_FEATURES.values()
         if "blink" not in spec["column"]
-    )
+    ]
+    assert all("__rseg_hard__rgb_nir_qc__" in col for col in pupil_columns)
+    assert all("__rseg_hard__nir_qc__" not in col for col in pupil_columns)
 
 
 def test_bh_fdr_is_bounded_and_order_consistent():
