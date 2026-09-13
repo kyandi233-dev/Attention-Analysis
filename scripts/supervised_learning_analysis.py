@@ -1,4 +1,4 @@
-"""Run FocusWave Task A Q1 binary supervised learning on an upstream probe table."""
+"""Run FocusWave formal Q1 binary supervised learning on one comparison-specific probe table."""
 from __future__ import annotations
 
 import argparse
@@ -25,7 +25,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="configs/supervised_learning_v1.yaml")
     parser.add_argument("--paths-config", default=None)
-    parser.add_argument("--input-table", default=None, help="Optional runtime override for the upstream admitted probe table.")
+    parser.add_argument("--input-table", default=None, help="Optional runtime override for the comparison-specific admitted probe table.")
     parser.add_argument("--output-root", default=None, help="Optional runtime override for the external output root.")
     parser.add_argument("--run-id", default=None)
     args = parser.parse_args()
@@ -38,9 +38,9 @@ def main() -> int:
     if not input_path.is_file():
         raise FileNotFoundError(f"supervised input probe table not found: {input_path}")
 
-    # The B-layer may use outcome validity to define membership. Verify that the
-    # exact sample contract was based only on the frozen source of the current
-    # Task-A target before any model selection or LOSO fitting starts.
+    # The comparison-specific sample may use outcome validity to define membership.
+    # Verify that it was based only on the frozen source of the current Q1 target
+    # before any model selection or participant-disjoint fitting starts.
     validate_task_a_required_outcomes(_read_probe_table(input_path))
 
     manifest = run_supervised_from_config(

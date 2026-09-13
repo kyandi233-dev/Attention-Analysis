@@ -1,0 +1,126 @@
+schema_version: 1.16.10-feature-registry-template-v1
+status: template_only_do_not_run
+note: >-
+  Copy entries into configs/supervised_learning_v1.yaml only after the corresponding
+  single-modality representation has been frozen. Predictor eligibility is fail-closed
+  until time_legality_status=verified_pre_probe_only with explicit evidence.
+
+feature_registry:
+  status: pending_upstream_feature_freeze
+  features:
+    - feature_id: REPLACE_behavior_rt_level
+      scientific_feature_id: rt_level
+      columns: [REPLACE_WITH_FROZEN_COLUMN]
+      role: behavior
+      modality: behavior
+      feature_type: rt_level
+      raw_source: Behavior/formal_v3/probe_primary_30s.csv
+      source_namespace: behavior
+      required_devices: []
+      preprocessing_dependencies: []
+      temporal_anchor: probe_time_ms
+      temporal_scope: pending_upstream_freeze
+      time_legality_status: pending_upstream_freeze
+      time_legality_evidence: ""
+      standalone_eligible: false
+      behavior_increment_eligible: false
+      behavior_reference_eligible: false
+      modality_model_eligible: false
+      full_model_eligible: false
+      full_leave_one_out_eligible: false
+      allowed_device_packages: []
+      description: Fill only after Q1-blind RT mean-versus-median freeze.
+
+    - feature_id: REPLACE_ocular_pupil_level
+      scientific_feature_id: pupil_level
+      columns: [REPLACE_WITH_FROZEN_COLUMN]
+      role: sensor
+      modality: ocular
+      feature_type: pupil
+      raw_source: REPLACE_WITH_FROZEN_NIR_PROBE_TABLE
+      source_namespace: nir
+      required_devices: [nir]
+      preprocessing_dependencies: [REPLACE_WITH_ACTUAL_PUPIL_CLEANING]
+      temporal_anchor: probe_time_ms
+      temporal_scope: pending_upstream_freeze
+      time_legality_status: pending_upstream_freeze
+      time_legality_evidence: ""
+      standalone_eligible: false
+      behavior_increment_eligible: false
+      behavior_reference_eligible: false
+      modality_model_eligible: false
+      full_model_eligible: false
+      full_leave_one_out_eligible: false
+      allowed_device_packages: []
+      description: >-
+        If RGB blink/motion evidence is part of the frozen pupil representation, change
+        required_devices to [nir, rgb] and record the exact dependency here.
+
+    - feature_id: REPLACE_ocular_blink_frequency
+      scientific_feature_id: blink_frequency
+      columns: [blink_event_rate_per_min]
+      role: sensor
+      modality: ocular
+      feature_type: blink
+      raw_source: REPLACE_WITH_FROZEN_RGB_PROBE_TABLE
+      source_namespace: rgb
+      required_devices: [rgb]
+      preprocessing_dependencies: []
+      temporal_anchor: probe_time_ms
+      temporal_scope: pending_upstream_freeze
+      time_legality_status: pending_upstream_freeze
+      time_legality_evidence: ""
+      standalone_eligible: false
+      behavior_increment_eligible: false
+      behavior_reference_eligible: false
+      modality_model_eligible: false
+      full_model_eligible: false
+      full_leave_one_out_eligible: false
+      allowed_device_packages: []
+      description: Pre-frozen scientific dimension; enable only after real RGB QC confirmation.
+
+    - feature_id: REPLACE_movement_visible_motion
+      scientific_feature_id: visible_movement_level
+      columns: [body_motion_energy_median]
+      role: sensor
+      modality: movement
+      feature_type: body_motion
+      raw_source: REPLACE_WITH_FROZEN_RGB_PROBE_TABLE
+      source_namespace: rgb
+      required_devices: [rgb]
+      preprocessing_dependencies: []
+      temporal_anchor: probe_time_ms
+      temporal_scope: pending_upstream_freeze
+      time_legality_status: pending_upstream_freeze
+      time_legality_evidence: ""
+      standalone_eligible: false
+      behavior_increment_eligible: false
+      behavior_reference_eligible: false
+      modality_model_eligible: false
+      full_model_eligible: false
+      full_leave_one_out_eligible: false
+      allowed_device_packages: []
+      description: First-round Movement scientific feature after real producer QC confirmation.
+
+    - feature_id: REPLACE_cardiopulmonary_hr
+      scientific_feature_id: heart_rate
+      columns: [mmwave_hr_fused_bpm_median]
+      role: sensor
+      modality: cardiopulmonary
+      feature_type: heart_rate
+      raw_source: REPLACE_WITH_FROZEN_MMWAVE_PROBE_TABLE
+      source_namespace: mmwave
+      required_devices: [mmwave]
+      preprocessing_dependencies: []
+      temporal_anchor: probe_time_ms
+      temporal_scope: pending_upstream_freeze
+      time_legality_status: pending_upstream_freeze
+      time_legality_evidence: ""
+      standalone_eligible: false
+      behavior_increment_eligible: false
+      behavior_reference_eligible: false
+      modality_model_eligible: false
+      full_model_eligible: false
+      full_leave_one_out_eligible: false
+      allowed_device_packages: []
+      description: Keep disabled until cardiopulmonary physiological eligibility is frozen.

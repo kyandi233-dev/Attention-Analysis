@@ -66,6 +66,12 @@ def test_analysis_sets_persist_exact_required_feature_mapping() -> None:
         "behavior": ["b"],
         "nir": ["n"],
     }
+    assert set(sets["feature_identity_mode"]) == {"legacy_source_feature"}
+    legacy_records = json.loads(sets["required_feature_records"].iloc[0])
+    assert {(record["source_namespace"], record["predictor_column"]) for record in legacy_records} == {
+        ("behavior", "b"),
+        ("nir", "n"),
+    }
 
 
 def test_complete_and_missing_aware_materialize_different_valid_memberships() -> None:
@@ -96,6 +102,7 @@ def test_complete_and_missing_aware_materialize_different_valid_memberships() ->
     assert missing_aware["n"].isna().sum() == 1
     assert set(missing_aware["membership_type"]) == {"included_missing_aware"}
     assert missing_aware["probe_time_ms"].tolist() == [1000, 2000, 1000, 2000]
+    assert set(missing_aware["feature_identity_mode"]) == {"legacy_source_feature"}
     missing_row = missing_aware[missing_aware["n"].isna()].iloc[0]
     assert missing_row["session_id"] == "s1"
     assert missing_row["probe_index_in_block"] == 2
@@ -160,4 +167,108 @@ def test_missing_aware_refuses_missing_value_outside_residual_feature_missingnes
             analysis_set_id="behavior_plus_nir",
             membership_type="included_missing_aware",
             probe_metadata=tables["behavior"],
+        )
+
+
+def test_explicit_feature_identity_maps_one_rgb_source_to_ocular_and_movement() -> None:
+    tables = _tables()
+    rgb = tables["behavior"][[
+        "session_id", "participant_group_id", "block_id", "probe_index_in_block"
+    ]].copy()
+    rgb["source_present"] = True
+    rgb["source_readable"] = True
+    rgb["window_name"] = "pre_30s"
+    rgb["blink_event_rate_per_min"] = [12.0, 13.0, 10.0, 11.0]
+    rgb["body_motion_energy_median"] = [0.2, 0.3, 0.1, 0.4]
+    tables = {"behavior": tables["behavior"], "rgb": rgb}
+
+    audit = audit_quality(
+        tables,
+        {
+            "behavior": ["b"],
+            "rgb": ["blink_event_rate_per_min", "body_motion_energy_median"],
+        },
+    )
+    feature_records = [
+        {
+            "feature_id": "behavior_b",
+            "scientific_modality": "behavior",
+            "source_namespace": "behavior",
+            "predictor_column": "b",
+        },
+        {
+            "feature_id": "blink_rate",
+            "scientific_modality": "ocular",
+            "source_namespace": "rgb",
+            "predictor_column": "blink_event_rate_per_min",
+        },
+        {
+            "feature_id": "body_motion",
+            "scientific_modality": "movement",
+            "source_namespace": "rgb",
+            "predictor_column": "body_motion_energy_median",
+        },
+    ]
+    sets, summary = build_analysis_sets(
+        audit["formal_probe_identity"],
+        audit["probe_feature_status"],
+        {
+            "behavior_plus_rgb_science": {
+                "models": ["behavior_reference", "behavior_plus_rgb_science"],
+                "required_features": {
+                    "behavior": ["b"],
+                    "ocular": ["blink_event_rate_per_min"],
+                    "movement": ["body_motion_energy_median"],
+                },
+                "required_feature_records": feature_records,
+                "required_outcomes": ["q1_nominal_4class"],
+            }
+        },
+    )
+
+    assert set(sets["feature_identity_mode"]) == {"explicit_per_feature"}
+    assert summary["feature_identity_mode"].eq("explicit_per_feature").all()
+    serialized_records = json.loads(sets["required_feature_records"].iloc[0])
+    rgb_records = [record for record in serialized_records if record["source_namespace"] == "rgb"]
+    assert {record["scientific_modality"] for record in rgb_records} == {"ocular", "movement"}
+
+    frame = materialize_supervised_input(
+        sets,
+        audit["probe_feature_status"],
+        analysis_set_id="behavior_plus_rgb_science",
+        membership_type="included_complete",
+        probe_metadata=tables["behavior"],
+    )
+    assert len(frame) == 4
+    assert frame[["b", "blink_event_rate_per_min", "body_motion_energy_median"]].notna().all().all()
+    assert set(frame["feature_identity_mode"]) == {"explicit_per_feature"}
+    assert json.loads(frame["required_features"].iloc[0]) == {
+        "behavior": ["b"],
+        "movement": ["body_motion_energy_median"],
+        "ocular": ["blink_event_rate_per_min"],
+    }
+
+
+def test_explicit_feature_records_must_match_scientific_required_feature_union() -> None:
+    tables = _tables()
+    audit = audit_quality(tables, {"behavior": ["b"], "nir": ["n"]})
+    with pytest.raises(ValueError, match="must cover exactly"):
+        build_analysis_sets(
+            audit["formal_probe_identity"],
+            audit["probe_feature_status"],
+            {
+                "bad": {
+                    "models": ["B", "B+n"],
+                    "required_features": {"behavior": ["b"], "ocular": ["n"]},
+                    "required_feature_records": [
+                        {
+                            "feature_id": "behavior_b",
+                            "scientific_modality": "behavior",
+                            "source_namespace": "behavior",
+                            "predictor_column": "b",
+                        }
+                    ],
+                    "required_outcomes": ["q1_nominal_4class"],
+                }
+            },
         )

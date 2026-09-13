@@ -1,10 +1,13 @@
 pipeline:
   name: focuswave-supervised-learning-v1
-  version: 1.1.0-dev
+  version: 1.2.0-dev
   evidence_repo: kyandi233-dev/FocusWave-Formal-Analysis
   evidence_branch: codex/code-fix-ledger
-  evidence_method_entry: 分析设计/1.16.1-监督学习心理意义、训练权重与多层评价修订_20260911.md
-  implementation_plan: https://github.com/kyandi233-dev/Attention-Analysis/issues/43
+  evidence_method_entry: 分析设计/1.16.10-监督学习模态与设备定义修订及代码迁移计划_20260912.md
+  evidence_interface_entry: 分析设计/1.16.11-监督学习特征文件接口与运行前闸门_20260913.md
+  inherited_training_evaluation_entry: 分析设计/1.16.1-监督学习心理意义、训练权重与多层评价修订_20260911.md
+  implementation_interface_document: docs/supervised_learning/1.16.10-feature-and-file-interface.md
+  implementation_plan: https://github.com/kyandi233-dev/Attention-Analysis/issues/65
   random_seed: 20260910
 
 paths:
@@ -48,11 +51,15 @@ preprocessing:
   participant_specific_within_between_mainline: false
 
 # Upstream scientific work freezes the exact predictors. Task A consumes the registry;
-# it does not maintain a second scientific-variable blacklist.
+# it does not maintain a second scientific-variable blacklist. Prediction eligibility is
+# fail-closed until producer-side time legality is explicitly verified.
 feature_registry:
   status: pending_upstream_feature_freeze
+  schema_version: 1.16.10-time-legality-v1
+  validator: scripts/validate_supervised_feature_registry.py
+  template: configs/supervised_feature_registry_template_v1.yaml
   features: []
-  note: "Each exact representation records scientific_feature_id, predictor column(s), Behavior/sensor role, raw source, actual required devices, preprocessing dependencies, standalone / Behavior+x / Full eligibility, and explicit M0-M7 package eligibility. Cross-device cleaning dependencies must be represented here."
+  note: "Each exact representation records feature_id/scientific_feature_id, scientific modality, optional feature_type, predictor column(s), Behavior/sensor role, raw source, explicit source_namespace, actual required_devices, preprocessing_dependencies, temporal_anchor, temporal_scope, time_legality_status, time_legality_evidence, standalone / Behavior+x / modality-model / Full eligibility, and explicit M0-M7 device-package eligibility. Scientific modality, producer namespace, hardware dependency, and temporal legality are independent fields. Any feature requesting formal prediction eligibility must be verified_pre_probe_only before real Task-B/Task-A execution."
 
 # Compatibility/manual-test interface. A non-empty feature_registry takes precedence.
 # Structural leakage guards (Q1 outcome/output columns, IDs, raw locator/audit fields)
@@ -61,7 +68,7 @@ feature_schemes:
   status: interface_only_pending_task_c_d
   model_families: {}
   participant_specific_suffixes_forbidden: [_within, _between]
-  note: "Task A provides the shared nested training core. Registry-backed formal runs consume only the model IDs declared by the current B-layer comparison-specific analysis_set_id; unrelated feature/device models are not forced onto one global common sample."
+  note: "Task A provides the shared nested training core. Registry-backed formal runs consume only the model IDs declared by the current B-layer comparison-specific analysis_set_id; unrelated feature, scientific-modality, or device-package models are not forced onto one global common sample. Legacy modality_blocks is compatibility-only and must not carry nir/rgb/mmwave as scientific modalities."
 
 models:
   primary:
@@ -91,5 +98,18 @@ outputs:
   preserve_run_id: true
   preserve_failures: true
   preserve_q2_for_reporting_context: true
+  preserve_feature_comparison_plan: true
+  preserve_scientific_modality: true
+  preserve_source_namespace: true
+  preserve_required_devices: true
+  preserve_preprocessing_dependencies: true
+  preserve_temporal_anchor: true
+  preserve_temporal_scope: true
+  preserve_time_legality_status: true
+  preserve_time_legality_evidence: true
+  preserve_comparison_role: true
+  preserve_includes_behavior_reference: true
+  paired_comparisons_require_same_analysis_set: true
+  cross_analysis_set_increment_ranking_allowed: false
   write_probe_trajectory: true
   write_session_discrimination: true
