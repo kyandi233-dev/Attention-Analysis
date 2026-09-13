@@ -34,8 +34,7 @@ def _snapshot() -> pd.DataFrame:
     probe = np.array([100_000.0, 140_000.0, 200_000.0, 240_000.0])
     nominal = probe - 30_000.0
     effective = nominal.copy()
-    # A legitimate block-start truncation: the nominal 30 s window is shortened,
-    # while its right boundary remains the right-exclusive probe onset.
+    # Legal formal-Block truncation of the nominal 30-second interval.
     effective[0] = nominal[0] + 10_000.0
     state = ["AVAILABLE", "AVAILABLE", "SOURCE_UNAVAILABLE", "SOURCE_MALFORMED"]
     return pd.DataFrame(
@@ -66,26 +65,43 @@ def _snapshot() -> pd.DataFrame:
                 "NOT_READABLE",
                 "NOT_READABLE",
             ],
-            "estimability_state": ["ESTIMABLE", "ESTIMABLE", "NOT_ESTIMABLE", "NOT_ESTIMABLE"],
-            "measurement_qc_state": ["SUPPORTING_ONLY", "SUPPORTING_ONLY", "NOT_APPLICABLE", "FAILED"],
+            "estimability_state": [
+                "ESTIMABLE",
+                "ESTIMABLE",
+                "NOT_ESTIMABLE",
+                "NOT_ESTIMABLE",
+            ],
+            "measurement_qc_state": [
+                "SUPPORTING_ONLY",
+                "SUPPORTING_ONLY",
+                "NOT_APPLICABLE",
+                "FAILED",
+            ],
             "malformed_state": ["OK", "OK", "OK", "MALFORMED"],
             "integration_state": state,
             "producer_state": state,
-            "missing_reason": ["", "", "source_unavailable", "timestamp_count_mismatch"],
+            "missing_reason": [
+                "",
+                "",
+                "source_unavailable",
+                "timestamp_count_mismatch",
+            ],
             "snapshot_version": ["mmwave_integration_snapshot_v1"] * 4,
             "producer_commit": ["producer-sha"] * 4,
             "producer_adapter_version": ["adapter-v1"] * 4,
             "source_run_id": ["source-run"] * 4,
             "snapshot_run_id": ["snapshot-run"] * 4,
-            # These are deliberately present in the producer-like fixture. The formal
-            # Cardiopulmonary bridge must not promote them into the downstream source.
+            # Producer diagnostics must never be promoted by this bridge.
             "mmwave_motion_proxy_median": [0.1, 0.2, np.nan, np.nan],
             "mmwave_rmssd_ms": [20.0, 21.0, np.nan, np.nan],
         }
     )
 
 
-def _audit(snapshot: pd.DataFrame | None = None, behavior: pd.DataFrame | None = None):
+def _audit(
+    snapshot: pd.DataFrame | None = None,
+    behavior: pd.DataFrame | None = None,
+):
     return audit_mmwave_cardiopulmonary_snapshot(
         _snapshot() if snapshot is None else snapshot,
         _behavior() if behavior is None else behavior,
@@ -93,34 +109,45 @@ def _audit(snapshot: pd.DataFrame | None = None, behavior: pd.DataFrame | None =
     )
 
 
-def test_ingest_preserves_structural_missing_and_current_interface_semantics() -> None:
+def test_ingest_preserves_unavailable_and_malformed_as_distinct_states() -> None:
     result = _audit()
 
+    assert result.manifest["status"] == "SMOKE_ONLY"
+    assert (
+        result.manifest["engineering_integration_qualification"]
+        == "PENDING_GOVERNED_REAL_RUN"
+    )
+    assert result.manifest["governed_real_snapshot_rerun_complete"] is False
     assert result.manifest["governed_probe_n"] == 4
     assert result.manifest["available_probe_n"] == 2
     assert result.manifest["source_unavailable_probe_n"] == 1
     assert result.manifest["source_malformed_probe_n"] == 1
-    assert result.manifest["structural_missing_probe_n"] == 2
+    assert result.manifest["retained_missing_or_error_probe_n"] == 2
     assert result.manifest["hr_available_n"] == 2
     assert result.manifest["br_available_n"] == 2
     assert result.manifest["duplicate_key_n"] == 0
     assert result.manifest["missing_key_n"] == 0
     assert result.manifest["extra_key_n"] == 0
     assert result.manifest["participant_identity_inferred_from_folder"] is False
-    assert result.manifest["structural_missing_zero_imputed"] is False
+    assert result.manifest["source_unavailable_zero_imputed"] is False
+    assert result.manifest["source_malformed_zero_imputed"] is False
     assert result.manifest["q1_q2_used_for_ingest_decision"] is False
     assert result.manifest["models_trained"] is False
     assert result.manifest["final_feature_registry_modified"] is False
 
     assert len(result.taskb_source) == 4
-    missing = result.taskb_source["integration_state"].ne("AVAILABLE")
-    assert result.taskb_source.loc[missing, [HR_COLUMN, BR_COLUMN]].isna().all().all()
+    retained = result.taskb_source["integration_state"].ne("AVAILABLE")
+    assert result.taskb_source.loc[retained, [HR_COLUMN, BR_COLUMN]].isna().all().all()
     assert "mmwave_motion_proxy_median" not in result.taskb_source.columns
     assert "mmwave_rmssd_ms" not in result.taskb_source.columns
 
+    audit = result.ingest_audit.set_index(["block_id", "probe_index_in_block"])
+    assert bool(audit.loc[("b2", 1), "source_unavailable"])
+    assert not bool(audit.loc[("b2", 1), "source_malformed"])
+    assert bool(audit.loc[("b2", 2), "source_malformed"])
+    assert not bool(audit.loc[("b2", 2), "source_unavailable"])
+
     status = result.quality_tables["probe_feature_status"]
-    by_probe = status[status["feature"].eq(HR_COLUMN)].set_index("probe_index_in_block")
-    # Use block together with probe index because the ordinal restarts in B2.
     unavailable = status[
         status["feature"].eq(HR_COLUMN)
         & status["block_id"].eq("b2")
@@ -164,7 +191,9 @@ def test_handoff_uses_cardiopulmonary_science_and_mmwave_device_without_predicti
     records = json.loads(
         result.analysis_sets["required_feature_records"].drop_duplicates().iloc[0]
     )
-    assert {record["scientific_modality"] for record in records} == {"cardiopulmonary"}
+    assert {record["scientific_modality"] for record in records} == {
+        "cardiopulmonary"
+    }
     assert {record["source_namespace"] for record in records} == {"mmwave"}
 
 
@@ -172,7 +201,10 @@ def test_block_start_truncation_is_time_legal_and_reported() -> None:
     result = _audit()
     assert result.manifest["time_legality"]["time_legality_status"] == TIME_LEGALITY_STATUS
     assert result.manifest["time_legality"]["right_exclusive_end"] is True
-    assert result.manifest["time_legality"]["alignment_clock_source"] == "dll_host_receive_enqueue"
+    assert (
+        result.manifest["time_legality"]["alignment_clock_source"]
+        == "dll_host_receive_enqueue"
+    )
     assert result.manifest["time_legality"]["truncated_window_n"] == 1
     assert int(result.ingest_audit["effective_start_truncated"].sum()) == 1
 
@@ -186,7 +218,9 @@ def test_wrong_clock_fails_closed() -> None:
 
 def test_probe_boundary_after_onset_fails_closed() -> None:
     snapshot = _snapshot()
-    snapshot.loc[0, "window_end_unix_ms"] = snapshot.loc[0, "probe_onset_unix_ms"] + 1
+    snapshot.loc[0, "window_end_unix_ms"] = (
+        snapshot.loc[0, "probe_onset_unix_ms"] + 1
+    )
     with pytest.raises(MmwaveCardiopulmonaryIngestError, match="verified_pre_probe_only"):
         _audit(snapshot=snapshot)
 
@@ -211,16 +245,17 @@ def test_duplicate_probe_key_fails() -> None:
         _audit(snapshot=snapshot)
 
 
-def test_missing_or_extra_probe_key_fails_key_conservation() -> None:
+def test_missing_probe_key_fails_key_conservation() -> None:
     snapshot = _snapshot().iloc[:-1].copy()
     with pytest.raises(MmwaveCardiopulmonaryIngestError, match="key conservation failed"):
         _audit(snapshot=snapshot)
 
 
-def test_structural_missing_cannot_be_zero_filled() -> None:
-    snapshot = _snapshot()
-    row = snapshot["integration_state"].eq("SOURCE_UNAVAILABLE")
-    snapshot.loc[row, HR_COLUMN] = 0.0
-    snapshot.loc[row, BR_COLUMN] = 0.0
-    with pytest.raises(MmwaveCardiopulmonaryIngestError, match="zero-fill"):
-        _audit(snapshot=snapshot)
+def test_unavailable_or_malformed_rows_cannot_be_zero_filled() -> None:
+    for state in ("SOURCE_UNAVAILABLE", "SOURCE_MALFORMED"):
+        snapshot = _snapshot()
+        row = snapshot["integration_state"].eq(state)
+        snapshot.loc[row, HR_COLUMN] = 0.0
+        snapshot.loc[row, BR_COLUMN] = 0.0
+        with pytest.raises(MmwaveCardiopulmonaryIngestError, match="zero-fill"):
+            _audit(snapshot=snapshot)
