@@ -1,0 +1,22 @@
+code_variable,formal_chinese_name,report_short_name,unit,statistical_meaning,scientific_meaning,increase_interpretation,scientific_dimension,result_role
+ go_correct_rt_mean_ms,正确Go试次平均反应时,平均反应时,ms,探针前正式窗口内正确Go反应时的算术平均,持续注意任务中的反应速度水平,数值越大表示反应更慢,反应速度水平,main_or_qualification
+ go_correct_rt_median_ms,正确Go试次反应时中位数,反应时中位数,ms,探针前正式窗口内正确Go反应时的中位数,对极端反应时更稳健的反应速度水平表示,数值越大表示反应更慢,反应速度水平,main_or_qualification
+ go_correct_rt_cv,正确Go反应时变异系数,反应时波动,CV,正确Go反应时标准差除以均值,相对于个体反应速度水平的时序稳定性,数值越大表示反应时相对波动更大且稳定性更低,反应时稳定性,main_science
+ go_correct_rt_theilsen_slope_ms_per_s,正确Go反应时Theil–Sen变化率,反应时变化率,ms/s,探针前窗口中反应时随时间的稳健线性斜率,短时窗口内反应速度随时间加快或减慢的趋势,正值表示越接近探针反应越慢；负值表示越接近探针反应越快,反应时趋势,main_science
+ raw_go_omission_rate,Go试次遗漏率,Go遗漏率,proportion,Go试次未作出要求反应的比例,对目标反应维持失败的一类行为错误,数值越大表示Go遗漏更多,错误控制,main_science
+ commission_rate,No-Go试次误按率,No-Go误按率,proportion,No-Go试次错误作出按键反应的比例,持续注意任务中的反应抑制失败,数值越大表示No-Go误按更多,错误控制,main_science
+ dprime_loglinear,对数线性校正d′,d′,standardized index,经对数线性校正的信号检测敏感性指标,综合反映对Go与No-Go任务要求的辨别表现,数值越大通常表示辨别能力更高,信号检测,formal_companion
+ criterion_c,信号检测反应标准c,c,standardized index,信号检测理论中的反应标准,反映偏向作出反应或不反应的决策倾向,方向需结合当前编码定义解释,信号检测,sensitivity
+ beta,信号检测β,β,ratio,信号检测理论中的似然比标准,反映反应标准的另一种表示,数值解释需结合当前编码和基准值1,信号检测,sensitivity
+ body_motion_energy_median,身体动作能量中位数,身体动作强度,relative unit,正式时间窗口内身体动作能量的中位数,RGB可见光视频中整体身体活动强弱的相对指标,数值越大表示相对身体动作更强,身体动作,main_science
+ pose_direction,姿态方向,姿态方向,derived relative unit,姿态估计得到的方向性辅助变量,描述身体朝向或姿态变化的辅助信息,方向随具体坐标定义解释,姿态辅助,sensitivity
+ radial_distance,径向距离,身体径向位移,relative unit,相对于参考位置的径向距离或位移量,描述整体位置变化的辅助工程量,数值越大通常表示偏离参考位置更远,位置辅助,sensitivity
+ pupil_level,瞳孔比例水平,瞳孔水平,ratio,正式窗口内冻结瞳孔比例表示的水平统计量,反映相对瞳孔大小的状态水平,数值越大表示相对瞳孔比例更大,瞳孔水平,main_science
+ pupil_variability,瞳孔比例波动,瞳孔波动,ratio variability,正式窗口内冻结瞳孔比例表示的波动统计量,反映相对瞳孔大小在窗口内的短时变异程度,数值越大表示窗口内瞳孔比例波动更强,瞳孔波动,main_science
+ linear_slope_per_sec,瞳孔比例线性变化率,瞳孔变化率,ratio/s,探针前冻结时间窗口内瞳孔比例随时间的线性斜率,反映瞳孔比例接近探针时的单调增减趋势,正值表示随时间增加；负值表示随时间降低,瞳孔动态,main_science
+ quadratic_curvature,瞳孔比例二次时间曲率,瞳孔曲率,ratio/time²,探针前窗口内二次时间项的曲率参数,反映瞳孔变化轨迹的弯曲方向与程度,正负方向需结合当前时间变量编码解释为向上或向下弯曲,瞳孔动态,main_science
+ blink_event_rate_per_min,眨眼事件频率,眨眼率,events/min,正式窗口内眨眼事件数换算为每分钟频率,反映单位时间内可检测眨眼事件的发生频率,数值越大表示眨眼更频繁,眨眼,main_science
+ ocular_within_z,眼部指标人内标准化成分,人内变化,SD within-person,眼部指标减去参与者自身均值后再标准化的成分,表示某一时点相对于该参与者自身通常水平的偏离,正值表示该次高于参与者自身平均水平,效应分解,main_science
+ ocular_between_z,眼部指标人际标准化成分,人际差异,SD between-person,参与者平均眼部指标的标准化成分,表示参与者之间平均眼部特征的差异,正值表示该参与者平均水平高于总体参与者平均,效应分解,formal_companion
+ contrast_category,Q1类别对比,Q1注意内容对比,contrast,多分类模型中相对于参考类别的类别对比标识,用于区分不同注意内容自我报告之间的正式比较,方向取决于具体类别与参考类别,Q1注意内容,internal_only
+ q2_ordered,Q2困倦/清醒程度,Q2主观状态,ordered category,按实验编码定义的有序主观状态变量,表示参与者报告的困倦/清醒程度顺序,数值升高的心理方向必须严格按当前正式编码说明,Q2主观状态,main_science

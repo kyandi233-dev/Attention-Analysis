@@ -1,0 +1,25 @@
+modality,current_figure_group,current_role,audit_decision,target_role,rationale,requires_real_asset_review
+Behavior,RT mean vs median paired relation,qualification,keep_and_relabel,qualification,直接回答RT level表示资格且不承担状态效应解释,true
+Behavior,RT mean minus median distribution,qualification,keep_appendix,qualification,用于检查尾部和表示差异但不推进正文状态叙事,true
+Behavior,RT CV distribution,qualification,keep_appendix,qualification,属于测量分布和可估性证据,true
+Behavior,RT Theil-Sen slope distribution,qualification,keep_appendix,qualification,属于正式趋势指标的测量分布而非任务状态效应,true
+Behavior,Q1 standardized coefficient plot,main_science,reconstruct,main_science,现有系数图仍以代码/模型行为主应改成按行为科学维度组织的可读效应表达,true
+Behavior,Q2 standardized coefficient plot,main_science,reconstruct,main_science,应突出困倦清醒程度升高时各行为维度如何变化而不是模型行,true
+Behavior,B1-B2 clustered effect plot,main_science,reconstruct_or_keep_after_visual_review,main_science,科学问题正确但需检查是否能直接表达任务进程和各维度实际变化,true
+Behavior,registry-ready coverage plot,qualification,move_appendix_or_keep_qc,qualification,覆盖率支持资格判断不属于正文科学效应,true
+Movement,body motion distribution,qualification,keep_appendix,qualification,主指标真实分布支持测量资格但不回答注意状态问题,true
+Movement,task progression coefficient plot,main_science,reconstruct,main_science,优先改为读者可理解的阶段轨迹和95%置信区间,true
+Movement,task progression trajectory,main_science,keep_or_reconstruct,main_science,若真实轨迹已符合冻结模型和层级不确定性则可作为M-M1基础,true
+Movement,Q1 coefficient plot,main_science,reconstruct,main_science,需与Q2共同组织成即时主观状态问题而不是单独程序系数图,true
+Movement,Q2 coefficient plot,main_science,reconstruct,main_science,需保留关键无效应并用科学标签解释,true
+Movement,pose direction result figures,sensitivity,move_appendix,sensitivity,辅助姿态不得与body motion主指标并列升级,true
+Movement,radial distance result figures,sensitivity,move_appendix,sensitivity,辅助工程量仅用于敏感性或补充解释,true
+Movement,exposure or brightness relation,qc,keep_appendix,qc,属于潜在技术混杂与质量控制,true
+Movement,coverage or source availability,qc,keep_appendix,qc,属于正式可用性审计,true
+Ocular,task progression 15-row coefficient plot,main_science,reconstruct,main_science,五个眼部维度与多个任务项混成模型行应改为同一上位问题下的五维轨迹,true
+Ocular,Q1 30-row coefficient plot,main_science,reconstruct,main_science,正文只保留within-person人内状态效应并按五个科学维度组织；between-person移正式附录,true
+Ocular,Q2 10-row coefficient plot,main_science,reconstruct,main_science,正文只保留within-person并按困倦清醒程度变化解释；between-person移正式附录,true
+Ocular,ocular-behavior 40-row coefficient plot,main_science,reconstruct,main_science,需拆开人内和人际层级并用紧凑效应矩阵替代40行森林图,true
+Ocular,primary feature coverage,qualification,keep_appendix,qualification,回答正式五维指标的可测量性而非注意效应,true
+Ocular,alternative representation coverage,sensitivity,keep_appendix,sensitivity,替代表示只用于敏感性和资格支持,true
+Ocular,missingness or source QC,qc,keep_appendix,qc,结构性缺失与来源是质量控制信息,true
