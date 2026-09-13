@@ -39,8 +39,17 @@ def test_behavior_handoff_keeps_only_rt_level_as_researcher_choice():
     handoff = build_behavior_feature_handoff(_probe())
     ready = set(handoff.loc[handoff["registry_ready"], "predictor_column"])
     assert ready == set(PRIMARY)
+    # The RT-level representation was researcher-frozen to the median on 2026-09-13, so no
+    # researcher decision remains pending. The mean stays a limited alternative only.
     pending = set(handoff.loc[handoff["researcher_freeze_required"], "candidate_representation_id"])
-    assert pending == {"rt_level_mean", "rt_level_median"}
+    assert pending == set()
+    median = handoff.loc[handoff["predictor_column"].eq("go_correct_rt_median_ms")].iloc[0]
+    assert median["report_role"] == "primary"
+    assert median["measurement_qc_status"] == "method_frozen_researcher_median"
+    assert bool(median["registry_ready"]) is True
+    mean = handoff.loc[handoff["predictor_column"].eq("go_correct_rt_mean_ms")].iloc[0]
+    assert mean["report_role"] == "limited_alternative"
+    assert "not an independent scientific dimension" in mean["redundancy_relation"]
     cv = handoff.loc[handoff["predictor_column"].eq("go_correct_rt_cv")].iloc[0]
     assert "minimum n=2" in cv["estimability_rule"]
     assert cv["temporal_anchor"] == "probe_time_ms"
@@ -90,6 +99,9 @@ def test_behavior_science_output_is_question_driven_not_cartesian(tmp_path):
     assert (root / "figures" / "qc").is_dir()
     assert not (root / "feature_registry.yaml").exists()
     assert manifest["formal_registry_mutated"] is False
-    assert manifest["rt_level_freeze_pending"] is True
+    assert manifest["rt_level_freeze_pending"] is False
+    assert manifest["rt_level_frozen_representation"] == "go_correct_rt_median_ms"
+    assert manifest["rt_level_limited_alternatives"] == ["go_correct_rt_mean_ms"]
+    assert manifest["researcher_freeze_pending"] == []
     stored = json.loads((root / "manifests" / "science_output_manifest.json").read_text(encoding="utf-8"))
     assert stored["feature_selection_policy"].startswith("Q1/Q2 significance")

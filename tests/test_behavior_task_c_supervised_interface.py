@@ -17,6 +17,8 @@ from attention_pipeline.behavior_formal.behavior_supervised_interface import (
     ERROR_CONTROL_CANDIDATES,
     FIRST_ROUND_CANDIDATE_POOL,
     RT_LEVEL_CANDIDATES,
+    RT_LEVEL_FROZEN_REPRESENTATION,
+    RT_LEVEL_LIMITED_ALTERNATIVES,
     RT_TREND_CANDIDATES,
     RT_VARIABILITY_CANDIDATES,
     BehaviorSupervisedInterfaceError,
@@ -178,6 +180,18 @@ def test_candidate_yaml_exactly_matches_python_candidate_and_qc_contracts() -> N
     cfg = yaml.safe_load((ROOT / "configs" / "behavior_supervised_candidates_v1.yaml").read_text(encoding="utf-8"))
     assert cfg["source"]["primary_window_seconds"] == 30
     assert tuple(cfg["candidate_dimensions"]["rt_level"]["columns"]) == RT_LEVEL_CANDIDATES
+    # 2026-09-13 researcher freeze: median is the single first-round RT-level representation
+    # and the mean is demoted to a limited alternative (yaml must mirror the Python constant).
+    rt_level = cfg["candidate_dimensions"]["rt_level"]
+    assert RT_LEVEL_FROZEN_REPRESENTATION == "go_correct_rt_median_ms"
+    assert RT_LEVEL_LIMITED_ALTERNATIVES == ("go_correct_rt_mean_ms",)
+    assert rt_level["preferred_current"] == RT_LEVEL_FROZEN_REPRESENTATION
+    assert tuple(rt_level["limited_alternatives"]) == RT_LEVEL_LIMITED_ALTERNATIVES
+    assert rt_level["final_choice"] == "frozen_go_correct_rt_median_ms"
+    assert rt_level["one_representative_per_feature_scheme"] is True
+    assert cfg["handoff_contract"]["researcher_freeze_remaining"] == []
+    assert cfg["handoff_contract"]["rt_level_frozen_representation"] == RT_LEVEL_FROZEN_REPRESENTATION
+    assert cfg["policies"]["rt_level_choice_not_frozen_here"] is False
     variability = cfg["candidate_dimensions"]["rt_variability"]
     assert variability["preferred_current"] == RT_VARIABILITY_CANDIDATES[0]
     assert tuple(variability["limited_alternatives"]) == RT_VARIABILITY_CANDIDATES[1:]

@@ -1,11 +1,12 @@
 pipeline:
   name: focuswave-behavior-supervised-candidates-v1
-  version: 1.1.1
+  version: 1.2.0
   authority:
     - FocusWave-Formal-Analysis/分析设计/1.16.4-单模态特征冻结与真实运行闸门_20260912.md
     - FocusWave-Formal-Analysis/分析设计/1.16.10-监督学习模态与设备定义修订及代码迁移计划_20260912.md
     - FocusWave-Formal-Analysis/分析设计/1.16.12-单模态科研输出绘图与特征交接计划_20260913.md
     - FocusWave-Formal-Analysis/分析设计/1.16.13-Behavior单模态科学输出实现状态_20260913.md
+    - FocusWave-Formal-Analysis/分析设计/1.16.20-Behavior_RT水平中位数冻结与正式运行准入_20260913.md
 
 source:
   table: behavior_supervised_probe_30s.csv
@@ -31,9 +32,16 @@ outcomes:
 
 candidate_dimensions:
   rt_level:
-    columns: [go_correct_rt_mean_ms, go_correct_rt_median_ms]
+    columns: [go_correct_rt_median_ms, go_correct_rt_mean_ms]
+    preferred_current: go_correct_rt_median_ms
+    limited_alternatives: [go_correct_rt_mean_ms]
     one_representative_per_feature_scheme: true
-    final_choice: researcher_freeze_pending_mean_vs_median
+    final_choice: frozen_go_correct_rt_median_ms
+    freeze_basis: >-
+      Q1/Q2-blind redundancy freeze: Spearman rho = .94/.93/.93/.91 at
+      session/block/cycle/probe; mean minus median = 9.63 ms on average and the mean is
+      more sensitive to a few slow responses. The mean is a limited alternative
+      representation only and is never a second independent scientific dimension.
   rt_variability:
     preferred_current: go_correct_rt_cv
     limited_alternatives: [go_correct_rt_sd_ms, go_correct_rt_mad_ms, go_correct_rt_iqr_ms]
@@ -91,8 +99,9 @@ handoff_contract:
   temporal_anchor: probe_time_ms
   temporal_scope: pre_probe_only
   time_legality_status: verified_pre_probe_only
-  researcher_freeze_remaining:
-    - behavior_rt_level_mean_vs_median
+  researcher_freeze_remaining: []
+  rt_level_frozen_representation: go_correct_rt_median_ms
+  rt_level_limited_alternatives: [go_correct_rt_mean_ms]
 
 policies:
   # Current scientific wording.
@@ -103,7 +112,7 @@ policies:
   data_dependent_selection_must_remain_inside_training_boundary: true
   all_nonraw_omission_rates_not_first_round_predictors: true
   rt_cv_empirical_minimum_n_gate: false
-  rt_level_choice_not_frozen_here: true
+  rt_level_choice_not_frozen_here: false
   commission_is_first_round_primary: true
   dprime_is_sensitivity_not_joint_primary: true
   q1_q2_significance_not_feature_freeze_criterion: true

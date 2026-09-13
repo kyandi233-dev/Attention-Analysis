@@ -52,9 +52,17 @@ OUTCOME_COLUMNS = (
     "q2_ordinal_4level",
 )
 
+# Researcher freeze (2026-09-13): the first-round Behavior RT-level representation is
+# the MEDIAN. The mean survives only as a limited alternative representation and must
+# never be treated as a second independent scientific dimension: the two are highly
+# redundant (Spearman rho = .94/.93/.93/.91 at session/block/cycle/probe) and the mean is
+# more sensitive to a few slow responses. The preferred representation stays first, which
+# matches the existing RT_VARIABILITY_CANDIDATES convention. This freeze is Q1/Q2-blind.
+RT_LEVEL_FROZEN_REPRESENTATION = "go_correct_rt_median_ms"
+RT_LEVEL_LIMITED_ALTERNATIVES = ("go_correct_rt_mean_ms",)
 RT_LEVEL_CANDIDATES = (
-    "go_correct_rt_mean_ms",
-    "go_correct_rt_median_ms",
+    RT_LEVEL_FROZEN_REPRESENTATION,
+    *RT_LEVEL_LIMITED_ALTERNATIVES,
 )
 RT_VARIABILITY_CANDIDATES = (
     "go_correct_rt_cv",
@@ -359,8 +367,10 @@ def _field_role(field: str) -> tuple[str, str]:
         return "supervised_target_source", "Q1=1 vs Q1=2/3/4 is encoded downstream by Task A"
     if field == "q2_ordinal_4level":
         return "interpretation_construct_only", "not a first-round Q1 predictor"
-    if field in RT_LEVEL_CANDIDATES:
-        return "candidate_scheme_rt_level", "mean vs median remains unresolved; do not enter both by default"
+    if field == RT_LEVEL_FROZEN_REPRESENTATION:
+        return "first_round_rt_level_frozen", "researcher-frozen first-round RT level representation (median)"
+    if field in RT_LEVEL_LIMITED_ALTERNATIVES:
+        return "limited_alternative_rt_level", "limited alternative representation; not an independent scientific dimension"
     if field in RT_VARIABILITY_CANDIDATES:
         return "candidate_scheme_rt_variability", "CV currently preferred; alternatives remain limited candidate representations"
     if field in RT_TREND_CANDIDATES:
