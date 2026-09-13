@@ -1,0 +1,559 @@
+pipeline:
+  name: focuswave-supervised-learning-v3-cardiopulmonary
+  version: 3.0.0
+  evidence_repo: kyandi233-dev/FocusWave-Formal-Analysis
+  evidence_branch: codex/code-fix-ledger
+  evidence_method_entry: 分析设计/1.16.10-监督学习模态与设备定义修订及代码迁移计划_20260912.md
+  evidence_interface_entry: 分析设计/1.16.11-监督学习特征文件接口与运行前闸门_20260913.md
+  inherited_training_evaluation_entry: 分析设计/1.16.1-监督学习心理意义、训练权重与多层评价修订_20260911.md
+  implementation_interface_document: docs/supervised_learning/1.16.10-feature-and-file-interface.md
+  implementation_plan: https://github.com/kyandi233-dev/Attention-Analysis/issues/65
+  random_seed: 20260910
+  inherits_frozen_registry: configs/supervised_learning_v1.yaml
+  cardiopulmonary_promotion: 1.15.9 §3 time-legality gate closed for contract and provenance after the M1 producer
+    closure became canonical on the mmWave main branch; the two cardiopulmonary features are promoted from supplementary
+    to formal prediction eligibility. Physiology qualification is unchanged (LIMITED_SUPPORTING_ONLY) and is a separate
+    axis.
+paths:
+  input_table:
+    path_key: supervised_learning_input_probe_table
+  output_root:
+    path_key: supervised_learning_output_root
+task:
+  name: q1_equals_1_vs_2_3_4
+  analysis_unit: probe_preceding_window
+  primary_window_seconds: 30
+  source_column: q1_nominal_4class
+  positive_values:
+  - 1
+  negative_values:
+  - 2
+  - 3
+  - 4
+  positive_label: 1
+  negative_label: 0
+  positive_probability_name: p_q1_equals_1
+validation:
+  outer:
+    method: leave_one_participant_out
+    group_column: participant_group_id
+    participant_disjoint: true
+  inner:
+    method: grouped_k_fold
+    n_splits: 5
+    group_column: participant_group_id
+    refit_preprocessing_per_split: true
+  zero_individual_calibration: true
+  forbid_test_participant_sequence_statistics: true
+  forbid_test_participant_future_information: true
+  require_analysis_set_id: true
+preprocessing:
+  participant_equal_weighted_median_imputation_fit_on_training_only: true
+  participant_equal_standardization_fit_on_training_only: true
+  data_dependent_column_handling_fit_on_training_only: true
+  participant_equal_training_weights_normalized_to_mean_one: true
+  unified_global_coverage_cutoff: null
+  participant_specific_within_between_mainline: false
+feature_registry:
+  status: frozen_with_cardiopulmonary
+  schema_version: 1.16.10-time-legality-v1
+  validator: scripts/validate_supervised_feature_registry.py
+  template: configs/supervised_feature_registry_template_v1.yaml
+  frozen_at: '2026-09-13'
+  frozen_from:
+    behavior: FormalScience/Behavior/tables/behavior_feature_handoff.csv
+    ocular: FormalScience/Ocular/tables/ocular_feature_handoff.csv
+    movement: FormalScience/Movement/tables/movement_feature_handoff.csv
+    cardiopulmonary: mmWave/mmwave_cardiopulmonary_endpoint_guard_e352dce_20260913/mmwave_cardiopulmonary_taskb_source.csv
+  features:
+  - feature_id: behavior.rt_level.median.v1
+    scientific_feature_id: behavior_rt_level
+    columns:
+    - go_correct_rt_median_ms
+    role: behavior
+    modality: behavior
+    feature_type: rt_level
+    raw_source: Behavior/formal_v3/probe_primary_30s.csv
+    source_namespace: behavior
+    required_devices: []
+    preprocessing_dependencies: []
+    temporal_anchor: probe_time_ms
+    temporal_scope: pre_probe_only
+    time_legality_status: verified_pre_probe_only
+    time_legality_evidence: 'build_probe_windows: same session/block; trial_num < anchor_trial; absolute_onset_time
+      < probe_time; primary interval [probe_time-30s, probe_time); anchor trial excluded; block crossing forbidden'
+    standalone_eligible: true
+    behavior_increment_eligible: false
+    behavior_reference_eligible: true
+    modality_model_eligible: false
+    full_model_eligible: true
+    full_leave_one_out_eligible: true
+    allowed_device_packages: []
+    description: Researcher-frozen first-round RT level representation (median). go_correct_rt_mean_ms is a limited
+      alternative only and never a second scientific dimension.
+  - feature_id: behavior.rt_variability.cv.v1
+    scientific_feature_id: behavior_rt_variability
+    columns:
+    - go_correct_rt_cv
+    role: behavior
+    modality: behavior
+    feature_type: rt_variability
+    raw_source: Behavior/formal_v3/probe_primary_30s.csv
+    source_namespace: behavior
+    required_devices: []
+    preprocessing_dependencies: []
+    temporal_anchor: probe_time_ms
+    temporal_scope: pre_probe_only
+    time_legality_status: verified_pre_probe_only
+    time_legality_evidence: 'build_probe_windows: same session/block; trial_num < anchor_trial; absolute_onset_time
+      < probe_time; primary interval [probe_time-30s, probe_time); anchor trial excluded; block crossing forbidden'
+    standalone_eligible: true
+    behavior_increment_eligible: false
+    behavior_reference_eligible: true
+    modality_model_eligible: false
+    full_model_eligible: true
+    full_leave_one_out_eligible: true
+    allowed_device_packages: []
+    description: First-round RT variability representation (CV, mathematical minimum n=2). SD/MAD/IQR remain limited
+      sensitivity alternatives.
+  - feature_id: behavior.rt_trend.theilsen.v1
+    scientific_feature_id: behavior_rt_trend
+    columns:
+    - go_correct_rt_theilsen_slope_ms_per_s
+    role: behavior
+    modality: behavior
+    feature_type: rt_trend
+    raw_source: Behavior/formal_v3/probe_primary_30s.csv
+    source_namespace: behavior
+    required_devices: []
+    preprocessing_dependencies: []
+    temporal_anchor: probe_time_ms
+    temporal_scope: pre_probe_only
+    time_legality_status: verified_pre_probe_only
+    time_legality_evidence: 'build_probe_windows: same session/block; trial_num < anchor_trial; absolute_onset_time
+      < probe_time; primary interval [probe_time-30s, probe_time); anchor trial excluded; block crossing forbidden'
+    standalone_eligible: true
+    behavior_increment_eligible: false
+    behavior_reference_eligible: true
+    modality_model_eligible: false
+    full_model_eligible: true
+    full_leave_one_out_eligible: true
+    allowed_device_packages: []
+    description: First-round RT trend representation as frozen by the Behavior producer (Theil-Sen slope).
+  - feature_id: behavior.go_omission.raw.v1
+    scientific_feature_id: behavior_go_omission
+    columns:
+    - raw_go_omission_rate
+    role: behavior
+    modality: behavior
+    feature_type: go_omission
+    raw_source: Behavior/formal_v3/probe_primary_30s.csv
+    source_namespace: behavior
+    required_devices: []
+    preprocessing_dependencies: []
+    temporal_anchor: probe_time_ms
+    temporal_scope: pre_probe_only
+    time_legality_status: verified_pre_probe_only
+    time_legality_evidence: 'build_probe_windows: same session/block; trial_num < anchor_trial; absolute_onset_time
+      < probe_time; primary interval [probe_time-30s, probe_time); anchor trial excluded; block crossing forbidden'
+    standalone_eligible: true
+    behavior_increment_eligible: false
+    behavior_reference_eligible: true
+    modality_model_eligible: false
+    full_model_eligible: true
+    full_leave_one_out_eligible: true
+    allowed_device_packages: []
+    description: 'First-round Go omission predictor: raw program omission only. Clean and timing-ambiguous partitions
+      stay descriptive/QC only.'
+  - feature_id: behavior.nogo_commission.raw.v1
+    scientific_feature_id: behavior_nogo_commission
+    columns:
+    - commission_rate
+    role: behavior
+    modality: behavior
+    feature_type: nogo_commission
+    raw_source: Behavior/formal_v3/probe_primary_30s.csv
+    source_namespace: behavior
+    required_devices: []
+    preprocessing_dependencies: []
+    temporal_anchor: probe_time_ms
+    temporal_scope: pre_probe_only
+    time_legality_status: verified_pre_probe_only
+    time_legality_evidence: 'build_probe_windows: same session/block; trial_num < anchor_trial; absolute_onset_time
+      < probe_time; primary interval [probe_time-30s, probe_time); anchor trial excluded; block crossing forbidden'
+    standalone_eligible: true
+    behavior_increment_eligible: false
+    behavior_reference_eligible: true
+    modality_model_eligible: false
+    full_model_eligible: true
+    full_leave_one_out_eligible: true
+    allowed_device_packages: []
+    description: First-round No-Go commission rate (explicit No-Go opportunity denominator). dprime_loglinear stays
+      a sensitivity representation.
+  - feature_id: ocular.pupil_level.rseg_hard.rgb_nir_qc.v1
+    scientific_feature_id: ocular.pupil_level
+    columns:
+    - ocular__rseg_hard__rgb_nir_qc__level_mean__2s
+    role: sensor
+    modality: ocular
+    feature_type: pupil
+    raw_source: FormalScience/Ocular/tables/ocular_probe_features_wide.csv
+    source_namespace: nir
+    required_devices:
+    - nir
+    - rgb
+    preprocessing_dependencies:
+    - rgb_plus_nir_qc
+    - fixed_2s_bins
+    - no_interpolation
+    - pre200_post200
+    temporal_anchor: probe_time_ms
+    temporal_scope: pre_probe_only
+    time_legality_status: verified_pre_probe_only
+    time_legality_evidence: G1 fixed probe-relative pre-30s bins; 2s x 15; no interpolation; pre200/post200 for
+      RGB-assisted track
+    standalone_eligible: true
+    behavior_increment_eligible: true
+    behavior_reference_eligible: false
+    modality_model_eligible: true
+    full_model_eligible: true
+    full_leave_one_out_eligible: true
+    allowed_device_packages:
+    - M5
+    - M7
+    description: First-round pupil level (hard R_seg mean). Scientific modality is ocular while the source namespace
+      is nir and the real device dependency is [nir, rgb] because RGB blink masking assists the track.
+  - feature_id: ocular.pupil_variability.rseg_hard.rgb_nir_qc.v1
+    scientific_feature_id: ocular.pupil_variability
+    columns:
+    - ocular__rseg_hard__rgb_nir_qc__variability_mad__2s
+    role: sensor
+    modality: ocular
+    feature_type: pupil
+    raw_source: FormalScience/Ocular/tables/ocular_probe_features_wide.csv
+    source_namespace: nir
+    required_devices:
+    - nir
+    - rgb
+    preprocessing_dependencies:
+    - rgb_plus_nir_qc
+    - fixed_2s_bins
+    - no_interpolation
+    - pre200_post200
+    temporal_anchor: probe_time_ms
+    temporal_scope: pre_probe_only
+    time_legality_status: verified_pre_probe_only
+    time_legality_evidence: G1 fixed probe-relative pre-30s bins; 2s x 15; no interpolation; pre200/post200 for
+      RGB-assisted track
+    standalone_eligible: true
+    behavior_increment_eligible: true
+    behavior_reference_eligible: false
+    modality_model_eligible: true
+    full_model_eligible: true
+    full_leave_one_out_eligible: true
+    allowed_device_packages:
+    - M5
+    - M7
+    description: First-round pupil variability (hard R_seg MAD). SD remains a limited sensitivity alternative.
+  - feature_id: ocular.pupil_linear_trend.rseg_hard.rgb_nir_qc.v1
+    scientific_feature_id: ocular.pupil_linear_trend
+    columns:
+    - ocular__rseg_hard__rgb_nir_qc__linear_slope_per_sec__2s
+    role: sensor
+    modality: ocular
+    feature_type: pupil_dynamic
+    raw_source: FormalScience/Ocular/tables/ocular_probe_features_wide.csv
+    source_namespace: nir
+    required_devices:
+    - nir
+    - rgb
+    preprocessing_dependencies:
+    - rgb_plus_nir_qc
+    - fixed_2s_bins
+    - no_interpolation
+    - pre200_post200
+    temporal_anchor: probe_time_ms
+    temporal_scope: pre_probe_only
+    time_legality_status: verified_pre_probe_only
+    time_legality_evidence: G1 fixed probe-relative pre-30s bins; 2s x 15; no interpolation; pre200/post200 for
+      RGB-assisted track; frozen span >=20s
+    standalone_eligible: true
+    behavior_increment_eligible: true
+    behavior_reference_eligible: false
+    modality_model_eligible: true
+    full_model_eligible: true
+    full_leave_one_out_eligible: true
+    allowed_device_packages:
+    - M5
+    - M7
+    description: First-round pupil linear change (OLS on fixed 2 s bin medians, window-midpoint centred), frozen
+      minimum temporal span 20 s.
+  - feature_id: ocular.pupil_quadratic_curvature.rseg_hard.rgb_nir_qc.v1
+    scientific_feature_id: ocular.pupil_quadratic_curvature
+    columns:
+    - ocular__rseg_hard__rgb_nir_qc__quadratic_curvature_per_sec2__2s
+    role: sensor
+    modality: ocular
+    feature_type: pupil_dynamic
+    raw_source: FormalScience/Ocular/tables/ocular_probe_features_wide.csv
+    source_namespace: nir
+    required_devices:
+    - nir
+    - rgb
+    preprocessing_dependencies:
+    - rgb_plus_nir_qc
+    - fixed_2s_bins
+    - no_interpolation
+    - pre200_post200
+    temporal_anchor: probe_time_ms
+    temporal_scope: pre_probe_only
+    time_legality_status: verified_pre_probe_only
+    time_legality_evidence: G1 fixed probe-relative pre-30s bins; 2s x 15; no interpolation; pre200/post200 for
+      RGB-assisted track; frozen span >=20s
+    standalone_eligible: true
+    behavior_increment_eligible: true
+    behavior_reference_eligible: false
+    modality_model_eligible: true
+    full_model_eligible: true
+    full_leave_one_out_eligible: true
+    allowed_device_packages:
+    - M5
+    - M7
+    description: First-round pupil quadratic curvature on the same frozen bins, frozen minimum temporal span 20
+      s.
+  - feature_id: ocular.blink_rate.rgb_event_rate.pre30s.v1
+    scientific_feature_id: ocular.blink_rate
+    columns:
+    - ocular__blink_event_rate_per_min__pre30s
+    role: sensor
+    modality: ocular
+    feature_type: blink
+    raw_source: FormalScience/Ocular/tables/ocular_probe_features_wide.csv
+    source_namespace: rgb
+    required_devices:
+    - rgb
+    preprocessing_dependencies:
+    - rgb_blink_events
+    - strict_probe_pre30s_window
+    temporal_anchor: probe_time_ms
+    temporal_scope: pre_probe_only
+    time_legality_status: verified_pre_probe_only
+    time_legality_evidence: existing RGB 5.5 strict same-block [-30s,0) probe window; anchor trial excluded
+    standalone_eligible: true
+    behavior_increment_eligible: true
+    behavior_reference_eligible: false
+    modality_model_eligible: true
+    full_model_eligible: true
+    full_leave_one_out_eligible: true
+    allowed_device_packages:
+    - M3
+    - M5
+    - M6
+    - M7
+    description: First-round blink event rate. Blink belongs to the ocular scientific modality even though it is
+      produced by the RGB device namespace.
+  - feature_id: movement.body_motion_energy.median.pre30s.v1
+    scientific_feature_id: movement.body_motion_energy
+    columns:
+    - body_motion_energy_median
+    role: sensor
+    modality: movement
+    feature_type: body_motion
+    raw_source: FormalScience/Movement/tables/movement_probe_descriptive_source.csv
+    source_namespace: rgb
+    required_devices:
+    - rgb
+    preprocessing_dependencies:
+    - rgb_formal_analysis_ready
+    - strict_probe_pre30s_window
+    temporal_anchor: probe_time_ms
+    temporal_scope: pre_probe_only
+    time_legality_status: verified_pre_probe_only
+    time_legality_evidence: existing RGB 5.5 producer; strict same-block [-30 s, 0) probe window; anchor trial excluded;
+      no future information
+    standalone_eligible: true
+    behavior_increment_eligible: true
+    behavior_reference_eligible: false
+    modality_model_eligible: true
+    full_model_eligible: true
+    full_leave_one_out_eligible: true
+    allowed_device_packages:
+    - M3
+    - M5
+    - M6
+    - M7
+    description: First-round Movement main indicator. Pose direction, radial proximity proxy, exposure and coverage
+      stay sensitivity/QC only.
+  - feature_id: cardiopulmonary.hr.fused.v1
+    scientific_feature_id: radar_derived_heart_rate
+    columns:
+    - mmwave_hr_fused_bpm_median
+    role: sensor
+    modality: cardiopulmonary
+    feature_type: heart_rate
+    raw_source: mmWave/mmwave_cardiopulmonary_endpoint_guard_e352dce_20260913/mmwave_cardiopulmonary_taskb_source.csv
+    source_namespace: mmwave
+    required_devices:
+    - mmwave
+    preprocessing_dependencies: []
+    temporal_anchor: probe_time_ms
+    temporal_scope: pre_probe_only
+    time_legality_status: verified_pre_probe_only
+    time_legality_evidence: 'MMWAVE M1 producer contract and provenance closure, now canonical on the mmWave repository
+      main branch (merge of PR #44; main 527ff09). Producer execution commit 01da845e with a clean worktree and
+      four source SHA-256 values independently rechecked. Frozen producer time contract: scientific clock = timestamp
+      CSV zero-based column 1 (DLL host receive/enqueue time), column 2 is QC-only; formal frame membership is strictly
+      right-open [window_effective_start_unix_ms, probe_onset_unix_ms) with window_end equal to probe_onset exactly
+      and a frame exactly at probe onset excluded; window_effective_start_unix_ms is the actual slicing lower bound;
+      J and E share one process_probe() implementation; mmwave_hr_usable_window_fraction now carries the producer
+      course signal_quality.usable_ratio instead of a binary availability indicator. Real-cohort old-vs-new audit
+      v2 PASS over all 2320 probes: key and frame-audit conservation, zero strict new-frame membership violations,
+      zero stateless same-membership violations, zero stateful HR violations when local membership and the incoming
+      previous_bpm anchor are both equal, and all 54 same-membership HR differences explained by previous_bpm anchor
+      divergence. Boundary: this closes the 1.15.9 §3 time-legality gate for contract and provenance ONLY. It is
+      not a physiology validation: physiology_qualification remains LIMITED_SUPPORTING_ONLY.'
+    standalone_eligible: true
+    behavior_increment_eligible: true
+    behavior_reference_eligible: false
+    modality_model_eligible: true
+    full_model_eligible: true
+    full_leave_one_out_eligible: true
+    allowed_device_packages:
+    - M2
+    - M4
+    - M6
+    - M7
+    supplementary_model_eligible: false
+    physiology_qualification: LIMITED_SUPPORTING_ONLY
+    report_role: formal_supporting
+    description: 'Millimetre-wave derived cardiopulmonary estimate. Formally registered after the M1 producer contract
+      and provenance closure became canonical upstream: the 1.15.9 §3 time-legality gate is closed for contract
+      and provenance. Physiology remains LIMITED_SUPPORTING_ONLY (HR/BR are HOLD / SUPPORTING_ONLY upstream); the
+      time-legality closure is not a physiology validation, and this limitation must be carried with every result
+      that uses this feature.'
+  - feature_id: cardiopulmonary.br.v1
+    scientific_feature_id: radar_derived_respiration_rate
+    columns:
+    - mmwave_breath_rate_breaths_per_min_median
+    role: sensor
+    modality: cardiopulmonary
+    feature_type: respiration_rate
+    raw_source: mmWave/mmwave_cardiopulmonary_endpoint_guard_e352dce_20260913/mmwave_cardiopulmonary_taskb_source.csv
+    source_namespace: mmwave
+    required_devices:
+    - mmwave
+    preprocessing_dependencies: []
+    temporal_anchor: probe_time_ms
+    temporal_scope: pre_probe_only
+    time_legality_status: verified_pre_probe_only
+    time_legality_evidence: 'MMWAVE M1 producer contract and provenance closure, now canonical on the mmWave repository
+      main branch (merge of PR #44; main 527ff09). Producer execution commit 01da845e with a clean worktree and
+      four source SHA-256 values independently rechecked. Frozen producer time contract: scientific clock = timestamp
+      CSV zero-based column 1 (DLL host receive/enqueue time), column 2 is QC-only; formal frame membership is strictly
+      right-open [window_effective_start_unix_ms, probe_onset_unix_ms) with window_end equal to probe_onset exactly
+      and a frame exactly at probe onset excluded; window_effective_start_unix_ms is the actual slicing lower bound;
+      J and E share one process_probe() implementation; mmwave_hr_usable_window_fraction now carries the producer
+      course signal_quality.usable_ratio instead of a binary availability indicator. Real-cohort old-vs-new audit
+      v2 PASS over all 2320 probes: key and frame-audit conservation, zero strict new-frame membership violations,
+      zero stateless same-membership violations, zero stateful HR violations when local membership and the incoming
+      previous_bpm anchor are both equal, and all 54 same-membership HR differences explained by previous_bpm anchor
+      divergence. Boundary: this closes the 1.15.9 §3 time-legality gate for contract and provenance ONLY. It is
+      not a physiology validation: physiology_qualification remains LIMITED_SUPPORTING_ONLY.'
+    standalone_eligible: true
+    behavior_increment_eligible: true
+    behavior_reference_eligible: false
+    modality_model_eligible: true
+    full_model_eligible: true
+    full_leave_one_out_eligible: true
+    allowed_device_packages:
+    - M2
+    - M4
+    - M6
+    - M7
+    supplementary_model_eligible: false
+    physiology_qualification: LIMITED_SUPPORTING_ONLY
+    report_role: formal_supporting
+    description: 'Millimetre-wave derived cardiopulmonary estimate. Formally registered after the M1 producer contract
+      and provenance closure became canonical upstream: the 1.15.9 §3 time-legality gate is closed for contract
+      and provenance. Physiology remains LIMITED_SUPPORTING_ONLY (HR/BR are HOLD / SUPPORTING_ONLY upstream); the
+      time-legality closure is not a physiology validation, and this limitation must be carried with every result
+      that uses this feature.'
+  note: Each exact representation records feature_id/scientific_feature_id, scientific modality, optional feature_type,
+    predictor column(s), Behavior/sensor role, raw source, explicit source_namespace, actual required_devices, preprocessing_dependencies,
+    temporal_anchor, temporal_scope, time_legality_status, time_legality_evidence, standalone / Behavior+x / modality-model
+    / Full eligibility, and explicit M0-M7 device-package eligibility. Scientific modality, producer namespace,
+    hardware dependency, and temporal legality are independent fields. Every feature requesting formal prediction
+    eligibility is verified_pre_probe_only, and every time_legality_evidence string is copied verbatim from the
+    frozen producer handoff.
+  supplementary_extension:
+    declared_at: '2026-09-13'
+    scientific_modality: cardiopulmonary
+    feature_ids:
+    - cardiopulmonary.hr.fused.v1
+    - cardiopulmonary.br.v1
+    purpose: Let the report answer whether millimetre-wave cardiopulmonary estimates add predictive information,
+      without asserting a qualification they do not hold.
+    why_not_formal: modality_model_eligible is simultaneously a prediction-eligibility request and is fail-closed
+      for every status other than verified_pre_probe_only. Cardiopulmonary holds physiology_qualification=LIMITED_SUPPORTING_ONLY
+      and time_legality_status=blocked_upstream_contract_mismatch, so registering it formally would require asserting
+      verified_pre_probe_only, which is not true today.
+    declaration: post_hoc_declared_after_primary_results_observed
+    non_effects:
+    - does not modify the frozen 11-feature registry or configs/supervised_learning_v1.yaml
+    - grants no formal prediction eligibility and no device-package eligibility
+    - does not change unavailable_modalities or unavailable_device_packages for the formal line
+feature_schemes:
+  status: interface_only_pending_task_c_d
+  model_families: {}
+  participant_specific_suffixes_forbidden:
+  - _within
+  - _between
+  note: Task A provides the shared nested training core. Registry-backed formal runs consume only the model IDs
+    declared by the current B-layer comparison-specific analysis_set_id; unrelated feature, scientific-modality,
+    or device-package models are not forced onto one global common sample. Legacy modality_blocks is compatibility-only
+    and must not carry nir/rgb/mmwave as scientific modalities.
+models:
+  primary:
+    kind: logistic_l2
+    C_candidates:
+    - 0.01
+    - 0.1
+    - 1.0
+    - 10.0
+    max_iter: 2000
+  selection_metric: participant_macro_log_loss
+uncertainty:
+  participant_cluster_bootstrap:
+    method: fixed_oof_participant_cluster_percentile
+    replicates: 1000
+    seed: 20260830
+    confidence_level: 0.95
+    paired_model_resampling: true
+    retrain_within_bootstrap: false
+outputs:
+  preserve_probe_keys: true
+  preserve_raw_q1: true
+  preserve_binary_label: true
+  preserve_positive_probability: true
+  preserve_outer_fold: true
+  preserve_feature_set_id: true
+  preserve_analysis_set_id: true
+  preserve_membership_type: true
+  preserve_run_id: true
+  preserve_failures: true
+  preserve_q2_for_reporting_context: true
+  preserve_feature_comparison_plan: true
+  preserve_scientific_modality: true
+  preserve_source_namespace: true
+  preserve_required_devices: true
+  preserve_preprocessing_dependencies: true
+  preserve_temporal_anchor: true
+  preserve_temporal_scope: true
+  preserve_time_legality_status: true
+  preserve_time_legality_evidence: true
+  preserve_comparison_role: true
+  preserve_includes_behavior_reference: true
+  paired_comparisons_require_same_analysis_set: true
+  cross_analysis_set_increment_ranking_allowed: false
+  write_probe_trajectory: true
+  write_session_discrimination: true
