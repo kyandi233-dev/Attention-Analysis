@@ -32,7 +32,14 @@ def _truthy(series: pd.Series) -> pd.Series:
 
 
 def _metric(predictor: str) -> str | None:
-    for name in ("level_mean", "level_median", "variability_sd", "variability_mad", "linear_slope_per_sec", "quadratic_curvature_per_sec2"):
+    for name in (
+        "level_mean",
+        "level_median",
+        "variability_sd",
+        "variability_mad",
+        "linear_slope_per_sec",
+        "quadratic_curvature_per_sec2",
+    ):
         if f"__{name}__" in predictor:
             return name
     return None
@@ -68,7 +75,14 @@ def build_frozen_ocular_science_output(
     keys = _probe_keys(source)
     if temporal_support_summary_path is not None:
         evidence = _read(temporal_support_summary_path)
-        required = {"signal", "cleaning_track", "buffer_id", "bin_width_sec", "linear_span_ge_20s_fraction", "quadratic_span_ge_20s_fraction"}
+        required = {
+            "signal",
+            "cleaning_track",
+            "buffer_id",
+            "bin_width_sec",
+            "linear_span_ge_20s_fraction",
+            "quadratic_span_ge_20s_fraction",
+        }
         missing = sorted(required - set(evidence.columns))
         if missing:
             raise ValueError(f"temporal freeze evidence missing fields: {missing}")
@@ -126,7 +140,11 @@ def build_frozen_ocular_science_output(
     handoff = _read(handoff_path)
     for i, row in handoff.iterrows():
         predictor = str(row["predictor_column"])
-        handoff.at[i, "measurement_qc_status"] = "g1_complete_parameters_frozen" if predictor != "ocular__blink_event_rate_per_min__pre30s" else "existing_rgb55_event_source"
+        handoff.at[i, "measurement_qc_status"] = (
+            "g1_complete_parameters_frozen"
+            if predictor != "ocular__blink_event_rate_per_min__pre30s"
+            else "existing_rgb55_event_source"
+        )
         handoff.at[i, "time_legality_status"] = "verified_pre_probe_only"
         handoff.at[i, "report_role"] = _role(predictor)
         handoff.at[i, "registry_ready"] = True
@@ -135,24 +153,48 @@ def build_frozen_ocular_science_output(
         if metric in DYNAMIC:
             handoff.at[i, "estimability_rule"] = "computable + early/late support + temporal_span_sec >= 20"
             handoff.at[i, "estimability_status"] = "estimable_frozen_rule"
-            handoff.at[i, "time_legality_evidence"] = str(row["time_legality_evidence"]) + "; frozen span >=20s"
+            handoff.at[i, "time_legality_evidence"] = (
+                str(row["time_legality_evidence"]) + "; frozen span >=20s"
+            )
     handoff[HANDOFF_COLUMNS].to_csv(handoff_path, index=False, encoding="utf-8-sig")
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest.update({
-        "technical_freeze": {"blink_buffer": FORMAL_RGB_BUFFER, "bin_width_sec": FORMAL_BIN_WIDTH_SEC, "bin_n": FORMAL_BIN_N, "minimum_temporal_span_sec": FORMAL_MIN_TEMPORAL_SPAN_SEC, "requires_early_and_late_support": True, "interpolation": False},
-        "first_round_pupil_representation": RSEG_HARD,
-        "cross_representation_sensitivity": GEOMETRY,
-        "segmentation_sensitivity": "seg_pupil_fraction_within_pupil_iris_soft",
-        "first_round_level_metric": "level_mean",
-        "first_round_variability_metric": "variability_mad",
-        "sensitivity_metrics": ["level_median", "variability_sd"],
-        "dynamic_metrics": ["linear_slope_per_sec", "quadratic_curvature_per_sec2"],
-        "researcher_freeze_required": False,
-        "p3_measurement_parameters_frozen": True,
-        "final_feature_registry_mutated": False,
-        "supervised_model_run": False,
-        "multimodal_model_run": False,
-    })
+    temporal_support = manifest.get("temporal_support")
+    if not isinstance(temporal_support, dict):
+        temporal_support = {}
+    temporal_support.update(
+        {
+            "status": "evidence_included_threshold_frozen",
+            "formal_minimum_span_frozen": True,
+            "formal_minimum_span_sec": FORMAL_MIN_TEMPORAL_SPAN_SEC,
+            "requires_early_and_late_support": True,
+            "selection_basis": "Q1/Q2-blind P3 measurement-support freeze",
+        }
+    )
+    manifest.update(
+        {
+            "technical_freeze": {
+                "blink_buffer": FORMAL_RGB_BUFFER,
+                "bin_width_sec": FORMAL_BIN_WIDTH_SEC,
+                "bin_n": FORMAL_BIN_N,
+                "minimum_temporal_span_sec": FORMAL_MIN_TEMPORAL_SPAN_SEC,
+                "requires_early_and_late_support": True,
+                "interpolation": False,
+            },
+            "temporal_support": temporal_support,
+            "first_round_pupil_representation": RSEG_HARD,
+            "cross_representation_sensitivity": GEOMETRY,
+            "segmentation_sensitivity": "seg_pupil_fraction_within_pupil_iris_soft",
+            "first_round_level_metric": "level_mean",
+            "first_round_variability_metric": "variability_mad",
+            "sensitivity_metrics": ["level_median", "variability_sd"],
+            "dynamic_metrics": ["linear_slope_per_sec", "quadratic_curvature_per_sec2"],
+            "researcher_freeze_required": False,
+            "p3_measurement_parameters_frozen": True,
+            "final_feature_registry_mutated": False,
+            "supervised_model_run": False,
+            "multimodal_model_run": False,
+        }
+    )
     manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return manifest
