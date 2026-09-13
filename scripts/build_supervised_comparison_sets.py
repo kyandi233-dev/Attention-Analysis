@@ -61,6 +61,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ocular-probes", required=True, type=Path)
     parser.add_argument("--movement-probes", required=True, type=Path)
     parser.add_argument(
+        "--cardiopulmonary-probes",
+        required=False,
+        default=None,
+        type=Path,
+        help=(
+            "mmwave-namespace probe table. Required exactly when the frozen registry "
+            "registers cardiopulmonary features (source_namespace=mmwave); the builder "
+            "fails closed in both directions."
+        ),
+    )
+    parser.add_argument(
         "--output-root",
         required=True,
         type=Path,
@@ -82,8 +93,9 @@ def main() -> int:
         ("behavior_probes", args.behavior_probes),
         ("ocular_probes", args.ocular_probes),
         ("movement_probes", args.movement_probes),
+        ("cardiopulmonary_probes", args.cardiopulmonary_probes),
     ):
-        if not path.is_file():
+        if path is not None and not path.is_file():
             raise FileNotFoundError(f"{label} not found: {path}")
 
     config = load_config(args.config, paths_config=args.paths_config)
@@ -96,6 +108,11 @@ def main() -> int:
         behavior_probes=_read_table(args.behavior_probes),
         ocular_probes=_read_table(args.ocular_probes),
         movement_probes=_read_table(args.movement_probes),
+        cardiopulmonary_probes=(
+            _read_table(args.cardiopulmonary_probes)
+            if args.cardiopulmonary_probes is not None
+            else None
+        ),
         required_outcomes=tuple(args.required_outcome or DEFAULT_REQUIRED_OUTCOMES),
     )
     paths = write_supervised_comparison_sets(args.output_root, result)
