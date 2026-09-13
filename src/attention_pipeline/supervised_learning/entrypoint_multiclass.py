@@ -330,13 +330,42 @@ def _multiclass_predictions_to_archive_contract(
     return out
 
 
-def _multiclass_fold_audits(predictions: pd.DataFrame) -> list[dict[str, object]]:
+def _multiclass_fold_audits(
+    predictions: pd.DataFrame,
+    source_audits: Sequence[Mapping[str, object]],
+) -> list[dict[str, object]]:
     """按 (model_id, outer_fold_group) 汇合四分类预测行，生成归档器要求的 fold 键。
 
     归档器要求 fold 审计恰有一行 per (model_id, outer_fold_group)，且 ``failed`` /
-    ``reason`` 与预测行、失败表三者完全一致。这里从预测行机械派生这两列，而不是重新
-    判断哪些折失败——跑出的折结论才是唯一权威。
+    ``reason`` 与预测行、失败表三者完全一致。这里分两路取数，缺一不可：
+
+    - ``failed`` / ``reason`` 从预测行机械派生，而不是重新判断哪些折失败——跑出的折
+      结论才是唯一权威；
+    - 其余折内容（外层训练/测试组、行数、route、外层四类覆盖、``selection``、
+      ``final_refit``）从运行器的权威折审计按键**原样带过来**。成对比较的
+      feature-retention 审计要求成功折带 ``final_refit``（含
+      ``preprocessing.output_columns``），只派生最小字段会让冻结归档器在
+      ``_feature_fold_estimability`` 处直接报错。
+
+    参数：
+        predictions: 已转为归档契约的四分类预测表。
+        source_audits: 运行器返回的权威折审计序列。
+    返回：
+        归档器可直接消费的折审计列表。
+    异常：
+        SupervisedLearningContractError: 同一 (model_id, outer_fold_group) 出现重复权威
+            审计，或某个预测折在权威审计中不存在（fail-closed，不做静默补齐）。
     """
+    index: dict[tuple[str, str], Mapping[str, object]] = {}
+    for audit in source_audits:
+        key = (str(audit.get("model_id", "")), str(audit.get("outer_fold_group", "")))
+        if key in index:
+            raise SupervisedLearningContractError(
+                f"duplicate authoritative fold audit for model_id={key[0]} "
+                f"outer_fold_group={key[1]}"
+            )
+        index[key] = audit
+
     grouped = (
         predictions.groupby(["model_id", "outer_fold_group"], sort=True, as_index=False)
         .agg(
@@ -351,18 +380,44 @@ def _multiclass_fold_audits(predictions: pd.DataFrame) -> list[dict[str, object]
         raise SupervisedLearningContractError(
             "a single (model_id, outer_fold_group) fold mixes failed and successful rows"
         )
-    return [
-        {
+
+    # 成对比较与外层审计需要、但无法从预测行恢复的字段。
+    carriable_fields = (
+        "route",
+        "outer_train_group_ids",
+        "outer_test_group_ids",
+        "n_outer_train_rows",
+        "n_outer_test_rows",
+        "outer_train_class_support",
+        "outer_train_missing_classes",
+        "outer_train_class_complete",
+        "selection",
+        "final_refit",
+    )
+
+    audits: list[dict[str, object]] = []
+    for row in grouped.itertuples(index=False):
+        key = (str(row.model_id), str(row.outer_fold_group))
+        source = index.get(key)
+        if source is None:
+            raise SupervisedLearningContractError(
+                f"no authoritative fold audit for model_id={key[0]} "
+                f"outer_fold_group={key[1]}"
+            )
+        audit: dict[str, object] = {
             "run_id": str(row.run_id),
             "analysis_set_id": str(row.analysis_set_id),
             MEMBERSHIP_COLUMN: str(row.membership_type),
-            "model_id": str(row.model_id),
-            "outer_fold_group": str(row.outer_fold_group),
+            "model_id": key[0],
+            "outer_fold_group": key[1],
             "failed": bool(row.model_failed),
             "reason": str(row.failure_reason),
         }
-        for row in grouped.itertuples(index=False)
-    ]
+        for field in carriable_fields:
+            if field in source:
+                audit[field] = source[field]
+        audits.append(audit)
+    return audits
 
 
 def _build_archive_result(
@@ -631,8 +686,13 @@ def run_multiclass_from_config(
         expected_rows=int(len(frame)) * int(result.metadata["n_models"]),
     )
     # 归档器的 fold 审计契约按 (model_id, outer_fold_group) 检查，失败折必须同时出现在
-    # predictions、failures 与 fold_audits 中；本函数按此机械派生，不改变跑出的折内容。
-    fold_audits_for_archive = _multiclass_fold_audits(archive_predictions)
+    # predictions、failures 与 fold_audits 中；本函数按此派生 failed/reason，并把运行器
+    # 的权威折内容（含 selection / final_refit）一并带入，供成对比较的
+    # feature-retention 审计使用。
+    fold_audits_for_archive = _multiclass_fold_audits(
+        archive_predictions,
+        result.fold_audits,
+    )
 
     metadata: dict[str, object] = dict(result.metadata)
     metadata["analysis_set_required_outcomes"] = list(required_outcomes)
