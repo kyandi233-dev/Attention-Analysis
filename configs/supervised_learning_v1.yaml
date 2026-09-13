@@ -1,6 +1,6 @@
 pipeline:
   name: focuswave-supervised-learning-v1
-  version: 1.2.0-dev
+  version: 1.2.0
   evidence_repo: kyandi233-dev/FocusWave-Formal-Analysis
   evidence_branch: codex/code-fix-ledger
   evidence_method_entry: 分析设计/1.16.10-监督学习模态与设备定义修订及代码迁移计划_20260912.md
@@ -53,13 +53,287 @@ preprocessing:
 # Upstream scientific work freezes the exact predictors. Task A consumes the registry;
 # it does not maintain a second scientific-variable blacklist. Prediction eligibility is
 # fail-closed until producer-side time legality is explicitly verified.
+#
+# Frozen 2026-09-13 from the single-modality science-output handoffs. Every entry below is
+# copied from the producer handoff of an ALREADY-frozen representation: nothing was added,
+# dropped or selected here, and every time_legality_evidence string is the producer's own
+# text. Scientific modality, producer source namespace and real hardware dependency are
+# three independent fields and are never inferred from one another (the pupil entries are
+# scientific_modality=ocular while their source_namespace is nir and their real device
+# dependency is [nir, rgb]).
+#
+# Cardiopulmonary is deliberately ABSENT. HR/BR remain
+# physiology_qualification = LIMITED_SUPPORTING_ONLY and must not be registered as formal
+# predictors. The exclusion stays machine-checkable without a placeholder entry: the
+# generated comparison plan iterates every sensor scientific modality and reports
+# unavailable_modalities.cardiopulmonary explicitly.
 feature_registry:
-  status: pending_upstream_feature_freeze
+  status: frozen
   schema_version: 1.16.10-time-legality-v1
   validator: scripts/validate_supervised_feature_registry.py
   template: configs/supervised_feature_registry_template_v1.yaml
-  features: []
-  note: "Each exact representation records feature_id/scientific_feature_id, scientific modality, optional feature_type, predictor column(s), Behavior/sensor role, raw source, explicit source_namespace, actual required_devices, preprocessing_dependencies, temporal_anchor, temporal_scope, time_legality_status, time_legality_evidence, standalone / Behavior+x / modality-model / Full eligibility, and explicit M0-M7 device-package eligibility. Scientific modality, producer namespace, hardware dependency, and temporal legality are independent fields. Any feature requesting formal prediction eligibility must be verified_pre_probe_only before real Task-B/Task-A execution."
+  frozen_at: "2026-09-13"
+  frozen_from:
+    behavior: FormalScience/Behavior/tables/behavior_feature_handoff.csv
+    ocular: FormalScience/Ocular/tables/ocular_feature_handoff.csv
+    movement: FormalScience/Movement/tables/movement_feature_handoff.csv
+  features:
+    # ---------------------------------------------------------------- Behavior (5)
+    - feature_id: behavior.rt_level.median.v1
+      scientific_feature_id: behavior_rt_level
+      columns: [go_correct_rt_median_ms]
+      role: behavior
+      modality: behavior
+      feature_type: rt_level
+      raw_source: Behavior/formal_v3/probe_primary_30s.csv
+      source_namespace: behavior
+      required_devices: []
+      preprocessing_dependencies: []
+      temporal_anchor: probe_time_ms
+      temporal_scope: pre_probe_only
+      time_legality_status: verified_pre_probe_only
+      time_legality_evidence: "build_probe_windows: same session/block; trial_num < anchor_trial; absolute_onset_time < probe_time; primary interval [probe_time-30s, probe_time); anchor trial excluded; block crossing forbidden"
+      standalone_eligible: true
+      behavior_increment_eligible: false
+      behavior_reference_eligible: true
+      modality_model_eligible: false
+      full_model_eligible: true
+      full_leave_one_out_eligible: true
+      allowed_device_packages: []
+      description: "Researcher-frozen first-round RT level representation (median). go_correct_rt_mean_ms is a limited alternative only and never a second scientific dimension."
+
+    - feature_id: behavior.rt_variability.cv.v1
+      scientific_feature_id: behavior_rt_variability
+      columns: [go_correct_rt_cv]
+      role: behavior
+      modality: behavior
+      feature_type: rt_variability
+      raw_source: Behavior/formal_v3/probe_primary_30s.csv
+      source_namespace: behavior
+      required_devices: []
+      preprocessing_dependencies: []
+      temporal_anchor: probe_time_ms
+      temporal_scope: pre_probe_only
+      time_legality_status: verified_pre_probe_only
+      time_legality_evidence: "build_probe_windows: same session/block; trial_num < anchor_trial; absolute_onset_time < probe_time; primary interval [probe_time-30s, probe_time); anchor trial excluded; block crossing forbidden"
+      standalone_eligible: true
+      behavior_increment_eligible: false
+      behavior_reference_eligible: true
+      modality_model_eligible: false
+      full_model_eligible: true
+      full_leave_one_out_eligible: true
+      allowed_device_packages: []
+      description: "First-round RT variability representation (CV, mathematical minimum n=2). SD/MAD/IQR remain limited sensitivity alternatives."
+
+    - feature_id: behavior.rt_trend.theilsen.v1
+      scientific_feature_id: behavior_rt_trend
+      columns: [go_correct_rt_theilsen_slope_ms_per_s]
+      role: behavior
+      modality: behavior
+      feature_type: rt_trend
+      raw_source: Behavior/formal_v3/probe_primary_30s.csv
+      source_namespace: behavior
+      required_devices: []
+      preprocessing_dependencies: []
+      temporal_anchor: probe_time_ms
+      temporal_scope: pre_probe_only
+      time_legality_status: verified_pre_probe_only
+      time_legality_evidence: "build_probe_windows: same session/block; trial_num < anchor_trial; absolute_onset_time < probe_time; primary interval [probe_time-30s, probe_time); anchor trial excluded; block crossing forbidden"
+      standalone_eligible: true
+      behavior_increment_eligible: false
+      behavior_reference_eligible: true
+      modality_model_eligible: false
+      full_model_eligible: true
+      full_leave_one_out_eligible: true
+      allowed_device_packages: []
+      description: "First-round RT trend representation as frozen by the Behavior producer (Theil-Sen slope)."
+
+    - feature_id: behavior.go_omission.raw.v1
+      scientific_feature_id: behavior_go_omission
+      columns: [raw_go_omission_rate]
+      role: behavior
+      modality: behavior
+      feature_type: go_omission
+      raw_source: Behavior/formal_v3/probe_primary_30s.csv
+      source_namespace: behavior
+      required_devices: []
+      preprocessing_dependencies: []
+      temporal_anchor: probe_time_ms
+      temporal_scope: pre_probe_only
+      time_legality_status: verified_pre_probe_only
+      time_legality_evidence: "build_probe_windows: same session/block; trial_num < anchor_trial; absolute_onset_time < probe_time; primary interval [probe_time-30s, probe_time); anchor trial excluded; block crossing forbidden"
+      standalone_eligible: true
+      behavior_increment_eligible: false
+      behavior_reference_eligible: true
+      modality_model_eligible: false
+      full_model_eligible: true
+      full_leave_one_out_eligible: true
+      allowed_device_packages: []
+      description: "First-round Go omission predictor: raw program omission only. Clean and timing-ambiguous partitions stay descriptive/QC only."
+
+    - feature_id: behavior.nogo_commission.raw.v1
+      scientific_feature_id: behavior_nogo_commission
+      columns: [commission_rate]
+      role: behavior
+      modality: behavior
+      feature_type: nogo_commission
+      raw_source: Behavior/formal_v3/probe_primary_30s.csv
+      source_namespace: behavior
+      required_devices: []
+      preprocessing_dependencies: []
+      temporal_anchor: probe_time_ms
+      temporal_scope: pre_probe_only
+      time_legality_status: verified_pre_probe_only
+      time_legality_evidence: "build_probe_windows: same session/block; trial_num < anchor_trial; absolute_onset_time < probe_time; primary interval [probe_time-30s, probe_time); anchor trial excluded; block crossing forbidden"
+      standalone_eligible: true
+      behavior_increment_eligible: false
+      behavior_reference_eligible: true
+      modality_model_eligible: false
+      full_model_eligible: true
+      full_leave_one_out_eligible: true
+      allowed_device_packages: []
+      description: "First-round No-Go commission rate (explicit No-Go opportunity denominator). dprime_loglinear stays a sensitivity representation."
+
+    # ----------------------------------------------------------------- Ocular (5)
+    - feature_id: ocular.pupil_level.rseg_hard.rgb_nir_qc.v1
+      scientific_feature_id: ocular.pupil_level
+      columns: [ocular__rseg_hard__rgb_nir_qc__level_mean__2s]
+      role: sensor
+      modality: ocular
+      feature_type: pupil
+      raw_source: FormalScience/Ocular/tables/ocular_probe_features_wide.csv
+      source_namespace: nir
+      required_devices: [nir, rgb]
+      preprocessing_dependencies: [rgb_plus_nir_qc, fixed_2s_bins, no_interpolation, pre200_post200]
+      temporal_anchor: probe_time_ms
+      temporal_scope: pre_probe_only
+      time_legality_status: verified_pre_probe_only
+      time_legality_evidence: "G1 fixed probe-relative pre-30s bins; 2s x 15; no interpolation; pre200/post200 for RGB-assisted track"
+      standalone_eligible: true
+      behavior_increment_eligible: true
+      behavior_reference_eligible: false
+      modality_model_eligible: true
+      full_model_eligible: true
+      full_leave_one_out_eligible: true
+      allowed_device_packages: [M5, M7]
+      description: "First-round pupil level (hard R_seg mean). Scientific modality is ocular while the source namespace is nir and the real device dependency is [nir, rgb] because RGB blink masking assists the track."
+
+    - feature_id: ocular.pupil_variability.rseg_hard.rgb_nir_qc.v1
+      scientific_feature_id: ocular.pupil_variability
+      columns: [ocular__rseg_hard__rgb_nir_qc__variability_mad__2s]
+      role: sensor
+      modality: ocular
+      feature_type: pupil
+      raw_source: FormalScience/Ocular/tables/ocular_probe_features_wide.csv
+      source_namespace: nir
+      required_devices: [nir, rgb]
+      preprocessing_dependencies: [rgb_plus_nir_qc, fixed_2s_bins, no_interpolation, pre200_post200]
+      temporal_anchor: probe_time_ms
+      temporal_scope: pre_probe_only
+      time_legality_status: verified_pre_probe_only
+      time_legality_evidence: "G1 fixed probe-relative pre-30s bins; 2s x 15; no interpolation; pre200/post200 for RGB-assisted track"
+      standalone_eligible: true
+      behavior_increment_eligible: true
+      behavior_reference_eligible: false
+      modality_model_eligible: true
+      full_model_eligible: true
+      full_leave_one_out_eligible: true
+      allowed_device_packages: [M5, M7]
+      description: "First-round pupil variability (hard R_seg MAD). SD remains a limited sensitivity alternative."
+
+    - feature_id: ocular.pupil_linear_trend.rseg_hard.rgb_nir_qc.v1
+      scientific_feature_id: ocular.pupil_linear_trend
+      columns: [ocular__rseg_hard__rgb_nir_qc__linear_slope_per_sec__2s]
+      role: sensor
+      modality: ocular
+      feature_type: pupil_dynamic
+      raw_source: FormalScience/Ocular/tables/ocular_probe_features_wide.csv
+      source_namespace: nir
+      required_devices: [nir, rgb]
+      preprocessing_dependencies: [rgb_plus_nir_qc, fixed_2s_bins, no_interpolation, pre200_post200]
+      temporal_anchor: probe_time_ms
+      temporal_scope: pre_probe_only
+      time_legality_status: verified_pre_probe_only
+      time_legality_evidence: "G1 fixed probe-relative pre-30s bins; 2s x 15; no interpolation; pre200/post200 for RGB-assisted track; frozen span >=20s"
+      standalone_eligible: true
+      behavior_increment_eligible: true
+      behavior_reference_eligible: false
+      modality_model_eligible: true
+      full_model_eligible: true
+      full_leave_one_out_eligible: true
+      allowed_device_packages: [M5, M7]
+      description: "First-round pupil linear change (OLS on fixed 2 s bin medians, window-midpoint centred), frozen minimum temporal span 20 s."
+
+    - feature_id: ocular.pupil_quadratic_curvature.rseg_hard.rgb_nir_qc.v1
+      scientific_feature_id: ocular.pupil_quadratic_curvature
+      columns: [ocular__rseg_hard__rgb_nir_qc__quadratic_curvature_per_sec2__2s]
+      role: sensor
+      modality: ocular
+      feature_type: pupil_dynamic
+      raw_source: FormalScience/Ocular/tables/ocular_probe_features_wide.csv
+      source_namespace: nir
+      required_devices: [nir, rgb]
+      preprocessing_dependencies: [rgb_plus_nir_qc, fixed_2s_bins, no_interpolation, pre200_post200]
+      temporal_anchor: probe_time_ms
+      temporal_scope: pre_probe_only
+      time_legality_status: verified_pre_probe_only
+      time_legality_evidence: "G1 fixed probe-relative pre-30s bins; 2s x 15; no interpolation; pre200/post200 for RGB-assisted track; frozen span >=20s"
+      standalone_eligible: true
+      behavior_increment_eligible: true
+      behavior_reference_eligible: false
+      modality_model_eligible: true
+      full_model_eligible: true
+      full_leave_one_out_eligible: true
+      allowed_device_packages: [M5, M7]
+      description: "First-round pupil quadratic curvature on the same frozen bins, frozen minimum temporal span 20 s."
+
+    - feature_id: ocular.blink_rate.rgb_event_rate.pre30s.v1
+      scientific_feature_id: ocular.blink_rate
+      columns: [ocular__blink_event_rate_per_min__pre30s]
+      role: sensor
+      modality: ocular
+      feature_type: blink
+      raw_source: FormalScience/Ocular/tables/ocular_probe_features_wide.csv
+      source_namespace: rgb
+      required_devices: [rgb]
+      preprocessing_dependencies: [rgb_blink_events, strict_probe_pre30s_window]
+      temporal_anchor: probe_time_ms
+      temporal_scope: pre_probe_only
+      time_legality_status: verified_pre_probe_only
+      time_legality_evidence: "existing RGB 5.5 strict same-block [-30s,0) probe window; anchor trial excluded"
+      standalone_eligible: true
+      behavior_increment_eligible: true
+      behavior_reference_eligible: false
+      modality_model_eligible: true
+      full_model_eligible: true
+      full_leave_one_out_eligible: true
+      allowed_device_packages: [M3, M5, M6, M7]
+      description: "First-round blink event rate. Blink belongs to the ocular scientific modality even though it is produced by the RGB device namespace."
+
+    # --------------------------------------------------------------- Movement (1)
+    - feature_id: movement.body_motion_energy.median.pre30s.v1
+      scientific_feature_id: movement.body_motion_energy
+      columns: [body_motion_energy_median]
+      role: sensor
+      modality: movement
+      feature_type: body_motion
+      raw_source: FormalScience/Movement/tables/movement_probe_descriptive_source.csv
+      source_namespace: rgb
+      required_devices: [rgb]
+      preprocessing_dependencies: [rgb_formal_analysis_ready, strict_probe_pre30s_window]
+      temporal_anchor: probe_time_ms
+      temporal_scope: pre_probe_only
+      time_legality_status: verified_pre_probe_only
+      time_legality_evidence: "existing RGB 5.5 producer; strict same-block [-30 s, 0) probe window; anchor trial excluded; no future information"
+      standalone_eligible: true
+      behavior_increment_eligible: true
+      behavior_reference_eligible: false
+      modality_model_eligible: true
+      full_model_eligible: true
+      full_leave_one_out_eligible: true
+      allowed_device_packages: [M3, M5, M6, M7]
+      description: "First-round Movement main indicator. Pose direction, radial proximity proxy, exposure and coverage stay sensitivity/QC only."
+  note: "Each exact representation records feature_id/scientific_feature_id, scientific modality, optional feature_type, predictor column(s), Behavior/sensor role, raw source, explicit source_namespace, actual required_devices, preprocessing_dependencies, temporal_anchor, temporal_scope, time_legality_status, time_legality_evidence, standalone / Behavior+x / modality-model / Full eligibility, and explicit M0-M7 device-package eligibility. Scientific modality, producer namespace, hardware dependency, and temporal legality are independent fields. Every feature requesting formal prediction eligibility is verified_pre_probe_only, and every time_legality_evidence string is copied verbatim from the frozen producer handoff."
 
 # Compatibility/manual-test interface. A non-empty feature_registry takes precedence.
 # Structural leakage guards (Q1 outcome/output columns, IDs, raw locator/audit fields)
