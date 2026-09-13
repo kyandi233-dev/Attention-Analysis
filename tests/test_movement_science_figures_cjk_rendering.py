@@ -73,6 +73,25 @@ def test_contains_cjk_detects_chinese_and_mixed_strings() -> None:
     assert contains_cjk("0.05 ± 0.01") is False
 
 
+def test_environment_exposes_a_cjk_capable_font() -> None:
+    """The shipped figure contract needs a real CJK face; absence must be visible.
+
+    Without this, a machine short of CJK fonts would still write figures that look
+    fine to pytest but contain tofu boxes.
+    """
+    from attention_pipeline.rgb_formal.movement_science_figures import (
+        _detect_cjk_font,
+        require_cjk_font,
+    )
+
+    detected = _detect_cjk_font()
+    assert detected is not None, (
+        "no CJK-capable font installed: install one (Debian/Ubuntu: "
+        "apt-get install -y fonts-noto-cjk) so Chinese figure labels can render"
+    )
+    assert require_cjk_font() == detected
+
+
 def test_movement_figures_render_chinese_without_missing_glyphs(tmp_path: Path) -> None:
     """Every shipped figure must render its Chinese labels with real glyphs."""
     _force_agg()

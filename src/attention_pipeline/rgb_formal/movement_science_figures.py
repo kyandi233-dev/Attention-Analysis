@@ -19,7 +19,23 @@ from attention_pipeline.formal_analysis.publication_style import finalize_public
 # object an explicit font-family LIST, which matplotlib does treat as a fallback
 # chain. The helpers below do exactly that.
 LATIN_FONT_ORDER = ("Times New Roman", "Times", "Liberation Serif", "DejaVu Serif")
-CJK_FONT_CANDIDATES = ("SimSun", "Microsoft YaHei", "SimHei", "Noto Serif CJK SC", "Noto Sans CJK SC")
+# Preferred CJK faces. Iterated in order, but the decisive test is real cmap
+# coverage (see _font_covers_cjk), because the family name of the same face
+# differs across distributions (e.g. Ubuntu's fonts-noto-cjk exposes
+# "Noto Sans CJK JP" / "Noto Serif CJK JP" rather than an "SC" variant).
+CJK_FONT_CANDIDATES = (
+    "SimSun",
+    "Noto Serif CJK SC",
+    "Noto Serif CJK JP",
+    "Noto Sans CJK SC",
+    "Noto Sans CJK JP",
+    "Microsoft YaHei",
+    "SimHei",
+    "WenQuanYi Zen Hei",
+    "AR PL UMing CN",
+    "DejaVu Sans",
+)
+CJK_PROBE_CHAR = "身"
 IMAGE_LANGUAGE = "Chinese_primary_latin_secondary"
 
 PRIMARY = "body_motion_energy_median"
@@ -83,12 +99,57 @@ FIGURE_AUDIT_COLUMNS = [
 ]
 
 
-def _detect_cjk_font() -> str:
-    installed = {item.name for item in font_manager.fontManager.ttflist}
-    for name in ("SimSun", "Microsoft YaHei", "SimHei", "Noto Serif CJK SC"):
-        if name in installed:
+def _font_covers_cjk(font_path: str | None) -> bool:
+    """Return True when the font file's cmap actually contains a CJK glyph.
+
+    Real coverage is checked instead of trusting the family name, because the
+    same face is exposed under different names across platforms.
+    """
+    if not font_path:
+        return False
+    try:
+        from fontTools.ttLib import TTFont
+
+        with TTFont(font_path, fontNumber=0, lazy=True) as handle:
+            cmap = handle.getBestCmap()
+            return bool(cmap) and ord(CJK_PROBE_CHAR) in cmap
+    except Exception:
+        return False
+
+
+def _detect_cjk_font() -> str | None:
+    """Pick a CJK-capable family; None when the environment has no such font."""
+    by_name: dict[str, str] = {}
+    for item in font_manager.fontManager.ttflist:
+        by_name.setdefault(item.name, item.fname)
+
+    for name in CJK_FONT_CANDIDATES:
+        path = by_name.get(name)
+        if path and _font_covers_cjk(path):
             return name
-    return "DejaVu Sans"
+
+    # Fall back to any installed family whose file genuinely covers CJK.
+    for name, path in sorted(by_name.items()):
+        if _font_covers_cjk(path):
+            return name
+    return None
+
+
+def require_cjk_font() -> str:
+    """Return the CJK family name or fail loudly.
+
+    A silent fallback here is exactly the defect this module fixes: the figures
+    would be written with tofu boxes while every test stayed green. Install a
+    CJK font (Windows: SimSun/YaHei; Debian/Ubuntu: fonts-noto-cjk) instead.
+    """
+    name = _detect_cjk_font()
+    if not name:
+        raise RuntimeError(
+            "no CJK-capable font is installed, so Chinese figure labels cannot be "
+            "rendered (they would be written as tofu boxes). Install a CJK font, "
+            "e.g. 'apt-get install -y fonts-noto-cjk' on Debian/Ubuntu."
+        )
+    return name
 
 
 _CJK_RANGES = (
@@ -110,11 +171,11 @@ def contains_cjk(text: str) -> bool:
 
 def _installed_font_orders() -> tuple[list[str], list[str]]:
     installed = {item.name for item in font_manager.fontManager.ttflist}
-    cjk = next((name for name in CJK_FONT_CANDIDATES if name in installed), None)
+    cjk = require_cjk_font()
     latin = [name for name in LATIN_FONT_ORDER if name in installed] or ["DejaVu Serif"]
-    cjk_order = ([cjk] if cjk else []) + latin
-    latin_order = latin + ([cjk] if cjk else [])
-    return cjk_order, latin_order
+    if cjk in latin:
+        latin = [name for name in latin if name != cjk] or ["DejaVu Serif"]
+    return [cjk, *latin], [*latin, cjk]
 
 
 def apply_text_fonts(fig: Any) -> dict[str, int]:
@@ -145,7 +206,8 @@ def apply_text_fonts(fig: Any) -> dict[str, int]:
 def _configure_style() -> None:
     import matplotlib.pyplot as plt
 
-    cjk = _detect_cjk_font()
+    # Fail early and loudly when the environment cannot render Chinese labels.
+    cjk = require_cjk_font()
     plt.rcParams.update(
         {
             "font.family": "serif",
