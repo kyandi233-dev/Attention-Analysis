@@ -62,6 +62,11 @@ def _verify_run(run_dir: Path) -> dict[str, object]:
     audits = json.loads(audits_path.read_text(encoding="utf-8"))
     evaluation = json.loads(evaluation_path.read_text(encoding="utf-8"))["evaluation"]
     predictions = pd.read_csv(predictions_path, low_memory=False)
+    # 路由标签：manifest 有就用，没有就按目录后缀推断（路线 B 的目录后缀以 4classB 结尾）。
+    route = str(
+        manifest.get("route")
+        or ("A" if run_dir.name.endswith(EXPECTED_ROUTE_A_SUFFIX) else "B")
+    )
 
     # --- 1. 任务与折结构 -------------------------------------------------------------
     _check(manifest.get("task") == EXPECTED_TASK, "task", str(manifest.get("task")), failures)
@@ -128,7 +133,22 @@ def _verify_run(run_dir: Path) -> dict[str, object]:
 
         selection = audit.get("selection") or {}
         inner_folds = selection.get("inner_fold_audits") or []
-        _check(len(inner_folds) > 0, f"{label} inner fold audits", str(len(inner_folds)), failures)
+        if route == "B":
+            # 路线 B 的逐步审计被 `_compact_forward_selection_audit` 精简，逐内层折数组
+            # 不再归档，因此**无法**从事后归档核验内层互斥。改为核验每个候选确实跑了
+            # `inner_splits` 个内层折；互斥性由与路线 A 共用的实现与单元测试保证，
+            # 并在下方按折记录为不可从归档核验。
+            route_b_inner_verified = False
+            for step in selection.get("steps") or []:
+                for evaluation in step.get("candidate_evaluations") or []:
+                    _check(
+                        int(evaluation.get("n_inner_fold_audits", -1)) == EXPECTED_INNER_SPLITS,
+                        f"{label} route-B candidate inner fold count",
+                        str(evaluation.get("n_inner_fold_audits")),
+                        failures,
+                    )
+        else:
+            _check(len(inner_folds) > 0, f"{label} inner fold audits", str(len(inner_folds)), failures)
         for inner in inner_folds:
             n_inner_fold_records += 1
             inner_train = set(map(str, inner.get("train_group_ids") or []))
@@ -136,6 +156,82 @@ def _verify_run(run_dir: Path) -> dict[str, object]:
             _check(not (inner_train & inner_valid),
                    f"{label} inner fold {inner.get('inner_fold')} overlap",
                    str(sorted(inner_train & inner_valid)), failures)
+
+    # --- 路线 B 专属条款 -------------------------------------------------------------
+    route_b_checks: dict[str, int] = {
+        "folds": 0, "empty_set_folds": 0, "non_empty_folds": 0, "candidate_evaluations": 0,
+    }
+    if route == "B":
+        allowed_stop_reasons = {
+            "no_strict_improvement",
+            "candidate_pool_exhausted",
+            "no_estimable_candidate_in_this_outer_training_fold",
+        }
+        for audit in audits:
+            selection = audit.get("selection") or {}
+            label = f"route-B fold={audit.get('outer_fold_group')}"
+            if not selection or audit.get("failed"):
+                continue
+            route_b_checks["folds"] += 1
+            _check(
+                selection.get("route") == "B_forward_selection_within_outer_training_fold",
+                f"{label} route tag", str(selection.get("route")), failures,
+            )
+            _check(
+                selection.get("selection_metric") == "participant_macro_multiclass_log_loss",
+                f"{label} selection metric", str(selection.get("selection_metric")), failures,
+            )
+            available = set(map(str, selection.get("available_candidate_feature_ids") or []))
+            selected = [str(v) for v in selection.get("selected_feature_set") or []]
+            selected_columns = [str(v) for v in selection.get("selected_columns") or []]
+            _check(set(selected) <= available, f"{label} selected subset of available pool",
+                   str(sorted(set(selected) - available)), failures)
+            _check(len(selected_columns) == len(selected),
+                   f"{label} selected columns align with selected features",
+                   f"{len(selected_columns)} vs {len(selected)}", failures)
+            is_empty = len(selected) == 0
+            _check(bool(selection.get("empty_feature_set")) == is_empty,
+                   f"{label} empty_feature_set flag", str(selection.get("empty_feature_set")), failures)
+            fallback = str(selection.get("empty_feature_set_fallback") or "")
+            _check(bool(fallback) == is_empty,
+                   f"{label} empty-set fallback naming", repr(fallback), failures)
+            selected_c = selection.get("selected_c")
+            if is_empty:
+                route_b_checks["empty_set_folds"] += 1
+                _check(selected_c is None, f"{label} empty set must not carry a C",
+                       str(selected_c), failures)
+            else:
+                route_b_checks["non_empty_folds"] += 1
+                _check(selected_c is not None and round(float(selected_c), 10) in {round(c, 10) for c in EXPECTED_C},
+                       f"{label} selected C within the frozen grid", str(selected_c), failures)
+            _check(str(selection.get("stop_reason")) in allowed_stop_reasons,
+                   f"{label} stop reason", str(selection.get("stop_reason")), failures)
+            steps = selection.get("steps") or []
+            _check(int(selection.get("n_steps", -1)) == len(steps),
+                   f"{label} n_steps matches recorded steps",
+                   f"{selection.get('n_steps')} vs {len(steps)}", failures)
+            accepted_losses: list[float] = []
+            for step in steps:
+                route_b_checks["candidate_evaluations"] += len(step.get("candidate_evaluations") or [])
+                if step.get("accepted"):
+                    _check(step.get("strict_improvement") is True,
+                           f"{label} accepted step must be a strict improvement",
+                           str(step.get("strict_improvement")), failures)
+                    accepted_losses.append(float(step.get("best_candidate_loss")))
+                else:
+                    _check(step.get("strict_improvement") is not True,
+                           f"{label} rejected step must not claim strict improvement",
+                           str(step.get("strict_improvement")), failures)
+            _check(all(b < a for a, b in zip(accepted_losses, accepted_losses[1:])),
+                   f"{label} accepted losses strictly decrease",
+                   str(accepted_losses), failures)
+            final_refit = audit.get("final_refit") or {}
+            refit_id = str(final_refit.get("feature_set_id") or "")
+            _check(bool(refit_id), f"{label} refit feature_set_id present", refit_id, failures)
+            if is_empty:
+                _check(refit_id == "outer_train_class_prior_constant",
+                       f"{label} empty set must refit to the prior fallback",
+                       refit_id, failures)
 
     # --- 7. 概率完整性 ---------------------------------------------------------------
     _check(all(column in predictions.columns for column in PROBABILITY_COLUMNS),
@@ -188,7 +284,7 @@ def _verify_run(run_dir: Path) -> dict[str, object]:
     return {
         "run_dir": str(run_dir),
         "run_id": manifest.get("run_id"),
-        "route": manifest.get("route", "A" if run_dir.name.endswith(EXPECTED_ROUTE_A_SUFFIX) else "B"),
+        "route": route,
         "ok": not failures,
         "failures": failures,
         "n_outer_folds": n_outer,
@@ -196,6 +292,10 @@ def _verify_run(run_dir: Path) -> dict[str, object]:
         "n_missing_class_folds": n_missing_class_folds,
         "n_inner_fold_records": n_inner_fold_records,
         "n_prediction_rows": int(len(predictions)),
+        "route_b": route_b_checks if route == "B" else None,
+        # 路线 B 的逐步审计被精简，逐内层折数组不归档，因此内层互斥**无法**从事后
+        # 归档核验；只有路线 A 的归档带有可核验的逐内层折记录。
+        "inner_fold_disjointness_verifiable_from_archive": route != "B",
     }
 
 
