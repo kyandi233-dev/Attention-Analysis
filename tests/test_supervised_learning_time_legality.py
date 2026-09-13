@@ -1,7 +1,10 @@
 import pytest
 
 from attention_pipeline.supervised_learning.time_legality import (
+    ALLOWED_TIME_LEGALITY_STATUSES,
     BLOCKED_FUTURE_INFORMATION,
+    BLOCKED_UPSTREAM_CONTRACT_MISMATCH,
+    FAIL_CLOSED_TIME_LEGALITY_STATUSES,
     PENDING_UPSTREAM_FREEZE,
     VERIFIED_PRE_PROBE_ONLY,
     TimeLegalityContractError,
@@ -151,3 +154,119 @@ def test_time_legality_audit_archives_machine_readable_contract():
     assert audit["n_verified_pre_probe_only"] == 1
     assert audit["contract"]["prediction_requires_verified_pre_probe_only"] is True
     assert audit["features"][0]["feature_id"] == "behavior_rt_level"
+
+
+def test_allowed_statuses_partition_into_verified_and_fail_closed():
+    """The status set must be exactly {verified} + {fail-closed}, with no overlap.
+
+    This is the guard that stops a future edit from adding a status that is neither, which would
+    silently create a third, unspecified eligibility regime.
+    """
+    assert FAIL_CLOSED_TIME_LEGALITY_STATUSES | {VERIFIED_PRE_PROBE_ONLY} == (
+        ALLOWED_TIME_LEGALITY_STATUSES
+    )
+    assert not (FAIL_CLOSED_TIME_LEGALITY_STATUSES & {VERIFIED_PRE_PROBE_ONLY})
+    assert BLOCKED_UPSTREAM_CONTRACT_MISMATCH in FAIL_CLOSED_TIME_LEGALITY_STATUSES
+
+
+def test_upstream_contract_mismatch_is_a_recognised_status():
+    """``分析设计/1.15.9`` §3 adjudicated this status and real mmWave artefacts already carry it.
+
+    Before the enum contained it, such a feature was rejected as an *unknown* status; the point of
+    adding it is that the rejection becomes an explicit, semantics-driven fail-closed decision.
+    """
+    record = _feature(
+        feature_id="mmwave_hr_fused_v1",
+        role="sensor",
+        modality="cardiopulmonary",
+        source_namespace="mmwave",
+        required_devices=["mmwave"],
+        temporal_anchor="probe_time_ms",
+        temporal_scope="pre_probe_only",
+        time_legality_status=BLOCKED_UPSTREAM_CONTRACT_MISMATCH,
+        time_legality_evidence="snapshot v1 metadata contract internally consistent; provenance open",
+        standalone_eligible=False,
+        behavior_reference_eligible=False,
+        full_model_eligible=False,
+        full_leave_one_out_eligible=False,
+        allowed_device_packages=[],
+    )
+    records = validate_feature_registry_time_legality({"features": [record]})
+    assert records[0].time_legality_status == BLOCKED_UPSTREAM_CONTRACT_MISMATCH
+    assert records[0].requests_prediction is False
+
+
+def test_upstream_contract_mismatch_fails_closed_and_names_the_remediation():
+    """Any prediction request under this status must be refused, and the error must say why."""
+    blocked = _feature(
+        feature_id="mmwave_hr_fused_v1",
+        role="sensor",
+        modality="cardiopulmonary",
+        source_namespace="mmwave",
+        required_devices=["mmwave"],
+        time_legality_status=BLOCKED_UPSTREAM_CONTRACT_MISMATCH,
+        standalone_eligible=False,
+        behavior_reference_eligible=False,
+        full_model_eligible=False,
+        full_leave_one_out_eligible=False,
+        modality_model_eligible=True,
+    )
+    with pytest.raises(TimeLegalityContractError) as excinfo:
+        validate_feature_registry_time_legality({"features": [blocked]})
+    message = str(excinfo.value)
+    assert "fail-closed" in message
+    for required in (
+        "upstream producer contract repair",
+        "boundary tests",
+        "per-probe old-vs-new audit",
+        "source-code provenance closure",
+    ):
+        assert required in message
+
+
+def test_upstream_contract_mismatch_still_trips_the_device_package_gate():
+    """Deferring to a device package is also a prediction request, so it must be refused too."""
+    blocked = _feature(
+        feature_id="mmwave_hr_fused_v1",
+        role="sensor",
+        modality="cardiopulmonary",
+        source_namespace="mmwave",
+        required_devices=["mmwave"],
+        time_legality_status=BLOCKED_UPSTREAM_CONTRACT_MISMATCH,
+        standalone_eligible=False,
+        behavior_reference_eligible=False,
+        full_model_eligible=False,
+        full_leave_one_out_eligible=False,
+        allowed_device_packages=["M2"],
+    )
+    with pytest.raises(TimeLegalityContractError, match="fail-closed"):
+        validate_feature_registry_time_legality({"features": [blocked]})
+
+
+def test_eligibility_defaults_make_an_omitted_field_a_prediction_request():
+    """Documents the trap that makes an mmWave entry fail-closed unless it denies eligibility.
+
+    ``standalone_eligible``, ``full_model_eligible`` and ``full_leave_one_out_eligible`` default to
+    True, so a registry entry that simply omits them is treated as requesting prediction and is
+    refused under any non-verified status. Writing the denials explicitly is therefore mandatory,
+    not optional, for a supporting-only feature.
+    """
+    omitted = _feature(
+        feature_id="mmwave_breath_rate_v1",
+        role="sensor",
+        modality="cardiopulmonary",
+        source_namespace="mmwave",
+        required_devices=["mmwave"],
+        time_legality_status=BLOCKED_UPSTREAM_CONTRACT_MISMATCH,
+    )
+    for field in (
+        "standalone_eligible",
+        "behavior_increment_eligible",
+        "behavior_reference_eligible",
+        "modality_model_eligible",
+        "full_model_eligible",
+        "full_leave_one_out_eligible",
+    ):
+        omitted.pop(field, None)
+    with pytest.raises(TimeLegalityContractError, match="fail-closed"):
+        validate_feature_registry_time_legality({"features": [omitted]})

@@ -17,17 +17,41 @@ from typing import Any, Mapping, Sequence
 from .task import SupervisedLearningContractError
 
 
+#: Schema version kept at v1: adding an allowed status is additive and does not change the shape
+#: or the meaning of any field in the audit record, and the frozen registry configs declare
+#: ``1.16.10-time-legality-v1``. Bumping it would break validation of already-frozen configs, which
+#: is exactly the kind of retroactive contract change the freeze exists to prevent.
 TIME_LEGALITY_SCHEMA_VERSION = "1.16.10-time-legality-v1"
 VERIFIED_PRE_PROBE_ONLY = "verified_pre_probe_only"
 PENDING_UPSTREAM_FREEZE = "pending_upstream_freeze"
 BLOCKED_FUTURE_INFORMATION = "blocked_future_information"
 BLOCKED_TEMPORAL_SCOPE_UNKNOWN = "blocked_temporal_scope_unknown"
+# ``分析设计/1.15.9`` §3 adjudicates this fifth status: the formal time contract is explicit, but
+# the upstream producer implementation or its traceable lineage is known to disagree with that
+# contract, or the current executable main line cannot unambiguously reproduce the declared
+# contract. Real cardiopulmonary artefacts already carry this value, so the enum must contain it;
+# before this, such a feature was rejected as "unknown status" rather than as an explicit,
+# semantics-driven fail-closed decision. Like every non-verified status it grants no prediction
+# eligibility whatsoever.
+BLOCKED_UPSTREAM_CONTRACT_MISMATCH = "blocked_upstream_contract_mismatch"
 ALLOWED_TIME_LEGALITY_STATUSES = frozenset(
     {
         VERIFIED_PRE_PROBE_ONLY,
         PENDING_UPSTREAM_FREEZE,
         BLOCKED_FUTURE_INFORMATION,
         BLOCKED_TEMPORAL_SCOPE_UNKNOWN,
+        BLOCKED_UPSTREAM_CONTRACT_MISMATCH,
+    }
+)
+
+#: Statuses that are structurally precluded from ever granting formal prediction eligibility.
+#: Exposed so that callers can assert the fail-closed property without duplicating the list.
+FAIL_CLOSED_TIME_LEGALITY_STATUSES = frozenset(
+    {
+        PENDING_UPSTREAM_FREEZE,
+        BLOCKED_FUTURE_INFORMATION,
+        BLOCKED_TEMPORAL_SCOPE_UNKNOWN,
+        BLOCKED_UPSTREAM_CONTRACT_MISMATCH,
     }
 )
 
@@ -180,6 +204,18 @@ def normalize_feature_time_legality(raw: Mapping[str, Any]) -> FeatureTimeLegali
             raise TimeLegalityContractError(
                 f"{feature_id}: verified predictor requires nonblank time_legality_evidence"
             )
+    elif requests_prediction and status == BLOCKED_UPSTREAM_CONTRACT_MISMATCH:
+        # A dedicated message because the remediation path is specific and was adjudicated in
+        # ``分析设计/1.15.9`` §3: all four preconditions must be satisfied and evidenced before
+        # the status may become ``verified_pre_probe_only``.
+        raise TimeLegalityContractError(
+            f"{feature_id}: feature requests formal prediction eligibility via "
+            f"{list(eligibility_true) or ['allowed_device_packages']} but "
+            f"time_legality_status={status!r}. Per 分析设计/1.15.9 §3 this status stays "
+            f"fail-closed until ALL of the following are complete and evidenced: upstream "
+            f"producer contract repair, boundary tests, per-probe old-vs-new audit, and "
+            f"source-code provenance closure."
+        )
     elif requests_prediction:
         raise TimeLegalityContractError(
             f"{feature_id}: feature requests formal prediction eligibility via "

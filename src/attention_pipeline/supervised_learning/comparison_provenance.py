@@ -199,6 +199,22 @@ def build_paired_comparison_specs(
                     added_model_id=full,
                 )
             )
+    # Supplementary comparisons use a distinct comparison_type on purpose. The frozen evaluator and
+    # any downstream aggregation must be able to separate them from the formal increments without
+    # inspecting model-id prefixes, because the two answer different questions and only the formal
+    # one belongs to the pre-registered primary comparison.
+    for baseline, added, modality in plan.supplementary_pairs:
+        if baseline in selected and added in selected:
+            specs.append(
+                _comparison_spec(
+                    plan,
+                    comparison_type="supplementary_modality_increment",
+                    comparison_unit="modality",
+                    comparison_unit_id=modality,
+                    baseline_model_id=baseline,
+                    added_model_id=added,
+                )
+            )
     return specs
 
 
