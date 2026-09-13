@@ -1,5 +1,6 @@
 code_variable,formal_chinese_name,report_short_name,unit,statistical_meaning,scientific_meaning,increase_interpretation,scientific_dimension,result_role
-q1_nominal_4class,Q1即时注意内容四分类,Q1注意内容,category,思维探针Q1的四分类自我报告,表示探针出现时参与者报告的即时注意内容,"1=聚焦当前分类任务；2=关注实验相关内容但未聚焦当前分类任务；3=任务无关思维；4=思维空白",即时主观状态,main_outcome\ nq2_ordinal_4level,Q2困倦—清醒程度,Q2清醒程度,ordered category,思维探针Q2的四级有序自我报告,表示参与者当下主观困倦—清醒程度,数值越高表示更清醒,即时主观状态,main_outcome
+q1_nominal_4class,Q1即时注意内容四分类,Q1注意内容,category,思维探针Q1的四分类自我报告,表示探针出现时参与者报告的即时注意内容,"1=聚焦当前分类任务；2=关注实验相关内容但未聚焦当前分类任务；3=任务无关思维；4=思维空白",即时主观状态,main_outcome
+q2_ordinal_4level,Q2困倦—清醒程度,Q2清醒程度,ordered category,思维探针Q2的四级有序自我报告,表示参与者当下主观困倦—清醒程度,数值越高表示更清醒,即时主观状态,main_outcome
 block_b2,第二任务区块指示变量,任务区块,0/1,正式模型中第二个任务区块相对于第一个区块的指示项,用于表示持续任务后半段与前半段的系统差异,1表示第二任务区块,任务进程,internal_model_term
 progression_centered,区块内任务进程,任务进程,centered block fraction,将区块内探针顺序映射为中心化进程比例,表示同一任务区块内部从早到晚的推进位置,数值越大表示越接近该区块后段,任务进程,internal_model_term
 go_correct_rt_mean_ms,正确Go试次平均反应时,平均反应时,ms,探针前正式窗口内正确Go反应时的算术平均,持续注意任务中的反应速度水平,数值越大表示反应更慢,反应速度水平,qualification_and_pending_main_representation
