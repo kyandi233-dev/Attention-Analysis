@@ -5,6 +5,7 @@ import argparse
 from pathlib import Path
 
 from attention_pipeline.nir_formal_analysis.ocular_freeze_evidence import archive_ocular_freeze_evidence
+from attention_pipeline.nir_formal_analysis.ocular_probe_identity import ensure_ocular_canonical_probe_identity
 from attention_pipeline.nir_formal_analysis.ocular_science_coverage import refresh_ocular_coverage
 from attention_pipeline.nir_formal_analysis.ocular_science_freeze import build_frozen_ocular_science_output
 
@@ -34,6 +35,10 @@ def main() -> int:
         replace=True,
     )
     ocular_root = root / "Ocular"
+    ensure_ocular_canonical_probe_identity(
+        Path(args.g1_probe_candidates),
+        ocular_root / "tables/ocular_probe_features_wide.csv",
+    )
     refresh_ocular_coverage(ocular_root)
     archive_ocular_freeze_evidence(
         ocular_root,
