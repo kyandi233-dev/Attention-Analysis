@@ -259,6 +259,56 @@ def test_omitting_the_denials_would_be_read_as_a_prediction_request():
         load_registered_features(_registry(entry))
 
 
+def test_supplementary_pairs_reach_the_paired_comparison_builder():
+    """The supplementary pairs must actually produce auditable paired specs.
+
+    Without this, the runner silently emits zero increments and the "does cardiopulmonary add
+    anything" question has no answer, which is exactly what happened on the first attempt.
+    """
+    from attention_pipeline.supervised_learning.comparison_provenance import (
+        build_paired_comparison_specs,
+    )
+
+    plan = build_feature_comparison_plan(
+        load_registered_features(_registry(_supplementary()))
+    )
+    selected = [
+        "behavior_reference",
+        "full",
+        "supplementary::behavior_plus_cardiopulmonary",
+        "supplementary::full_plus_cardiopulmonary",
+    ]
+    specs = build_paired_comparison_specs(plan, selected)
+    supplementary = [
+        spec for spec in specs if spec["comparison_type"] == "supplementary_modality_increment"
+    ]
+    assert len(supplementary) == 2
+    assert {spec["baseline_model_id"] for spec in supplementary} == {
+        "behavior_reference",
+        "full",
+    }
+    for spec in supplementary:
+        assert spec["comparison_unit"] == "modality"
+        assert spec["comparison_unit_id"] == "cardiopulmonary"
+        assert spec["scientific_modalities"] == ["cardiopulmonary"]
+        assert spec["required_devices"] == ["mmwave"]
+        # The defining features are the two supplementary ones, and nothing else.
+        assert spec["defining_feature_ids"] == ["cardiopulmonary.hr.fused.v1"]
+
+
+def test_supplementary_pairs_are_skipped_when_the_baseline_is_not_declared():
+    """A set that declares only the supplementary model must produce no paired spec."""
+    from attention_pipeline.supervised_learning.comparison_provenance import (
+        build_paired_comparison_specs,
+    )
+
+    plan = build_feature_comparison_plan(
+        load_registered_features(_registry(_supplementary()))
+    )
+    specs = build_paired_comparison_specs(plan, ["supplementary::cardiopulmonary_only"])
+    assert [s for s in specs if s["comparison_type"] == "supplementary_modality_increment"] == []
+
+
 def test_shipped_supplementary_config_is_v1_plus_two_entries():
     """The shipped config must be exactly the frozen v1 registry plus the two mmWave entries."""
     from pathlib import Path
