@@ -131,6 +131,7 @@ def test_movement_figure_text_objects_receive_explicit_font_chain(tmp_path: Path
     import matplotlib.pyplot as plt
 
     from attention_pipeline.rgb_formal import movement_science_figures as figures
+    from attention_pipeline.rgb_formal.movement_science_figures import contains_cjk
 
     fig = plt.figure()
     ax = fig.add_subplot(111)
@@ -151,6 +152,8 @@ def test_movement_figure_text_objects_receive_explicit_font_chain(tmp_path: Path
 
     assert chinese, "Chinese label received no explicit font family"
     assert latin, "Latin label received no explicit font family"
-    assert figures.contains_cjk(chinese[0]) or "SimSun" in chinese, chinese
+    # The CJK-first chain must lead with a face whose name identifies it as CJK,
+    # so the assertion must not hard-code one platform's family name.
+    assert contains_cjk(chinese[0]), chinese
     assert latin[0] == "Times New Roman", latin
     assert mixed[0] == chinese[0], (mixed, chinese)
