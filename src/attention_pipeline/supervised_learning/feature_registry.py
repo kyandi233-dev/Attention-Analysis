@@ -60,6 +60,19 @@ class RegisteredFeature:
     full_leave_one_out_eligible: bool = True
     allowed_device_packages: tuple[str, ...] = ()
     description: str = ""
+    # ---- supplementary pathway -------------------------------------------------------------
+    # ``supplementary_model_eligible`` is deliberately NOT one of the six formal prediction
+    # eligibility fields. Segregating it as its own flag is what lets a feature whose
+    # physiological and temporal qualification is incomplete contribute to a clearly labelled
+    # supplementary comparison WITHOUT this module ever asserting formal prediction eligibility
+    # for it. A feature may set this flag only while every formal eligibility flag is False and
+    # no device package is claimed; ``validate_registered_features`` enforces that separation.
+    supplementary_model_eligible: bool = False
+    #: Recorded producer fact, e.g. ``LIMITED_SUPPORTING_ONLY``. Required whenever the
+    #: supplementary flag is set, so the qualification level can never be left implicit.
+    physiology_qualification: str = ""
+    #: Report role for this entry, e.g. ``supporting_only``.
+    report_role: str = ""
 
     def audit_dict(self) -> dict[str, object]:
         return {
@@ -81,6 +94,9 @@ class RegisteredFeature:
             "full_leave_one_out_eligible": self.full_leave_one_out_eligible,
             "allowed_device_packages": list(self.allowed_device_packages),
             "description": self.description,
+            "supplementary_model_eligible": self.supplementary_model_eligible,
+            "physiology_qualification": self.physiology_qualification,
+            "report_role": self.report_role,
         }
 
 
@@ -140,6 +156,14 @@ class FeatureComparisonPlan:
     sensor_joint_model_id: str = ""
     device_package_model_ids: dict[str, str] = field(default_factory=dict)
     unavailable_device_packages: dict[str, str] = field(default_factory=dict)
+    # ---- supplementary pathway -------------------------------------------------------------
+    # Models built from features whose qualification is incomplete. They are produced only when
+    # the registry explicitly opts in, they never join the formal modality/full/device-package
+    # models above, and every consumer is expected to carry ``supplementary_declaration`` into its
+    # output so a reader cannot mistake them for the frozen primary comparison.
+    supplementary_model_ids: dict[str, str] = field(default_factory=dict)
+    supplementary_pairs: tuple[tuple[str, str, str], ...] = ()
+    supplementary_declaration: dict[str, object] = field(default_factory=dict)
 
     def model_map(self) -> dict[str, PlannedModel]:
         return {model.model_id: model for model in self.models}
@@ -248,6 +272,16 @@ class FeatureComparisonPlan:
             "unavailable_modalities": dict(self.unavailable_modalities),
             "device_package_model_ids": dict(self.device_package_model_ids),
             "unavailable_device_packages": dict(self.unavailable_device_packages),
+            "supplementary_model_ids": dict(self.supplementary_model_ids),
+            "supplementary_pairs": [
+                {
+                    "baseline_model_id": baseline,
+                    "added_model_id": added,
+                    "scientific_modality": modality,
+                }
+                for baseline, added, modality in self.supplementary_pairs
+            ],
+            "supplementary_declaration": dict(self.supplementary_declaration),            "unavailable_device_packages": dict(self.unavailable_device_packages),
         }
 
 
@@ -461,6 +495,46 @@ def validate_registered_features(
         )
     if not any(feature.full_model_eligible for feature in frozen):
         raise FeatureRegistryContractError("registry must contain at least one full-model feature")
+
+    # The supplementary pathway must never become a back door to formal prediction eligibility.
+    # A supplementary feature has to deny every one of the six formal eligibility flags and claim
+    # no device package; otherwise the same feature would be both "not qualified" and "qualified",
+    # and the report would have no way to tell which claim applies.
+    for feature in frozen:
+        if not feature.supplementary_model_eligible:
+            continue
+        leaked = [
+            name
+            for name, value in (
+                ("standalone_eligible", feature.standalone_eligible),
+                ("behavior_increment_eligible", feature.behavior_increment_eligible),
+                ("behavior_reference_eligible", feature.behavior_reference_eligible),
+                ("modality_model_eligible", feature.modality_model_eligible),
+                ("full_model_eligible", feature.full_model_eligible),
+                ("full_leave_one_out_eligible", feature.full_leave_one_out_eligible),
+            )
+            if value
+        ]
+        if leaked:
+            raise FeatureRegistryContractError(
+                f"{feature.feature_id}: supplementary_model_eligible requires every formal "
+                f"prediction-eligibility flag to be False, but {sorted(leaked)} are True"
+            )
+        if feature.allowed_device_packages:
+            raise FeatureRegistryContractError(
+                f"{feature.feature_id}: supplementary_model_eligible forbids device-package "
+                f"claims, but allowed_device_packages={list(feature.allowed_device_packages)}"
+            )
+        if not feature.physiology_qualification:
+            raise FeatureRegistryContractError(
+                f"{feature.feature_id}: supplementary_model_eligible requires a non-blank "
+                f"physiology_qualification so the qualification level is never implicit"
+            )
+        if not feature.report_role:
+            raise FeatureRegistryContractError(
+                f"{feature.feature_id}: supplementary_model_eligible requires a non-blank "
+                f"report_role"
+            )
     return frozen
 
 
@@ -542,6 +616,14 @@ def registered_feature_from_mapping(raw: Mapping[str, Any]) -> RegisteredFeature
         ),
         allowed_device_packages=tuple(str(v) for v in packages),
         description=str(raw.get("description", "")),
+        supplementary_model_eligible=_strict_bool(
+            raw.get("supplementary_model_eligible"),
+            field_name="supplementary_model_eligible",
+            feature_id=feature_id,
+            default=False,
+        ),
+        physiology_qualification=str(raw.get("physiology_qualification", "")).strip(),
+        report_role=str(raw.get("report_role", "")).strip(),
     )
 
 
@@ -796,6 +878,103 @@ def build_feature_comparison_plan(
         )
         full_modality_pairs.append((model_id, full_model_id, modality))
 
+    # ------------------------------------------------------------------ supplementary pathway
+    # This block exists because ``modality_model_eligible`` is the only route into a formal model
+    # and it is simultaneously a prediction-eligibility request, which ``time_legality.py``
+    # fail-closes for any feature that cannot prove ``verified_pre_probe_only``. Without a
+    # separate route, a feature with an incomplete qualification could only be analysed by
+    # asserting a qualification it does not hold. The supplementary models below therefore:
+    #
+    #   * draw only on features that opted in via ``supplementary_model_eligible``;
+    #   * reuse the SAME frozen Behavior reference and the SAME frozen ``full`` model as baselines,
+    #     so the paired increment is computed on identical rows and the existing formal numbers are
+    #     untouched;
+    #   * carry an explicit declaration of what they are and are not.
+    supplementary_features = tuple(
+        feature for feature in registry if feature.supplementary_model_eligible
+    )
+    supplementary_models: dict[str, str] = {}
+    supplementary_pairs: list[tuple[str, str, str]] = []
+    supplementary_declaration: dict[str, object] = {}
+    if supplementary_features:
+        supplementary_modalities = sorted(
+            {feature.modality for feature in supplementary_features}
+        )
+        if len(supplementary_modalities) != 1:
+            raise FeatureRegistryContractError(
+                "the supplementary pathway currently supports exactly one scientific modality "
+                f"per registry; got {supplementary_modalities}"
+            )
+        supplementary_modality = supplementary_modalities[0]
+
+        only_id = f"supplementary::{supplementary_modality}_only"
+        add(
+            _planned_model(
+                only_id,
+                "supplementary_standalone_sensor_joint",
+                supplementary_features,
+                includes_behavior_reference=False,
+                description=(
+                    f"Supplementary {supplementary_modality}-only model over features whose "
+                    "qualification is incomplete; no formal prediction eligibility is claimed."
+                ),
+            )
+        )
+        supplementary_models[f"{supplementary_modality}_only"] = only_id
+
+        conditioned_id = f"supplementary::behavior_plus_{supplementary_modality}"
+        add(
+            _planned_model(
+                conditioned_id,
+                "supplementary_behavior_conditioned",
+                [*behavior, *supplementary_features],
+                includes_behavior_reference=True,
+                description=(
+                    f"Frozen Behavior reference plus supplementary {supplementary_modality} "
+                    "features; the Behavior baseline is refitted on the same rows."
+                ),
+            )
+        )
+        supplementary_models[f"behavior_plus_{supplementary_modality}"] = conditioned_id
+        supplementary_pairs.append(
+            (behavior_model_id, conditioned_id, supplementary_modality)
+        )
+
+        full_plus_id = f"supplementary::full_plus_{supplementary_modality}"
+        add(
+            _planned_model(
+                full_plus_id,
+                "supplementary_full_joint",
+                [*full, *supplementary_features],
+                includes_behavior_reference=behavior_ids.issubset(
+                    {feature.feature_id for feature in full}
+                ),
+                description=(
+                    f"Frozen full model plus supplementary {supplementary_modality} features; "
+                    "the frozen full model is refitted on the same rows as its baseline."
+                ),
+            )
+        )
+        supplementary_models[f"full_plus_{supplementary_modality}"] = full_plus_id
+        supplementary_pairs.append((full_model_id, full_plus_id, supplementary_modality))
+
+        supplementary_declaration = {
+            "status": "supplementary_not_part_of_frozen_primary_comparison",
+            "scientific_modality": supplementary_modality,
+            "feature_ids": [feature.feature_id for feature in supplementary_features],
+            "physiology_qualification": sorted(
+                {feature.physiology_qualification for feature in supplementary_features}
+            ),
+            "prediction_eligibility_claimed": False,
+            "device_package_eligibility_claimed": False,
+            "preregistration": "post_hoc_declared_after_primary_results_observed",
+            "basis": (
+                "modality_model_eligible is simultaneously a prediction-eligibility request and "
+                "is fail-closed for any status other than verified_pre_probe_only; this pathway "
+                "lets an incompletely qualified feature be reported without asserting otherwise"
+            ),
+        }
+
     package_models: dict[str, str] = {}
     unavailable_packages: dict[str, str] = {}
     for package_id, package_devices in DEVICE_PACKAGES.items():
@@ -857,4 +1036,7 @@ def build_feature_comparison_plan(
         sensor_joint_model_id=sensor_joint_model_id,
         device_package_model_ids=package_models,
         unavailable_device_packages=unavailable_packages,
+        supplementary_model_ids=supplementary_models,
+        supplementary_pairs=tuple(supplementary_pairs),
+        supplementary_declaration=supplementary_declaration,
     )
