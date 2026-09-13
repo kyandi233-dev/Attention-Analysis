@@ -133,6 +133,11 @@ class FeatureComparisonPlan:
     modality_increment_pairs: tuple[tuple[str, str, str], ...] = ()
     full_leave_one_modality_out_pairs: tuple[tuple[str, str, str], ...] = ()
     unavailable_modalities: dict[str, str] = field(default_factory=dict)
+    # Pre-registered scientific comparison: the joint model over every sensor scientific
+    # information category, with task behavior excluded entirely. Empty when no sensor
+    # feature holds formal prediction qualification. This is NEVER a device package:
+    # device packages answer the hardware-configuration question instead.
+    sensor_joint_model_id: str = ""
     device_package_model_ids: dict[str, str] = field(default_factory=dict)
     unavailable_device_packages: dict[str, str] = field(default_factory=dict)
 
@@ -222,6 +227,7 @@ class FeatureComparisonPlan:
         return {
             "registry": [feature.audit_dict() for feature in self.registry],
             "models": [model.audit_dict() for model in self.models],
+            "sensor_joint_model_id": self.sensor_joint_model_id,
             "behavior_increment_pairs": [
                 {"baseline_model_id": baseline, "added_model_id": added, "feature_id": feature_id}
                 for baseline, added, feature_id in self.behavior_increment_pairs
@@ -699,6 +705,40 @@ def build_feature_comparison_plan(
         )
         modality_pairs.append((behavior_model_id, added_id, modality))
 
+    # Pre-registered scientific comparison, defined BEFORE any performance is observed.
+    # Report chapter 3 and section 4.6 require an explicit evaluation of the sensor
+    # information combination that does NOT include task behavior, to answer how much
+    # Q1-report prediction survives when the dedicated task behavior is removed.
+    #
+    # The membership is derived from the frozen eligibility flags rather than a
+    # hard-coded modality list: every sensor feature that holds formal prediction
+    # qualification for its own scientific modality model joins. Cardiopulmonary
+    # therefore joins automatically once it obtains that qualification, and stays out
+    # until then. Device packages must never be substituted for this model, because a
+    # device package answers which hardware configuration exists, not what scientific
+    # information can jointly predict without task behavior.
+    sensor_joint = tuple(
+        feature
+        for feature in registry
+        if feature.role == "sensor" and feature.modality_model_eligible
+    )
+    sensor_joint_model_id = ""
+    if sensor_joint:
+        sensor_joint_model_id = "sensor_only_joint"
+        add(
+            _planned_model(
+                sensor_joint_model_id,
+                "standalone_sensor_joint",
+                sensor_joint,
+                includes_behavior_reference=False,
+                description=(
+                    "Pre-registered joint model over every sensor scientific information "
+                    "category holding formal prediction qualification, with task behavior "
+                    "excluded entirely."
+                ),
+            )
+        )
+
     full_model_id = "full"
     add(
         _planned_model(
@@ -814,6 +854,7 @@ def build_feature_comparison_plan(
         modality_increment_pairs=tuple(modality_pairs),
         full_leave_one_modality_out_pairs=tuple(full_modality_pairs),
         unavailable_modalities=unavailable_modalities,
+        sensor_joint_model_id=sensor_joint_model_id,
         device_package_model_ids=package_models,
         unavailable_device_packages=unavailable_packages,
     )

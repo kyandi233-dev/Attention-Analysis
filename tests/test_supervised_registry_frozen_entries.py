@@ -188,8 +188,11 @@ def test_structural_helper_reports_ok_for_the_shipped_registry() -> None:
     assert structure["status"] == "ok"
     assert structure["n_features"] == len(EXPECTED_FEATURE_IDS)
     assert structure["n_features"] == 11
-    assert structure["n_models"] == len(comparison_plan["model_ids"]) == 40
+    # 40 category / per-feature / device-package models + the pre-registered
+    # `sensor_only_joint` model introduced by the Step-4 pre-registration.
+    assert structure["n_models"] == len(comparison_plan["model_ids"]) == 41
     assert comparison_plan["status"] == "ok"
+    assert any(model["model_id"] == "sensor_only_joint" for model in comparison_plan["models"])
     # JSON round-trip proves the audit payload written to disk is serialisable.
     json.dumps({"registry_structure": structure, "comparison_plan": comparison_plan})
 
