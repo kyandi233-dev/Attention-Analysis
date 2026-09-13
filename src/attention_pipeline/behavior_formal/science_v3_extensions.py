@@ -11,6 +11,14 @@ import pandas as pd
 from .science_v3 import CANONICAL_METRICS, BehaviorContractError
 
 
+def _drop_legacy_omission_alias_when_raw_present(metrics: Iterable[str]) -> tuple[str, ...]:
+    """Keep historical omission_rate usable alone, but never infer it beside canonical raw omission."""
+    values = list(dict.fromkeys(str(metric) for metric in metrics))
+    if "raw_go_omission_rate" in values and "omission_rate" in values:
+        values.remove("omission_rate")
+    return tuple(values)
+
+
 def cluster_bootstrap_b1_b2(
     pairs: pd.DataFrame,
     *,
@@ -21,6 +29,8 @@ def cluster_bootstrap_b1_b2(
 
     Repeated sessions first collapse to one participant-group mean difference so a
     participant with any number of sessions is not counted as multiple independent people.
+    When canonical ``raw_go_omission_rate`` is present, the historical identical
+    ``omission_rate`` alias is excluded from inference to avoid duplicate results.
     """
     rows: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
@@ -28,6 +38,9 @@ def cluster_bootstrap_b1_b2(
     required = {"repeat_participant_id", "session_id", "metric", "b2_minus_b1"}
     if not required.issubset(pairs.columns):
         raise BehaviorContractError(f"B1-B2 pair table missing {sorted(required - set(pairs.columns))}")
+    metric_names = set(pairs["metric"].dropna().astype(str))
+    if {"omission_rate", "raw_go_omission_rate"}.issubset(metric_names):
+        pairs = pairs[pairs["metric"].astype(str).ne("omission_rate")].copy()
     for metric, current in pairs.groupby("metric", sort=True):
         current = current.copy()
         current["b2_minus_b1"] = pd.to_numeric(current["b2_minus_b1"], errors="coerce")
@@ -188,7 +201,11 @@ def fit_block_cycle_gee(
         "dprime_loglinear",
     ),
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Estimate block × cycle time-on-task trends with participant-clustered GEE."""
+    """Estimate block × cycle time-on-task trends with participant-clustered GEE.
+
+    If both canonical ``raw_go_omission_rate`` and its identical historical
+    ``omission_rate`` alias are requested, only the canonical raw metric is fit.
+    """
     results: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
     if cycle_metrics.empty:
@@ -200,7 +217,7 @@ def fit_block_cycle_gee(
     missing = required - set(cycle_metrics.columns)
     if missing:
         raise BehaviorContractError(f"cycle GEE missing {sorted(missing)}")
-    for metric in metrics:
+    for metric in _drop_legacy_omission_alias_when_raw_present(metrics):
         if metric not in cycle_metrics:
             continue
         d = cycle_metrics[["repeat_participant_id", "session_id", "block_id", "cycle_bin", metric]].copy()

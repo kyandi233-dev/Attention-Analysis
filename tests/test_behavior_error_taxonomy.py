@@ -4,7 +4,8 @@ import numpy as np
 import pandas as pd
 
 from attention_pipeline.behavior_formal.behavior_error_taxonomy import (
-    FORMAL_OMISSION_ENDPOINT_METRICS,
+    CURRENT_PRIMARY_OMISSION_ENDPOINT_METRICS,
+    OMISSION_PARTITION_RATE_METRICS,
     add_omission_taxonomy,
     build_taxonomy_validation,
     enrich_multiscale_taxonomy,
@@ -36,7 +37,6 @@ def test_raw_omission_is_preserved_and_clean_plus_ambiguous_partition_it() -> No
         + omission["timing_ambiguous_go_omission_flag"].astype(int)
     ).eq(1).all()
 
-    # Finer timing subtypes remain mutually exclusive inside ambiguous omissions.
     ambiguous = omission[omission["timing_ambiguous_go_omission_flag"]]
     subtype_flags = [
         "omission_prestimulus_only_ambiguity_flag",
@@ -62,7 +62,6 @@ def test_formal_omission_rates_share_go_denominator_and_sum_to_raw() -> None:
     )
     assert bool(summary["omission_primary_partition_check"])
     assert bool(summary["omission_subtype_partition_check"])
-    # Compatibility aliases must remain exact aliases, not additional outcomes.
     assert summary["omission_motor_timing_ambiguous_n"] == summary["timing_ambiguous_go_omission_n"]
     assert summary["omission_no_detected_motor_timing_ambiguity_n"] == summary["clean_go_omission_n"]
 
@@ -80,7 +79,7 @@ def test_multiscale_taxonomy_derives_block_id_from_raw_block_num() -> None:
     assert enriched["session"]["raw_go_omission_n"].iloc[0] == 4
 
 
-def test_taxonomy_validation_marks_only_three_omission_rates_as_formal_endpoints() -> None:
+def test_taxonomy_validation_marks_only_raw_as_current_primary_endpoint() -> None:
     out = add_omission_taxonomy(_trials())
     tables = {
         "session": pd.DataFrame([{"repeat_participant_id": "P1", "session_id": "sub-031"}]),
@@ -89,7 +88,9 @@ def test_taxonomy_validation_marks_only_three_omission_rates_as_formal_endpoints
     }
     enriched = enrich_multiscale_taxonomy(out, tables)
     validation = build_taxonomy_validation(enriched, pd.DataFrame())
-    formal = validation[validation["endpoint_role"].eq("prespecified_formal_endpoint")]
-    assert set(formal["metric"].unique()) == set(FORMAL_OMISSION_ENDPOINT_METRICS)
+    primary = validation[validation["endpoint_role"].eq("current_primary_omission_endpoint")]
+    assert set(primary["metric"].unique()) == set(CURRENT_PRIMARY_OMISSION_ENDPOINT_METRICS)
+    partition_qc = validation[validation["endpoint_role"].eq("descriptive_qc_sensitivity_partition")]
+    assert set(partition_qc["metric"].unique()) == set(OMISSION_PARTITION_RATE_METRICS[1:])
     qc = validation[validation["endpoint_role"].eq("qc_or_timing_diagnostic")]
     assert "late_go_response_candidate_rate" in set(qc["metric"])

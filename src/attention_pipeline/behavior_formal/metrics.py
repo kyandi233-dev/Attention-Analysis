@@ -9,6 +9,9 @@ from scipy import optimize, stats
 from ..config import Config
 
 
+RT_CV_SAMPLE_SD_MIN_N = 2
+
+
 def _corrected_rate(successes: int, opportunities: int) -> float:
     if opportunities <= 0:
         return float("nan")
@@ -59,7 +62,7 @@ def fit_exgaussian(rt: pd.Series) -> dict[str, float]:
 
 def formal_block_metrics(config: Config, trials: pd.DataFrame) -> pd.DataFrame:
     rows = []
-    min_n = int(config.section("behavior").get("rt_cv_min_n", 20))
+    min_n = int(config.section("behavior").get("rt_cv_min_n", RT_CV_SAMPLE_SD_MIN_N))
     for (subject, block_num), block in trials.groupby(["subject", "block_num"], sort=True):
         go = block.loc[block["is_no_go"].eq(0)]
         nogo = block.loc[block["is_no_go"].eq(1)]
@@ -102,7 +105,7 @@ def formal_block_metrics(config: Config, trials: pd.DataFrame) -> pd.DataFrame:
 
 def cycle_bin_metrics(config: Config, trials: pd.DataFrame) -> pd.DataFrame:
     rows = []
-    min_n = int(config.section("behavior").get("rt_cv_min_n", 20))
+    min_n = int(config.section("behavior").get("rt_cv_min_n", RT_CV_SAMPLE_SD_MIN_N))
     for (subject, block_num, cycle_bin), grp in trials.dropna(subset=["cycle_bin"]).groupby(["subject", "block_num", "cycle_bin"], sort=True):
         go = grp.loc[grp["is_no_go"].eq(0)]
         nogo = grp.loc[grp["is_no_go"].eq(1)]

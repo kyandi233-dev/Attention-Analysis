@@ -1,0 +1,95 @@
+pipeline:
+  name: focuswave-supervised-learning-v1
+  version: 1.1.0-dev
+  evidence_repo: kyandi233-dev/FocusWave-Formal-Analysis
+  evidence_branch: codex/code-fix-ledger
+  evidence_method_entry: 分析设计/1.16.1-监督学习心理意义、训练权重与多层评价修订_20260911.md
+  implementation_plan: https://github.com/kyandi233-dev/Attention-Analysis/issues/43
+  random_seed: 20260910
+
+paths:
+  input_table:
+    path_key: supervised_learning_input_probe_table
+  output_root:
+    path_key: supervised_learning_output_root
+
+task:
+  name: q1_equals_1_vs_2_3_4
+  analysis_unit: probe_preceding_window
+  primary_window_seconds: 30
+  source_column: q1_nominal_4class
+  positive_values: [1]
+  negative_values: [2, 3, 4]
+  positive_label: 1
+  negative_label: 0
+  positive_probability_name: p_q1_equals_1
+
+validation:
+  outer:
+    method: leave_one_participant_out
+    group_column: participant_group_id
+    participant_disjoint: true
+  inner:
+    method: grouped_k_fold
+    n_splits: 5
+    group_column: participant_group_id
+    refit_preprocessing_per_split: true
+  zero_individual_calibration: true
+  forbid_test_participant_sequence_statistics: true
+  forbid_test_participant_future_information: true
+  require_analysis_set_id: true
+
+preprocessing:
+  participant_equal_weighted_median_imputation_fit_on_training_only: true
+  participant_equal_standardization_fit_on_training_only: true
+  data_dependent_column_handling_fit_on_training_only: true
+  participant_equal_training_weights_normalized_to_mean_one: true
+  unified_global_coverage_cutoff: null
+  participant_specific_within_between_mainline: false
+
+# Upstream scientific work freezes the exact predictors. Task A consumes the registry;
+# it does not maintain a second scientific-variable blacklist.
+feature_registry:
+  status: pending_upstream_feature_freeze
+  features: []
+  note: "Each exact representation records scientific_feature_id, predictor column(s), Behavior/sensor role, raw source, actual required devices, preprocessing dependencies, standalone / Behavior+x / Full eligibility, and explicit M0-M7 package eligibility. Cross-device cleaning dependencies must be represented here."
+
+# Compatibility/manual-test interface. A non-empty feature_registry takes precedence.
+# Structural leakage guards (Q1 outcome/output columns, IDs, raw locator/audit fields)
+# live in feature_schemes.py; scientific eligibility belongs only to the registry.
+feature_schemes:
+  status: interface_only_pending_task_c_d
+  model_families: {}
+  participant_specific_suffixes_forbidden: [_within, _between]
+  note: "Task A provides the shared nested training core. Registry-backed formal runs consume only the model IDs declared by the current B-layer comparison-specific analysis_set_id; unrelated feature/device models are not forced onto one global common sample."
+
+models:
+  primary:
+    kind: logistic_l2
+    C_candidates: [0.01, 0.1, 1.0, 10.0]
+    max_iter: 2000
+  selection_metric: participant_macro_log_loss
+
+uncertainty:
+  participant_cluster_bootstrap:
+    method: fixed_oof_participant_cluster_percentile
+    replicates: 1000
+    seed: 20260830
+    confidence_level: 0.95
+    paired_model_resampling: true
+    retrain_within_bootstrap: false
+
+outputs:
+  preserve_probe_keys: true
+  preserve_raw_q1: true
+  preserve_binary_label: true
+  preserve_positive_probability: true
+  preserve_outer_fold: true
+  preserve_feature_set_id: true
+  preserve_analysis_set_id: true
+  preserve_membership_type: true
+  preserve_run_id: true
+  preserve_failures: true
+  preserve_q2_for_reporting_context: true
+  write_probe_trajectory: true
+  write_session_discrimination: true

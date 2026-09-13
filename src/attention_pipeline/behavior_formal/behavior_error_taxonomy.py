@@ -6,18 +6,28 @@ from typing import Any, Mapping
 import numpy as np
 import pandas as pd
 
-# Prespecified formal Go-omission endpoints.  They are not three independent
-# error mechanisms: raw = clean + timing_ambiguous, and all three use the same
-# Go-opportunity denominator.  The decomposition exists because motor-timing
-# ambiguity is common enough to deserve a formal sensitivity/result layer.
-FORMAL_OMISSION_ENDPOINT_METRICS = (
+# Current method authority (1.15.5/1.15.6): raw program Go omission is the
+# primary omission endpoint for the first-round supervised line. Clean and
+# timing-ambiguous remain a complementary partition for description/QC and
+# sensitivity; they are not parallel current primary endpoints.
+CURRENT_PRIMARY_OMISSION_ENDPOINT_METRICS = (
+    "raw_go_omission_rate",
+)
+
+# All three rates are retained to audit the exact partition
+# raw = clean + timing_ambiguous on the same Go-opportunity denominator.
+OMISSION_PARTITION_RATE_METRICS = (
     "raw_go_omission_rate",
     "clean_go_omission_rate",
     "timing_ambiguous_go_omission_rate",
 )
 
-# Descriptive/QC decomposition retained for auditability.  These are not
-# automatically promoted to separate psychological endpoints.
+# Compatibility name used by existing current-code callers. Its semantics now
+# follow the current method authority: only raw is a current primary endpoint.
+FORMAL_OMISSION_ENDPOINT_METRICS = CURRENT_PRIMARY_OMISSION_ENDPOINT_METRICS
+
+# Finer descriptive/QC decomposition retained for auditability. These are not
+# automatically promoted to psychological endpoints or supervised predictors.
 OMISSION_QC_RATE_METRICS = (
     "omission_prestimulus_only_ambiguity_rate",
     "omission_carryover_only_ambiguity_rate",
@@ -26,8 +36,15 @@ OMISSION_QC_RATE_METRICS = (
     "anticipatory_go_response_candidate_rate",
 )
 
-# Backward-compatible public inventory used by existing figure/validation code.
-TAXONOMY_RATE_METRICS = FORMAL_OMISSION_ENDPOINT_METRICS + OMISSION_QC_RATE_METRICS
+OMISSION_DESCRIPTIVE_QC_RATE_METRICS = tuple(dict.fromkeys((
+    "clean_go_omission_rate",
+    "timing_ambiguous_go_omission_rate",
+    *OMISSION_QC_RATE_METRICS,
+)))
+
+# Public inventory used by figure/validation code. It preserves the full
+# partition and finer QC fields without assigning all of them endpoint status.
+TAXONOMY_RATE_METRICS = OMISSION_PARTITION_RATE_METRICS + OMISSION_QC_RATE_METRICS
 
 
 def _numeric(frame: pd.DataFrame, column: str) -> pd.Series:
@@ -53,9 +70,9 @@ def _with_block_id(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def add_omission_taxonomy(trials: pd.DataFrame) -> pd.DataFrame:
-    """Add non-destructive Go-omission endpoints plus motor-timing QC flags.
+    """Add non-destructive Go-omission partition plus motor-timing QC flags.
 
-    Program scoring is authoritative and never overwritten.  For every Go trial:
+    Program scoring is authoritative and never overwritten. For every Go trial:
 
     * ``raw_go_omission_flag`` is the task-program omission definition
       (no in-window response captured by the program).
@@ -65,10 +82,11 @@ def add_omission_taxonomy(trials: pd.DataFrame) -> pd.DataFrame:
     * ``timing_ambiguous_go_omission_flag`` is a raw omission with at least one
       such ambiguity flag.
 
-    Thus ``raw == clean + timing_ambiguous`` by construction.  ``clean`` does
-    **not** mean a proven attentional lapse; it only means that the recorded
-    motor-timing ambiguity screen did not fire.  Finer prestimulus/carry-over
-    subtypes remain QC/audit information and are not independent endpoints.
+    Thus ``raw == clean + timing_ambiguous`` by construction. ``clean`` does
+    not mean a proven attentional lapse; it only means that the recorded
+    motor-timing ambiguity screen did not fire. Under the current 1.15.5/1.15.6
+    contract, raw is the primary omission endpoint while clean/timing and finer
+    subtypes remain descriptive/QC/sensitivity information.
     """
     out = trials.copy()
     go = _numeric(out, "is_no_go").eq(0)
@@ -78,7 +96,7 @@ def add_omission_taxonomy(trials: pd.DataFrame) -> pd.DataFrame:
     anticipatory = _bool(out, "anticipatory_candidate_flag")
 
     # A response nominally later than the programmed 1.15-s trial is retained
-    # only as a timing diagnostic.  The formal task polls responses within the
+    # only as a timing diagnostic. The formal task polls responses within the
     # stimulus+mask trial, so such rows require data/timing audit before any
     # psychological interpretation.
     late = go & _numeric(out, "response").eq(1) & _numeric(out, "rt").gt(1150)
@@ -89,17 +107,15 @@ def add_omission_taxonomy(trials: pd.DataFrame) -> pd.DataFrame:
     pre_only = timing_ambiguous & prestimulus & ~carryover
     carry_only = timing_ambiguous & ~prestimulus & carryover
 
-    # New formal names.
     out["raw_go_omission_flag"] = raw_omission
     out["clean_go_omission_flag"] = clean
     out["timing_ambiguous_go_omission_flag"] = timing_ambiguous
 
-    # Compatibility aliases retained so previously generated code/tests do not
-    # silently change meaning.
+    # Compatibility aliases retained so historical consumers do not silently
+    # change numerical meaning.
     out["omission_no_detected_motor_timing_ambiguity_flag"] = clean
     out["omission_motor_timing_ambiguous_flag"] = timing_ambiguous
 
-    # Finer audit/QC flags.
     out["omission_prestimulus_ambiguity_flag"] = raw_omission & prestimulus
     out["omission_carryover_ambiguity_flag"] = raw_omission & carryover
     out["omission_prestimulus_only_ambiguity_flag"] = pre_only
@@ -115,9 +131,10 @@ def add_omission_taxonomy(trials: pd.DataFrame) -> pd.DataFrame:
     subtype.loc[clean] = "clean_go_omission"
     out["omission_subtype"] = subtype
     out["omission_taxonomy_contract"] = (
-        "raw_go_omission is the task-program endpoint; clean_go_omission and "
-        "timing_ambiguous_go_omission are prespecified complementary formal endpoints "
-        "using the same Go denominator; finer motor-timing subtypes remain QC only"
+        "raw_go_omission is the current primary task-program endpoint; "
+        "clean_go_omission and timing_ambiguous_go_omission are complementary "
+        "descriptive/QC/sensitivity partition components using the same Go denominator; "
+        "finer motor-timing subtypes remain QC only"
     )
     return out
 
@@ -127,7 +144,7 @@ def _rate(numerator: int, denominator: int) -> float:
 
 
 def summarize_error_taxonomy(frame: pd.DataFrame) -> dict[str, Any]:
-    """Summarize formal omission endpoints and QC candidates on one Go denominator."""
+    """Summarize the current primary omission plus its QC partition."""
     go = _numeric(frame, "is_no_go").eq(0)
     go_n = int(go.sum())
     if "raw_go_omission_flag" not in frame.columns:
@@ -149,14 +166,12 @@ def summarize_error_taxonomy(frame: pd.DataFrame) -> dict[str, Any]:
         "late_go_response_candidate": "late_go_response_candidate_flag",
         "anticipatory_go_response_candidate": "anticipatory_go_response_candidate_flag",
     }
-    result: dict[str, Any] = {"omission_taxonomy_status": "available_formal_dual_layer_taxonomy"}
+    result: dict[str, Any] = {"omission_taxonomy_status": "available_current_primary_plus_qc_partition"}
     for name, column in flags.items():
         count = int(_bool(frame, column).sum())
         result[f"{name}_n"] = count
         result[f"{name}_rate"] = _rate(count, go_n)
 
-    # Compatibility rate aliases for existing consumers.  Their meanings are
-    # identical to the new formal names and should not be double-counted.
     result["omission_no_detected_motor_timing_ambiguity_n"] = result["clean_go_omission_n"]
     result["omission_no_detected_motor_timing_ambiguity_rate"] = result["clean_go_omission_rate"]
     result["omission_motor_timing_ambiguous_n"] = result["timing_ambiguous_go_omission_n"]
@@ -196,7 +211,7 @@ def enrich_multiscale_taxonomy(
     trials: pd.DataFrame,
     scale_tables: Mapping[str, pd.DataFrame],
 ) -> dict[str, pd.DataFrame]:
-    """Merge the same formal omission endpoints/QC onto session/block/cycle metrics."""
+    """Merge the current omission endpoint/partition/QC onto scale metrics."""
     specs = {
         "session": ["repeat_participant_id", "session_id"],
         "block": ["repeat_participant_id", "session_id", "block_id"],
@@ -221,7 +236,7 @@ def enrich_probe_taxonomy(
     trials: pd.DataFrame,
     probe_sensitivity: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Recompute omission endpoints inside each strict pre-probe window."""
+    """Recompute omission endpoint/partition/QC inside each strict pre-probe window."""
     if probe_sensitivity is None or probe_sensitivity.empty:
         return probe_sensitivity.copy() if probe_sensitivity is not None else pd.DataFrame()
     source = _with_block_id(trials)
@@ -257,7 +272,7 @@ def build_taxonomy_validation(
     scale_tables: Mapping[str, pd.DataFrame],
     primary_probe: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Audit formal omission endpoints and QC candidates without p-value selection."""
+    """Audit omission roles and QC candidates without p-value selection."""
     frames = {k: v for k, v in scale_tables.items() if v is not None}
     frames["probe"] = primary_probe
     rows: list[dict[str, Any]] = []
@@ -265,11 +280,12 @@ def build_taxonomy_validation(
         if frame is None or frame.empty:
             continue
         for metric in TAXONOMY_RATE_METRICS:
-            endpoint_role = (
-                "prespecified_formal_endpoint"
-                if metric in FORMAL_OMISSION_ENDPOINT_METRICS
-                else "qc_or_timing_diagnostic"
-            )
+            if metric in CURRENT_PRIMARY_OMISSION_ENDPOINT_METRICS:
+                endpoint_role = "current_primary_omission_endpoint"
+            elif metric in OMISSION_PARTITION_RATE_METRICS:
+                endpoint_role = "descriptive_qc_sensitivity_partition"
+            else:
+                endpoint_role = "qc_or_timing_diagnostic"
             if metric not in frame.columns:
                 rows.append({
                     "scale": scale, "metric": metric, "n_rows": int(len(frame)), "n_valid": 0,
@@ -289,14 +305,14 @@ def build_taxonomy_validation(
                 "floor_fraction": float((finite <= 0.02).mean()) if len(finite) else np.nan,
                 "ceiling_fraction": float((finite >= 0.98).mean()) if len(finite) else np.nan,
                 "candidate_status": (
-                    "formal_endpoint_requires_real_data_stability_review"
-                    if endpoint_role == "prespecified_formal_endpoint"
+                    "current_primary_endpoint_descriptive_audit"
+                    if endpoint_role == "current_primary_omission_endpoint"
                     else "qc_candidate_only"
                 ),
                 "endpoint_role": endpoint_role,
                 "endpoint_status": (
                     "prespecified_not_pvalue_selected"
-                    if endpoint_role == "prespecified_formal_endpoint"
+                    if endpoint_role == "current_primary_omission_endpoint"
                     else "not_a_primary_endpoint"
                 ),
                 "interpretation_guard": (

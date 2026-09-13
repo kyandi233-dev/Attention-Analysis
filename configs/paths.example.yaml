@@ -31,3 +31,7 @@ paths:
   rgb_output_root: "${FOCUSWAVE_RGB_OUTPUT_ROOT}"
   mmwave_output_root: "${FOCUSWAVE_MMWAVE_OUTPUT_ROOT}"
   fusion_output_root: "${FOCUSWAVE_FUSION_OUTPUT_ROOT}"
+
+  # Task A consumes one upstream admitted probe-level table; B owns how that table/analysis_set_id is constructed.
+  supervised_learning_input_probe_table: "${FOCUSWAVE_SUPERVISED_INPUT_PROBE_TABLE}"
+  supervised_learning_output_root: "${FOCUSWAVE_SUPERVISED_OUTPUT_ROOT}"

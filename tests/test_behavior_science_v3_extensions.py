@@ -25,6 +25,18 @@ def test_b1_b2_bootstrap_clusters_repeated_sessions_by_participant():
     assert row["cluster_unit"] == "repeat_participant_id"
 
 
+def test_b1_b2_bootstrap_drops_legacy_omission_alias_when_canonical_raw_is_present():
+    pairs = pd.DataFrame([
+        {"repeat_participant_id": "p1", "session_id": "s1", "metric": "omission_rate", "b2_minus_b1": 0.1},
+        {"repeat_participant_id": "p2", "session_id": "s2", "metric": "omission_rate", "b2_minus_b1": -0.1},
+        {"repeat_participant_id": "p1", "session_id": "s1", "metric": "raw_go_omission_rate", "b2_minus_b1": 0.1},
+        {"repeat_participant_id": "p2", "session_id": "s2", "metric": "raw_go_omission_rate", "b2_minus_b1": -0.1},
+    ])
+    result, failures = cluster_bootstrap_b1_b2(pairs, iterations=100, seed=7)
+    assert failures.empty
+    assert set(result["metric"]) == {"raw_go_omission_rate"}
+
+
 def test_error_trajectory_centers_rt_within_participant_and_separates_error_types():
     rows = []
     for trial in range(1, 7):
@@ -59,6 +71,33 @@ def test_cycle_gee_failure_is_explicit_for_insufficient_data():
     assert results.empty
     assert not failures.empty
     assert set(failures["status"]) == {"not_estimable"}
+
+
+def test_cycle_gee_prefers_canonical_raw_over_identical_legacy_omission_alias():
+    cycle = pd.DataFrame([
+        {
+            "repeat_participant_id": "p1",
+            "session_id": "s1",
+            "block_id": "B1",
+            "cycle_bin": 1,
+            "omission_rate": 0.0,
+            "raw_go_omission_rate": 0.0,
+        },
+        {
+            "repeat_participant_id": "p1",
+            "session_id": "s1",
+            "block_id": "B1",
+            "cycle_bin": 2,
+            "omission_rate": 0.1,
+            "raw_go_omission_rate": 0.1,
+        },
+    ])
+    results, failures = fit_block_cycle_gee(
+        cycle,
+        metrics=["omission_rate", "raw_go_omission_rate"],
+    )
+    assert results.empty
+    assert set(failures["metric"]) == {"raw_go_omission_rate"}
 
 
 def test_unbalanced_repeat_visits_are_descriptive_not_a_reliability_gate():
