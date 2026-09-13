@@ -1,20 +1,8 @@
 """Canonical mmWave snapshot -> Cardiopulmonary ingest/audit bridge.
 
-This module consumes ``MMWAVE_INTEGRATION_SNAPSHOT_V1`` and answers only the
-engineering-ingest question.  It never re-runs the radar estimator, upgrades
-physiological validity, trains a supervised model, or writes the final feature
-registry.
-
-The bridge deliberately keeps three concepts separate:
-
-* scientific modality: ``cardiopulmonary``;
-* producer/source namespace and required device: ``mmwave``;
-* producer availability/error state: AVAILABLE, SOURCE_UNAVAILABLE, or
-  SOURCE_MALFORMED.
-
-SOURCE_UNAVAILABLE and SOURCE_MALFORMED both retain missing HR/BR values, but
-malformed rows remain explicit source errors rather than being relabelled as
-structural source absence.
+This module consumes ``MMWAVE_INTEGRATION_SNAPSHOT_V1`` for engineering
+integration only. It does not re-run the radar estimator, promote physiological
+validity, train supervised models, or mutate the final feature registry.
 """
 from __future__ import annotations
 
@@ -44,21 +32,27 @@ SOURCE_NAMESPACE = "mmwave"
 REQUIRED_DEVICES = ("mmwave",)
 PHYSIOLOGY_QUALIFICATION = "LIMITED_SUPPORTING_ONLY"
 
-# Declared window-end / probe-onset identity guard.
-#
-# ``ENDPOINT_ATOL_MS_PROVISIONAL`` is a PROVISIONAL absolute tolerance, not a
-# frozen methodological conclusion.  The snapshot stores integer Unix
-# milliseconds, so ``window_end_unix_ms`` and ``probe_onset_unix_ms`` are expected
-# to be exactly equal; whether the final contract is exact equality or a smaller
-# justified constant is decided by the governed-cohort endpoint audit
-# (``endpoint_delta_summary.json``) together with producer-side source evidence.
-#
-# ``rtol`` must remain 0.0.  These operands are Unix-epoch milliseconds
-# (~1e12 ms), so NumPy's default relative tolerance (~1e-5) would widen the
-# effective tolerance to ~1e7 ms -- hours -- and silently turn this guard into a
-# no-op.
-ENDPOINT_ATOL_MS_PROVISIONAL = 1.0
+# Formal 1.15.9 freezes the declared metadata endpoint as exact integer-ms
+# identity. The governed-cohort audit found 2320/2320 rows with delta == 0.
+# ``rtol`` is kept explicit to prevent Unix-epoch magnitude from creating a
+# relative-tolerance hole if this guard is refactored back to ``np.isclose``.
+ENDPOINT_ATOL_MS = 0.0
 ENDPOINT_RTOL = 0.0
+ENDPOINT_CONTRACT = "exact_integer_equality"
+
+# Engineering interface readiness and formal prediction time-legality are
+# intentionally separate. Formal 1.15.9 requires producer contract repair,
+# frame-membership evidence, old-vs-new audit, and source-code provenance
+# closure before Cardiopulmonary features may become verified_pre_probe_only.
+TIME_LEGALITY_STATUS = "blocked_upstream_contract_mismatch"
+TIME_LEGALITY_EVIDENCE = (
+    "MMWAVE_INTEGRATION_SNAPSHOT_V1 metadata contract is internally consistent: "
+    "window_name=pre_30s; declared science clock=dll_host_receive_enqueue; "
+    "nominal_start=probe_onset-30000ms; effective_start>=nominal_start and < probe; "
+    "declared window_end equals probe_onset exactly. Formal 1.15.9 nevertheless "
+    "keeps formal prediction time-legality blocked until producer contract repair, "
+    "frame-membership old-vs-new audit, and source-code provenance closure are complete."
+)
 
 HR_COLUMN = "mmwave_hr_fused_bpm_median"
 BR_COLUMN = "mmwave_breath_rate_breaths_per_min_median"
@@ -69,15 +63,6 @@ SOURCE_UNAVAILABLE = "SOURCE_UNAVAILABLE"
 SOURCE_MALFORMED = "SOURCE_MALFORMED"
 ALLOWED_INTEGRATION_STATES = frozenset(
     {AVAILABLE, SOURCE_UNAVAILABLE, SOURCE_MALFORMED}
-)
-
-TIME_LEGALITY_STATUS = "verified_pre_probe_only"
-TIME_LEGALITY_EVIDENCE = (
-    "MMWAVE_INTEGRATION_SNAPSHOT_V1 row audit + producer replacement/field-role "
-    "contract: window_name=pre_30s; science clock=dll_host_receive_enqueue; "
-    "nominal_start=probe_onset-30000ms; effective_start>=nominal_start and < probe; "
-    "window_end=probe_onset; producer contract defines the end as right-exclusive "
-    "and effective_start as formal-block-start truncated when required"
 )
 
 KEYS = list(KEY_COLUMNS)
@@ -160,7 +145,9 @@ def _normalize_identity(frame: pd.DataFrame, label: str) -> pd.DataFrame:
     out["block_id"] = out["block_id"].astype("string").str.strip().str.lower()
     out[GROUP] = out[GROUP].astype("string").str.strip()
     probe = pd.to_numeric(out["probe_index_in_block"], errors="coerce")
-    if probe.isna().any() or not np.isclose(probe, np.round(probe)).all():
+    if probe.isna().any() or not np.isclose(
+        probe, np.round(probe), atol=0.0, rtol=0.0
+    ).all():
         raise MmwaveCardiopulmonaryIngestError(
             f"{label}: probe_index_in_block must be finite integer-valued"
         )
@@ -183,10 +170,8 @@ def _validate_snapshot_provenance(snapshot: pd.DataFrame) -> None:
     versions = _nonblank_unique(snapshot, "snapshot_version")
     if versions != [CANONICAL_SNAPSHOT_VERSION]:
         raise MmwaveCardiopulmonaryIngestError(
-            f"unexpected snapshot_version={versions}; "
-            f"expected={[CANONICAL_SNAPSHOT_VERSION]}"
+            f"unexpected snapshot_version={versions}; expected={[CANONICAL_SNAPSHOT_VERSION]}"
         )
-
     producer_commit = snapshot["producer_commit"].astype("string").str.strip()
     if producer_commit.isna().any() or producer_commit.eq("").any():
         raise MmwaveCardiopulmonaryIngestError(
@@ -271,7 +256,6 @@ def _validate_integration_states(snapshot: pd.DataFrame) -> pd.Series:
     br = pd.to_numeric(snapshot[BR_COLUMN], errors="coerce")
     available = state.eq(AVAILABLE)
     retained_missing_value = state.isin([SOURCE_UNAVAILABLE, SOURCE_MALFORMED])
-
     if not (np.isfinite(hr[available]).all() and np.isfinite(br[available]).all()):
         raise MmwaveCardiopulmonaryIngestError(
             "AVAILABLE rows must contain finite fused HR and BR"
@@ -288,6 +272,7 @@ def _validate_integration_states(snapshot: pd.DataFrame) -> pd.Series:
 
 
 def _validate_time_legality(snapshot: pd.DataFrame) -> pd.DataFrame:
+    """Validate declared metadata timing while preserving the upstream block."""
     window = snapshot["window_name"].astype("string").str.strip()
     clock = snapshot["alignment_clock_source"].astype("string").str.strip()
     nominal = pd.to_numeric(
@@ -305,19 +290,14 @@ def _validate_time_legality(snapshot: pd.DataFrame) -> pd.DataFrame:
         & np.isfinite(end)
         & np.isfinite(probe)
     )
-    nominal_30s = np.isclose(probe - nominal, 30000.0, atol=1.0)
+    nominal_30s = (probe - nominal).eq(30000.0)
     effective_not_before_nominal = effective.ge(nominal)
     effective_before_probe = effective.lt(probe)
-    end_equals_probe = np.isclose(
-        end,
-        probe,
-        atol=ENDPOINT_ATOL_MS_PROVISIONAL,
-        rtol=ENDPOINT_RTOL,
-    )
+    end_equals_probe = end.eq(probe)
     correct_window = window.eq(PRIMARY_WINDOW)
     correct_clock = clock.eq("dll_host_receive_enqueue")
 
-    legal = (
+    metadata_contract_valid = (
         finite_time
         & nominal_30s
         & effective_not_before_nominal
@@ -326,7 +306,7 @@ def _validate_time_legality(snapshot: pd.DataFrame) -> pd.DataFrame:
         & correct_window
         & correct_clock
     )
-    if not bool(pd.Series(legal).all()):
+    if not bool(pd.Series(metadata_contract_valid).all()):
         failed = pd.DataFrame(
             {
                 **{key: snapshot[key] for key in KEYS},
@@ -339,19 +319,21 @@ def _validate_time_legality(snapshot: pd.DataFrame) -> pd.DataFrame:
                 "correct_clock": correct_clock,
             }
         )
-        failed = failed.loc[~pd.Series(legal, index=snapshot.index)].head(5)
+        failed = failed.loc[
+            ~pd.Series(metadata_contract_valid, index=snapshot.index)
+        ].head(5)
         raise MmwaveCardiopulmonaryIngestError(
-            "mmwave snapshot fails verified_pre_probe_only row audit; "
+            "mmwave snapshot fails declared metadata time-contract audit; "
             f"sample={failed.to_dict(orient='records')}"
         )
 
     return pd.DataFrame(
         {
-            "time_legal": True,
+            "metadata_time_contract_valid": True,
             "nominal_30s": nominal_30s,
             "effective_start_truncated": effective.gt(nominal),
-            "right_exclusive_end_matches_probe": end_equals_probe,
-            "alignment_clock_verified": correct_clock,
+            "declared_right_exclusive_end_matches_probe": end_equals_probe,
+            "alignment_clock_declared_valid": correct_clock,
         },
         index=snapshot.index,
     )
@@ -360,14 +342,7 @@ def _validate_time_legality(snapshot: pd.DataFrame) -> pd.DataFrame:
 def _endpoint_delta_audit(
     snapshot: pd.DataFrame,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
-    """Characterise the declared ``window_end`` minus ``probe_onset`` difference.
-
-    Scope limit (must not be overstated in any downstream report): this is a
-    *metadata contract* audit only.  The snapshot carries no per-frame timestamps
-    and no frame-membership evidence, so this function cannot and does not verify
-    ``all(actual_frame_timestamp < probe_onset)``.  Frame-level evidence requires a
-    later producer/snapshot contract extension.
-    """
+    """Audit declared ``window_end`` minus ``probe_onset`` metadata only."""
     end = pd.to_numeric(snapshot["window_end_unix_ms"], errors="coerce")
     probe = pd.to_numeric(snapshot["probe_onset_unix_ms"], errors="coerce")
     delta = end - probe
@@ -388,8 +363,6 @@ def _endpoint_delta_audit(
     zero = finite & delta.eq(0)
     nonzero = finite & delta.ne(0)
     nonzero_delta = delta.loc[nonzero]
-    exceeds = finite & delta.abs().gt(ENDPOINT_ATOL_MS_PROVISIONAL)
-
     frequencies: dict[str, int] = {}
     if bool(nonzero.any()):
         counts = nonzero_delta.value_counts().sort_index()
@@ -397,15 +370,17 @@ def _endpoint_delta_audit(
 
     summary: dict[str, Any] = {
         "audit_scope": "metadata_contract_window_end_vs_probe_onset",
+        "endpoint_contract": ENDPOINT_CONTRACT,
+        "endpoint_atol_ms": ENDPOINT_ATOL_MS,
+        "endpoint_rtol": ENDPOINT_RTOL,
+        "endpoint_contract_frozen": True,
         "frame_membership_available": False,
         "frame_membership_note": (
-            "The snapshot has no per-frame timestamp or frame-membership column, so "
-            "actual entered-frame membership is NOT verified here; only the declared "
-            "endpoint contract is audited."
+            "The snapshot has no per-frame timestamp or frame-membership column; "
+            "actual entered-frame membership is not verified by this downstream audit."
         ),
-        "provisional_atol_ms": ENDPOINT_ATOL_MS_PROVISIONAL,
-        "provisional_atol_is_frozen_conclusion": False,
-        "rtol": ENDPOINT_RTOL,
+        "source_code_provenance_closed": False,
+        "formal_time_legality_status": TIME_LEGALITY_STATUS,
         "n_total": int(len(snapshot)),
         "n_finite": int(finite.sum()),
         "n_missing": int((~finite).sum()),
@@ -415,7 +390,7 @@ def _endpoint_delta_audit(
         "max_delta_ms": float(delta.max()) if bool(finite.any()) else None,
         "median_delta_ms": float(delta.median()) if bool(finite.any()) else None,
         "abs_max_delta_ms": float(delta.abs().max()) if bool(finite.any()) else None,
-        "n_exceeding_provisional_atol": int(exceeds.sum()),
+        "n_violating_exact_endpoint_contract": int(nonzero.sum()),
         "nonzero_delta_frequencies_ms": frequencies,
         "nonzero_session_n": int(snapshot.loc[nonzero, "session_id"].nunique()),
         "nonzero_participant_group_n": int(snapshot.loc[nonzero, GROUP].nunique()),
@@ -448,7 +423,7 @@ def _feature_handoff() -> pd.DataFrame:
         "full_model_eligible": False,
         "full_leave_one_out_eligible": False,
         "downstream_registry_eligibility_status": (
-            "interface_contract_only_prediction_disabled_physiology_limited"
+            "interface_ready_prediction_disabled_time_blocked_physiology_limited"
         ),
     }
     rows = [
@@ -502,8 +477,6 @@ def _taskb_source(snapshot: pd.DataFrame, state: pd.Series) -> pd.DataFrame:
     out = snapshot[keep].copy()
     available = state.eq(AVAILABLE)
     malformed = state.eq(SOURCE_MALFORMED)
-    # A malformed source existed but cannot be read/used. This distinction lets
-    # quality_admission emit structural_source_unreadable instead of source missing.
     out["source_present"] = available | malformed
     out["source_readable"] = available
     out["native_qc_valid"] = available
@@ -551,9 +524,7 @@ def _coverage_table(
                 "feature_id": feature_id,
                 "predictor_column": column,
                 "finite_probe_n": int(finite.sum()),
-                "finite_rate_governed": (
-                    float(finite.mean()) if len(finite) else np.nan
-                ),
+                "finite_rate_governed": float(finite.mean()) if len(finite) else np.nan,
             }
         )
     return pd.DataFrame(rows)
@@ -586,15 +557,11 @@ def _interface_analysis_sets(
                     "predictor_column": BR_COLUMN,
                 },
             ],
-            # Interface smoke does not consume Q1/Q2. Prediction eligibility remains
-            # a later Formal-method/researcher decision.
             "required_outcomes": [],
         }
     }
     sets, summary = build_analysis_sets(
-        quality["formal_probe_identity"],
-        quality["probe_feature_status"],
-        spec,
+        quality["formal_probe_identity"], quality["probe_feature_status"], spec
     )
     return quality, sets, summary
 
@@ -631,8 +598,7 @@ def audit_mmwave_cardiopulmonary_snapshot(
 
     taskb_source = _taskb_source(snapshot_n, state)
     quality, analysis_sets, analysis_summary = _interface_analysis_sets(
-        behavior_n,
-        taskb_source,
+        behavior_n, taskb_source
     )
 
     available = state.eq(AVAILABLE)
@@ -641,7 +607,6 @@ def audit_mmwave_cardiopulmonary_snapshot(
     retained_missing_or_error = unavailable | malformed
     hr_finite = np.isfinite(pd.to_numeric(snapshot_n[HR_COLUMN], errors="coerce"))
     br_finite = np.isfinite(pd.to_numeric(snapshot_n[BR_COLUMN], errors="coerce"))
-
     complete_probe_n = _analysis_membership_probe_n(
         analysis_summary, "included_complete"
     )
@@ -692,7 +657,7 @@ def audit_mmwave_cardiopulmonary_snapshot(
     ingest_audit["time_legality_evidence"] = TIME_LEGALITY_EVIDENCE
     ingest_audit["physiology_qualification"] = PHYSIOLOGY_QUALIFICATION
     ingest_audit["downstream_registry_eligibility_status"] = (
-        "interface_contract_only_prediction_disabled_physiology_limited"
+        "interface_ready_prediction_disabled_time_blocked_physiology_limited"
     )
 
     coverage = _coverage_table(snapshot_n, state, counts)
@@ -732,11 +697,13 @@ def audit_mmwave_cardiopulmonary_snapshot(
             "temporal_scope": "pre_probe_only",
             "time_legality_status": TIME_LEGALITY_STATUS,
             "time_legality_evidence": TIME_LEGALITY_EVIDENCE,
-            "right_exclusive_end": True,
-            "alignment_clock_source": "dll_host_receive_enqueue",
-            "truncated_window_n": int(
-                time_audit["effective_start_truncated"].sum()
-            ),
+            "metadata_contract_verified": True,
+            "declared_endpoint_contract": ENDPOINT_CONTRACT,
+            "declared_right_exclusive_end_matches_probe": True,
+            "alignment_clock_source_declared": "dll_host_receive_enqueue",
+            "frame_membership_verified": False,
+            "source_code_provenance_closed": False,
+            "truncated_window_n": int(time_audit["effective_start_truncated"].sum()),
         },
         "endpoint_delta_audit": endpoint_delta_summary,
         "source_snapshot_version": CANONICAL_SNAPSHOT_VERSION,
@@ -825,10 +792,9 @@ def write_mmwave_cardiopulmonary_ingest_audit(
     output_dir: str | Path,
     result: MmwaveCardiopulmonaryIngestResult,
 ) -> dict[str, str]:
-    """Write focused audit outputs plus reusable current Task-B interface tables."""
+    """Write focused audit outputs plus reusable interface-smoke tables."""
     output = Path(output_dir)
     output.mkdir(parents=True, exist_ok=True)
-
     paths = {
         "ingest_audit": output / "mmwave_cardiopulmonary_ingest_audit.csv",
         "coverage": output / "mmwave_cardiopulmonary_coverage.csv",
@@ -850,8 +816,7 @@ def write_mmwave_cardiopulmonary_ingest_audit(
         paths["taskb_source"], index=False, encoding="utf-8-sig"
     )
     paths["manifest"].write_text(
-        json.dumps(result.manifest, ensure_ascii=False, indent=2),
-        encoding="utf-8",
+        json.dumps(result.manifest, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     result.endpoint_delta.to_csv(
         paths["endpoint_delta_ms"], index=False, encoding="utf-8-sig"
@@ -867,9 +832,7 @@ def write_mmwave_cardiopulmonary_ingest_audit(
     standard_dir = output / "interface_smoke"
     quality_paths = write_quality_audit(standard_dir, result.quality_tables)
     analysis_paths = write_analysis_sets(
-        standard_dir,
-        result.analysis_sets,
-        result.analysis_set_summary,
+        standard_dir, result.analysis_sets, result.analysis_set_summary
     )
     return {
         **{key: str(path) for key, path in paths.items()},

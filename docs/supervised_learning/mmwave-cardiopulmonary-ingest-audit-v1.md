@@ -1,94 +1,101 @@
 # mmWave → Cardiopulmonary ingest audit v1
 
-Status: **code/contract audit implemented; governed-cohort real rerun pending local snapshot access**.
+Status: **engineering interface implemented; metadata endpoint contract frozen; formal prediction time-legality blocked upstream**.
 
 Authority:
 
+- `FocusWave-Formal-Analysis@codex/code-fix-ledger/分析设计/1.15.9-毫米波生成链合同修复与time-legality处置_20260913.md`
 - `FocusWave-Formal-Analysis@codex/code-fix-ledger/分析设计/1.16.10-监督学习模态与设备定义修订及代码迁移计划_20260912.md`
 - `FocusWave-Formal-Analysis@codex/code-fix-ledger/分析设计/1.16.11-监督学习特征文件接口与运行前闸门_20260913.md`
 - producer `greenboo26/focuswave-multimodal-attention-analysis@main`
-- producer artifact `MMWAVE_INTEGRATION_SNAPSHOT_V1`
-- implementation issue: `https://github.com/kyandi233-dev/Attention-Analysis/issues/73`
+- artifact `MMWAVE_INTEGRATION_SNAPSHOT_V1`
 
 ## 1. Scope
 
-This bridge answers an engineering question only: can the current versioned mmWave snapshot enter the formal FocusWave analysis stack without changing participant identity, probe keys, temporal meaning, or producer availability/error semantics?
+This bridge answers only the engineering-ingest question: can the current versioned mmWave snapshot enter the FocusWave common interface without changing participant identity, canonical probe keys, producer availability/error semantics, or declared metadata timing?
 
-It does **not** re-run the radar estimator, optimize HR, create snapshot v2, qualify HRV, run LOSO, or promote HR/BR from the current physiology-limited/supporting-only role.
-
-The semantic contract is:
+It does not re-run the radar estimator, optimize HR/BR, qualify HRV, train LOSO models, promote mmWave motion to Movement, or mutate the final unified feature registry.
 
 ```text
-scientific modality = cardiopulmonary
+scientific_modality = cardiopulmonary
 source_namespace = mmwave
 required_devices = [mmwave]
+physiology_qualification = LIMITED_SUPPORTING_ONLY
 ```
-
-The current formal science quantities are:
-
-- `mmwave_hr_fused_bpm_median` — radar-derived fused heart-rate estimate;
-- `mmwave_breath_rate_breaths_per_min_median` — radar-derived respiration-rate estimate.
-
-`mmwave_motion_proxy_median` remains diagnostic-only and is not a Movement predictor. HRV quantities remain blocked.
 
 ## 2. Governed denominator and producer states
 
-The canonical snapshot contract is fixed at:
+The strict canonical gate remains:
 
-- 116 governed sessions;
+- 116 sessions;
 - 61 participant groups;
-- 2,320 governed probes;
-- 2,180 AVAILABLE probes from 109 sessions;
-- 40 SOURCE_UNAVAILABLE probes from 2 sessions;
-- 100 SOURCE_MALFORMED probes from 5 sessions.
+- 2,320 probes;
+- 2,180 `AVAILABLE`;
+- 40 `SOURCE_UNAVAILABLE`;
+- 100 `SOURCE_MALFORMED`.
 
-All 2,320 governed probe keys must remain present. The 40 unavailable rows and 100 malformed rows both retain missing HR/BR values, but they are **not collapsed into one missingness class**:
+All 2,320 canonical probe keys are retained. `SOURCE_UNAVAILABLE` maps to `structural_source_missing`; `SOURCE_MALFORMED` maps to `structural_source_unreadable`. Both preserve HR/BR as NaN. Zero fill, stale carry-forward, silent deletion, and ordinary imputation are forbidden.
 
-- `SOURCE_UNAVAILABLE`: the source is absent and enters the current quality interface as `structural_source_missing`;
-- `SOURCE_MALFORMED`: a source exists but cannot be read/used and enters as `structural_source_unreadable`.
+Participant identity is checked against the Behavior-authoritative table; it is never inferred from folder or session names.
 
-This distinction follows the producer replacement contract, which prohibits silently reclassifying error rows as ordinary source absence. Numeric zero-fill, stale carry-forward, silent row deletion, or ordinary median imputation fails the ingest contract.
+## 3. Metadata timing contract
 
-Participant identity comes from the snapshot's canonical `participant_group_id` and is checked against the Behavior-authoritative probe table. The adapter never reconstructs participant identity from folder/session naming.
+The governed-cohort endpoint audit run at PR #76 commit `53f642ab7c76e6692a11a68636bf36f1158418d5` found:
 
-## 3. Time-legality contract
+```text
+n_total = 2320
+n_zero = 2320
+n_nonzero = 0
+min = max = median = 0 ms
+```
 
-Producer-side science alignment uses the DLL host receive/enqueue Unix clock. The Python processing timestamp is QC-only.
+Therefore the downstream metadata contract is now frozen as exact integer-millisecond identity:
 
-For every snapshot row the adapter requires:
+```text
+window_end_unix_ms == probe_onset_unix_ms
+```
+
+No positive or negative non-zero endpoint delta is admitted. The previous temporary 1 ms absolute tolerance is retired. This exact endpoint check is a metadata identity check only.
+
+The row audit additionally requires:
 
 ```text
 window_name == pre_30s
 alignment_clock_source == dll_host_receive_enqueue
-window_nominal_start_unix_ms == probe_onset_unix_ms - 30000 ms
+probe_onset_unix_ms - window_nominal_start_unix_ms == 30000
 window_effective_start_unix_ms >= window_nominal_start_unix_ms
 window_effective_start_unix_ms < probe_onset_unix_ms
-window_end_unix_ms == probe_onset_unix_ms
 ```
 
-The producer field-role/replacement contract defines `window_end_unix_ms` as the right-exclusive probe onset, so the scientific interval is:
+## 4. Formal time-legality remains blocked
+
+Passing the metadata checks does **not** establish `verified_pre_probe_only`.
+
+Per Formal `1.15.9`, the current Cardiopulmonary feature status is:
 
 ```text
-[window_effective_start_unix_ms, probe_onset_unix_ms)
+engineering_integration_qualification = READY   # after strict governed run
+time_legality_status = blocked_upstream_contract_mismatch
+physiology_qualification = LIMITED_SUPPORTING_ONLY
+registry_ready = false
+prediction eligibility = false
 ```
 
-`window_effective_start_unix_ms > window_nominal_start_unix_ms` is legal when the nominal 30 s interval is truncated at formal Block start. Passing the row checks plus the producer contract yields `verified_pre_probe_only` provenance for the snapshot representation. This time qualification does not grant supervised-prediction eligibility; physiological qualification is a separate gate.
+The blocker is upstream reproducibility, not an observed metadata endpoint mismatch. Before promotion to `verified_pre_probe_only`, the producer side must close all of the following:
 
-## 4. Reused current interfaces
+1. current-main contract repair;
+2. strict right-open frame selection `[window_effective_start, probe_onset)`;
+3. old-vs-new per-probe frame-membership audit;
+4. actual selected-frame evidence proving no `timestamp >= probe_onset`;
+5. source-code provenance closure linking the executed code, commit, hashes, and run manifest without contradiction.
 
-The implementation reuses current 1.16 code rather than replacing it:
+The current downstream snapshot contains no per-frame timestamps or frame-membership digest, so this adapter cannot perform that second-track proof itself.
 
-1. `quality_admission.audit_quality()` for source/readability/QC/computability states;
-2. `analysis_sets.build_analysis_sets()` with explicit `required_feature_records` that map scientific modality `cardiopulmonary` to source namespace `mmwave`;
-3. comparison-specific membership from the exact HR/BR predictor union.
+## 5. Behavior probe-index compatibility
 
-The interface smoke consumes no Q1/Q2 and trains no model. It checks only engineering membership semantics. Unrelated Ocular or Movement availability is never referenced.
+Behavior science-v3 uses `probe_order_in_block`; the common interface uses `probe_index_in_block`. The CLI applies an explicit alias only when the canonical column is absent.
 
-## 5. Feature-handoff boundary
-
-`mmwave_cardiopulmonary_feature_handoff.csv` exposes HR/BR in the final semantic shape but is **not** the final unified feature registry. It records scientific modality, source namespace, required device, temporal provenance, physiology qualification, registry readiness, and researcher-freeze requirement.
-
-All prediction eligibility flags remain `false`. Current physiology qualification is `LIMITED_SUPPORTING_ONLY`.
+If both columns are present, they must agree row-for-row. Any disagreement fails closed rather than silently preferring one column.
 
 ## 6. Outputs
 
@@ -98,48 +105,30 @@ mmwave_cardiopulmonary_coverage.csv
 mmwave_cardiopulmonary_feature_handoff.csv
 mmwave_cardiopulmonary_taskb_source.csv
 mmwave_cardiopulmonary_ingest_manifest.json
-interface_smoke/formal_probe_identity.csv
-interface_smoke/modality_probe_status.csv
-interface_smoke/probe_feature_status.csv
-interface_smoke/feature_coverage.csv
-interface_smoke/modality_availability.csv
-interface_smoke/analysis_sets.csv
-interface_smoke/analysis_set_summary.csv
+endpoint_delta_ms.csv
+endpoint_delta_nonzero_ms.csv
+endpoint_delta_summary.json
+interface_smoke/*
 ```
 
-The manifest reports the three producer states separately. The neutral aggregate `retained_missing_or_error_probe_n` counts rows that retain missing HR/BR without erasing whether the reason was source absence or malformed source error.
+## 7. Strict local rerun
 
-## 7. Governed-cohort local run
-
-The 2,320-row snapshot is producer-recorded local-only and is not committed to GitHub or the accessible Drive snapshot folder. Therefore CI and cloud review cannot claim a fresh governed-cohort execution of this adapter.
-
-On the machine holding the current snapshot:
+The row-level snapshot is local-only. After the exact-endpoint/time-status correction commit, rerun the strict governed audit on the machine holding the data:
 
 ```powershell
-conda activate attention-behavior-formal
 cd "D:\Project\厚粲杯\08_算法\Attention-Analysis"
-
 git fetch origin
-git switch codex/mmwave-cardiopulmonary-ingest-audit-v1
+git switch codex/mmwave-cardiopulmonary-endpoint-guard-v1
 git pull
 
 python scripts/mmwave_cardiopulmonary_ingest_audit.py `
-  --snapshot "D:\Project\厚粲杯\11_数据\_FormalAnalysis\mmWave\mmwave_integration_snapshot_v1_20260912_r4\mmwave_probe_merge_ready.csv" `
-  --behavior-probes "<CURRENT_BEHAVIOR_116_SESSION_PROBE_TABLE>" `
-  --output-root "D:\Project\厚粲杯\11_数据\_FormalAnalysis\mmWave\mmwave_cardiopulmonary_ingest_audit_v1"
+  --snapshot "D:\Project\厚粲杯\11_数据\_FormalAnalysis\mmWave\mmwave_integration_snapshot_v1_20260912_r4\MMWAVE_INTEGRATION_SNAPSHOT_V1_PROBES_LOCAL_ONLY.csv" `
+  --behavior-probes "D:\Project\厚粲杯\11_数据\_FormalAnalysis\Behavior\formal_v3\probe_primary_30s.csv" `
+  --output-root "D:\Project\厚粲杯\11_数据\_FormalAnalysis\mmWave\mmwave_cardiopulmonary_endpoint_guard_v1_20260913"
 ```
 
-Do not use `--allow-subset-smoke` for the governed-cohort gate. A strict run fails unless it conserves exactly 2,320 keys / 116 sessions / 61 groups, reproduces 2,180 AVAILABLE + 40 SOURCE_UNAVAILABLE + 100 SOURCE_MALFORMED rows, keeps HR and BR finite exactly 2,180 times each, and yields exactly 2,180 probes in both complete and missing-aware Cardiopulmonary interface sets.
-
-`--allow-subset-smoke` is only for synthetic/schema smoke. Such a run writes `engineering_integration_qualification=PENDING_GOVERNED_REAL_RUN`; it cannot be used as release evidence.
+Do not use `--allow-subset-smoke` for the governed-cohort gate. The refreshed run is expected to preserve 2,320 / 116 / 61, 2,180 / 40 / 100, and exact endpoint delta 0 on all 2,320 probes. Any deviation must be investigated rather than coerced to the historical counts.
 
 ## 8. Release interpretation
 
-Only a successful strict governed-cohort rerun supports:
-
-```text
-engineering integration qualification = READY
-physiology qualification = LIMITED / SUPPORTING_ONLY
-```
-
-It still does not authorize Cardiopulmonary predictors in the final supervised model. That later decision remains a Formal-method/researcher freeze after the real audit artifacts are reviewed. Interface readiness and physiological measurement validity remain separate states.
+This PR can close the downstream engineering interface and metadata endpoint guard. It cannot close the producer provenance/time-lineage task and cannot authorize Cardiopulmonary predictors in formal supervised learning.

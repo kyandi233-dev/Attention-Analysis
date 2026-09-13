@@ -1,103 +1,96 @@
 # mmWave Cardiopulmonary time-lineage evidence v1
 
-Status: `verified_pre_probe_only` for `MMWAVE_INTEGRATION_SNAPSHOT_V1`, with a separate source-reproducibility limitation.
+Status: `blocked_upstream_contract_mismatch` for formal prediction; snapshot v1 remains usable for interface/schema/supporting integration.
 
-This note exists because two superficially conflicting code states must not be conflated.
+This note separates three different claims that must not be conflated:
 
-## 1. The visible current-main legacy adapter is not the snapshot-v1 execution source
+1. the snapshot's declared metadata timing is internally consistent;
+2. producer-side corrected-replay evidence indicates the intended right-open pre-probe window was used;
+3. the exact executed source lineage is still not reproducible without contradiction from the current remote repository.
 
-The file currently visible on producer `main` at:
+## 1. Current producer main and snapshot execution lineage differ
 
-`greenboo26/focuswave-multimodal-attention-analysis/scripts/maintenance/run_mmwave_probe_merge_ready_20260831.py`
+The currently visible producer `main` adapter still reflects the older implementation line. Formal `1.15.9` records the unresolved contract items: use of the wrong visible slicing semantics in current main, incomplete current-main source closure, and a usable-window field whose semantics are not yet canonical.
 
-still contains the older semantics:
+`MMWAVE_INTEGRATION_SNAPSHOT_V1`, however, was packaged from a corrected DLL-time replay rather than from that visible legacy current-main adapter.
 
-- reads `window_start_unix_ms` rather than using the corrected effective start for slicing;
-- slices against timestamp column index 2 (Python worker processing time);
-- uses `searchsorted(..., side="right")` at the right boundary.
+## 2. Existing corrected-replay evidence
 
-Those statements are true of the visible legacy file, but they must **not** be projected onto `MMWAVE_INTEGRATION_SNAPSHOT_V1`.
-
-## 2. Snapshot v1 is explicitly packaged from a corrected local DLL-time replay
-
-The tracked snapshot manifest records:
+Durable producer evidence records the intended execution semantics as:
 
 ```text
-source_commit = 16729b2ef245f9304dae8674f3bac433bc02e98c
-reuse_gate = PASS: reused corrected DLL-time replay ...; no algorithm rerun
-input = mmwave_b1_formal_dll_replay_20260912_r2
-```
-
-The current tracked snapshot builder also hard-codes the same producer commit and packages the immutable J72 + E44 corrected replay tables. It validates the exported row fields:
-
-```text
-window_end_unix_ms == probe_onset_unix_ms
-window_nominal_start_unix_ms + 30000 == window_end_unix_ms
-window_effective_start_unix_ms >= window_nominal_start_unix_ms
-window_effective_start_unix_ms < window_end_unix_ms
-alignment_clock_source = dll_host_receive_enqueue
-```
-
-The builder labels the adapter version `issue34-dll-cutover-v1`; it does not re-estimate the radar signals.
-
-## 3. The corrected execution semantics were audited separately at producer P0
-
-The durable producer evidence:
-
-- `docs/canonical/2026-09-12_MMWAVE_HR_RECOVERY_P0_PIPELINE_LINEAGE_AUDIT.md`
-- `docs/canonical/2026-09-12_MMWAVE_HR_RECOVERY_P0_MANIFEST.json`
-
-records the exact current-formal source as `16729b2ef245f9304dae8674f3bac433bc02e98c` and states that the B1 DLL replay used:
-
-```text
-scientific timestamp = DLL host receive/enqueue column 1
-Python worker timestamp = QC only
+science clock = DLL host receive/enqueue timestamp
+Python processing timestamp = QC only
 left boundary = searchsorted(..., side='left')
 right boundary = searchsorted(..., side='left')
-window = [probe_end - 30 s, probe_end)
+window = [window_effective_start_unix_ms, probe_onset_unix_ms)
 formal Block start = front-boundary clipping; no cross-Block window
 ```
 
-For B1 the audit records:
+The producer P0 audit also records that, on the replay comparison, probes with identical frame membership retained identical deterministic derived values. This is evidence in favor of the intended pre-probe semantics.
+
+## 3. Downstream metadata endpoint audit
+
+PR #76 performed a strict governed-cohort downstream audit of the declared endpoint fields:
 
 ```text
-116 sessions
-2320 rows
-2180 computable probes
-changed frame membership = 1847
-identical frame membership = 333
-deterministic feature changed when membership identical = 0
-regression gate = PASS
-models trained = false
+2320 probes / 116 sessions / 61 participant groups
+window_end_unix_ms - probe_onset_unix_ms:
+  n_zero = 2320
+  n_nonzero = 0
+  min = max = median = 0 ms
 ```
 
-This is the producer-side evidence required by the Formal rule that `MMWAVE_INTEGRATION=READY` alone cannot establish time legality.
-
-## 4. Source reproducibility limitation
-
-The same P0 manifest records:
+The downstream metadata contract is therefore frozen as exact identity:
 
 ```text
-16729b2... reachable_from_origin_main_at_audit_start = false
+window_end_unix_ms == probe_onset_unix_ms
 ```
 
-and the current GitHub remote still cannot resolve that exact commit. Therefore the correct downstream statement is two-part:
+This closes the previously defective NumPy relative-tolerance guard. It does **not** prove which individual frames actually entered the upstream estimator.
+
+## 4. Source-code provenance remains unresolved
+
+Formal `1.15.9` records a stricter second-round finding: the replay manifest's recorded source hashes do not match the files obtained from its self-declared `source_commit`, and the exact historical execution commit is not currently recoverable from the remote lineage without ambiguity.
+
+Therefore the current formal interpretation is:
 
 ```text
-time-legality status = verified_pre_probe_only
-source reproducibility status = durable producer audit present / exact execution commit not remote-reachable
+metadata contract = verified
+engineering integration = READY after strict real run
+formal prediction time-legality = blocked_upstream_contract_mismatch
+source-code provenance closure = pending
+frame-membership proof = pending
 ```
 
-The second clause is a provenance/reproducibility limitation. It is not evidence that snapshot v1 used future information, because the exact corrected replay was separately content-addressed and audited before snapshot packaging. Conversely, current `main` must not be presented as the executable source of snapshot v1 unless a semantics-equivalent corrected commit is later restored to the remote repository and verified.
+This is not evidence that snapshot v1 used future information. It is evidence that the executed producer source cannot yet be reproduced and tied to the formal contract with the level of provenance required for prediction eligibility.
 
-## 5. Downstream rule for this PR
+## 5. Required second-track producer evidence
 
-The mmWave → Cardiopulmonary ingest audit therefore:
+Promotion to `verified_pre_probe_only` requires an upstream artifact keyed by the canonical probe identity that can establish actual selected-frame membership, not just declared metadata. At minimum it should carry:
 
-1. verifies every snapshot row still reports the frozen `pre_30s` window fields and DLL clock;
-2. carries `verified_pre_probe_only` only for the versioned `MMWAVE_INTEGRATION_SNAPSHOT_V1` lineage;
-3. preserves the producer commit/run provenance in the manifest;
-4. keeps all HR/BR prediction-eligibility flags false because physiological qualification is a separate gate;
-5. must not infer that a future snapshot or a newly generated table is time-legal merely because it is called mmWave or because the visible current-main legacy adapter exists.
+```text
+canonical probe key
+selected_frame_count
+first_selected_timestamp
+last_selected_timestamp
+all_selected_timestamp_lt_probe_onset
+frame_membership_digest
+producer commit
+source file hashes / run id
+```
 
-A future replacement snapshot must pass its own producer time-lineage audit under the replacement contract; this v1 evidence is not transferable by feature name alone.
+The producer repair must also provide an old-vs-new per-probe audit so that changed and unchanged frame memberships, HR/BR/QC transitions, and missing/error states can be traced explicitly.
+
+## 6. Downstream rule
+
+Until that producer/provenance work is accepted:
+
+- `MMWAVE_INTEGRATION_SNAPSHOT_V1` may be used for interface, schema, denominator, missingness, and supporting integration work;
+- HR/BR remain `LIMITED_SUPPORTING_ONLY`;
+- `time_legality_status = blocked_upstream_contract_mismatch`;
+- all formal prediction-eligibility flags remain false;
+- HRV remains blocked;
+- mmWave motion remains diagnostic-only and is not a qualified Movement feature.
+
+No downstream metadata tolerance, including an endpoint tolerance, may substitute for actual producer frame-membership evidence.

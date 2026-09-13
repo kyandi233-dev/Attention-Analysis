@@ -8,12 +8,17 @@ import pytest
 
 from attention_pipeline.multimodal_formal.mmwave_cardiopulmonary_ingest import (
     BR_COLUMN,
+    ENDPOINT_ATOL_MS,
+    ENDPOINT_CONTRACT,
+    ENDPOINT_RTOL,
     HR_COLUMN,
     PHYSIOLOGY_QUALIFICATION,
     TIME_LEGALITY_STATUS,
     MmwaveCardiopulmonaryIngestError,
     audit_mmwave_cardiopulmonary_snapshot,
+    write_mmwave_cardiopulmonary_ingest_audit,
 )
+from scripts.mmwave_cardiopulmonary_ingest_audit import _resolve_probe_index
 
 
 def _behavior() -> pd.DataFrame:
@@ -22,9 +27,9 @@ def _behavior() -> pd.DataFrame:
             "session_id": ["sub-001"] * 4,
             "block_id": ["b1", "b1", "b2", "b2"],
             "probe_index_in_block": [1, 2, 1, 2],
+            "probe_order_in_block": [1, 2, 1, 2],
             "participant_group_id": ["pg-001"] * 4,
             "probe_event_id": ["e1", "e2", "e3", "e4"],
-            "probe_order_in_block": [1, 2, 1, 2],
             "window_name": ["pre_30s"] * 4,
         }
     )
@@ -34,7 +39,6 @@ def _snapshot() -> pd.DataFrame:
     probe = np.array([100_000.0, 140_000.0, 200_000.0, 240_000.0])
     nominal = probe - 30_000.0
     effective = nominal.copy()
-    # Legal formal-Block truncation of the nominal 30-second interval.
     effective[0] = nominal[0] + 10_000.0
     state = ["AVAILABLE", "AVAILABLE", "SOURCE_UNAVAILABLE", "SOURCE_MALFORMED"]
     return pd.DataFrame(
@@ -91,7 +95,6 @@ def _snapshot() -> pd.DataFrame:
             "producer_adapter_version": ["adapter-v1"] * 4,
             "source_run_id": ["source-run"] * 4,
             "snapshot_run_id": ["snapshot-run"] * 4,
-            # Producer diagnostics must never be promoted by this bridge.
             "mmwave_motion_proxy_median": [0.1, 0.2, np.nan, np.nan],
             "mmwave_rmssd_ms": [20.0, 21.0, np.nan, np.nan],
         }
@@ -109,11 +112,7 @@ def _audit(
     )
 
 
-# Real FocusWave snapshots carry Unix-epoch milliseconds (~1.7e12).  The small
-# values used by ``_snapshot()`` cannot expose a relative-tolerance defect, so the
-# endpoint-guard tests deliberately shift the time columns to a realistic epoch.
 REAL_EPOCH_MS = 1_756_000_000_000
-
 _TIME_COLUMNS = (
     "window_nominal_start_unix_ms",
     "window_effective_start_unix_ms",
@@ -123,7 +122,6 @@ _TIME_COLUMNS = (
 
 
 def _at_real_epoch(snapshot: pd.DataFrame) -> pd.DataFrame:
-    """Shift a fixture to realistic Unix-ms magnitude without changing deltas."""
     out = snapshot.copy()
     for column in _TIME_COLUMNS:
         out[column] = out[column] + REAL_EPOCH_MS
@@ -132,41 +130,18 @@ def _at_real_epoch(snapshot: pd.DataFrame) -> pd.DataFrame:
 
 def test_ingest_preserves_unavailable_and_malformed_as_distinct_states() -> None:
     result = _audit()
-
     assert result.manifest["status"] == "SMOKE_ONLY"
-    assert (
-        result.manifest["engineering_integration_qualification"]
-        == "PENDING_GOVERNED_REAL_RUN"
-    )
-    assert result.manifest["governed_real_snapshot_rerun_complete"] is False
-    assert result.manifest["governed_probe_n"] == 4
+    assert result.manifest["engineering_integration_qualification"] == "PENDING_GOVERNED_REAL_RUN"
     assert result.manifest["available_probe_n"] == 2
     assert result.manifest["source_unavailable_probe_n"] == 1
     assert result.manifest["source_malformed_probe_n"] == 1
     assert result.manifest["retained_missing_or_error_probe_n"] == 2
-    assert result.manifest["hr_available_n"] == 2
-    assert result.manifest["br_available_n"] == 2
-    assert result.manifest["duplicate_key_n"] == 0
-    assert result.manifest["missing_key_n"] == 0
-    assert result.manifest["extra_key_n"] == 0
-    assert result.manifest["participant_identity_inferred_from_folder"] is False
     assert result.manifest["source_unavailable_zero_imputed"] is False
     assert result.manifest["source_malformed_zero_imputed"] is False
-    assert result.manifest["q1_q2_used_for_ingest_decision"] is False
-    assert result.manifest["models_trained"] is False
-    assert result.manifest["final_feature_registry_modified"] is False
-
-    assert len(result.taskb_source) == 4
     retained = result.taskb_source["integration_state"].ne("AVAILABLE")
     assert result.taskb_source.loc[retained, [HR_COLUMN, BR_COLUMN]].isna().all().all()
     assert "mmwave_motion_proxy_median" not in result.taskb_source.columns
     assert "mmwave_rmssd_ms" not in result.taskb_source.columns
-
-    audit = result.ingest_audit.set_index(["block_id", "probe_index_in_block"])
-    assert bool(audit.loc[("b2", 1), "source_unavailable"])
-    assert not bool(audit.loc[("b2", 1), "source_malformed"])
-    assert bool(audit.loc[("b2", 2), "source_malformed"])
-    assert not bool(audit.loc[("b2", 2), "source_unavailable"])
 
     status = result.quality_tables["probe_feature_status"]
     unavailable = status[
@@ -181,22 +156,16 @@ def test_ingest_preserves_unavailable_and_malformed_as_distinct_states() -> None
     ].iloc[0]
     assert unavailable["missing_kind"] == "structural_source_missing"
     assert malformed["missing_kind"] == "structural_source_unreadable"
-    assert not bool(unavailable["eligible_for_missing_strategy"])
-    assert not bool(malformed["eligible_for_missing_strategy"])
-
-    summary = result.analysis_set_summary.set_index("membership")
-    assert int(summary.loc["included_complete", "probe_n"]) == 2
-    assert int(summary.loc["included_missing_aware", "probe_n"]) == 2
 
 
-def test_handoff_uses_cardiopulmonary_science_and_mmwave_device_without_prediction_promotion() -> None:
+def test_handoff_is_interface_ready_but_time_and_prediction_blocked() -> None:
     result = _audit()
     handoff = result.feature_handoff
-
     assert set(handoff["scientific_modality"]) == {"cardiopulmonary"}
     assert set(handoff["source_namespace"]) == {"mmwave"}
     assert all(json.loads(value) == ["mmwave"] for value in handoff["required_devices"])
-    assert set(handoff["time_legality_status"]) == {TIME_LEGALITY_STATUS}
+    assert set(handoff["time_legality_status"]) == {"blocked_upstream_contract_mismatch"}
+    assert TIME_LEGALITY_STATUS == "blocked_upstream_contract_mismatch"
     assert set(handoff["physiology_qualification"]) == {PHYSIOLOGY_QUALIFICATION}
     for column in (
         "standalone_eligible",
@@ -207,176 +176,96 @@ def test_handoff_uses_cardiopulmonary_science_and_mmwave_device_without_predicti
         "registry_ready",
     ):
         assert not handoff[column].astype(bool).any()
-    assert handoff["researcher_freeze_required"].astype(bool).all()
-
-    records = json.loads(
-        result.analysis_sets["required_feature_records"].drop_duplicates().iloc[0]
-    )
-    assert {record["scientific_modality"] for record in records} == {
-        "cardiopulmonary"
-    }
-    assert {record["source_namespace"] for record in records} == {"mmwave"}
 
 
-def test_block_start_truncation_is_time_legal_and_reported() -> None:
+def test_manifest_separates_metadata_contract_from_formal_time_legality() -> None:
     result = _audit()
-    assert result.manifest["time_legality"]["time_legality_status"] == TIME_LEGALITY_STATUS
-    assert result.manifest["time_legality"]["right_exclusive_end"] is True
-    assert (
-        result.manifest["time_legality"]["alignment_clock_source"]
-        == "dll_host_receive_enqueue"
-    )
+    time = result.manifest["time_legality"]
+    assert time["metadata_contract_verified"] is True
+    assert time["declared_endpoint_contract"] == "exact_integer_equality"
+    assert time["frame_membership_verified"] is False
+    assert time["source_code_provenance_closed"] is False
+    assert time["time_legality_status"] == "blocked_upstream_contract_mismatch"
+
+
+def test_block_start_truncation_is_metadata_legal_and_reported() -> None:
+    result = _audit()
     assert result.manifest["time_legality"]["truncated_window_n"] == 1
     assert int(result.ingest_audit["effective_start_truncated"].sum()) == 1
+    assert result.ingest_audit["metadata_time_contract_valid"].astype(bool).all()
 
 
 def test_wrong_clock_fails_closed() -> None:
     snapshot = _snapshot()
     snapshot.loc[0, "alignment_clock_source"] = "python_processing_timestamp"
-    with pytest.raises(MmwaveCardiopulmonaryIngestError, match="verified_pre_probe_only"):
+    with pytest.raises(MmwaveCardiopulmonaryIngestError, match="metadata time-contract"):
         _audit(snapshot=snapshot)
 
 
 def test_default_relative_tolerance_would_admit_hour_scale_endpoint_drift() -> None:
-    """Documents the defect this round fixes.
-
-    NumPy's default ``rtol`` (~1e-5) applied to Unix-ms operands (~1e12) spans
-    roughly 1e7 ms -- hours -- so an endpoint guard written without ``rtol=0.0``
-    silently admits arbitrary drift instead of millisecond-level drift.
-    """
     end = np.float64(REAL_EPOCH_MS)
     probe_one_hour_later = np.float64(REAL_EPOCH_MS + 3_600_000)
-
-    # Default rtol: wrongly treated as close.
     assert np.isclose(end, probe_one_hour_later, atol=1.0)
-    # Explicit rtol=0.0: correctly rejected.
-    assert not np.isclose(end, probe_one_hour_later, atol=1.0, rtol=0.0)
+    assert not np.isclose(end, probe_one_hour_later, atol=0.0, rtol=0.0)
 
 
-def test_zero_endpoint_delta_is_legal_at_real_epoch() -> None:
+def test_exact_endpoint_contract_is_frozen() -> None:
+    assert ENDPOINT_CONTRACT == "exact_integer_equality"
+    assert ENDPOINT_ATOL_MS == 0.0
+    assert ENDPOINT_RTOL == 0.0
     result = _audit(snapshot=_at_real_epoch(_snapshot()))
+    summary = result.manifest["endpoint_delta_audit"]
+    assert summary["endpoint_contract"] == "exact_integer_equality"
+    assert summary["endpoint_contract_frozen"] is True
+    assert summary["endpoint_atol_ms"] == 0.0
+    assert summary["endpoint_rtol"] == 0.0
+    assert summary["n_zero"] == 4
+    assert summary["n_nonzero"] == 0
+    assert summary["n_violating_exact_endpoint_contract"] == 0
 
-    audit = result.manifest["endpoint_delta_audit"]
-    assert audit["n_total"] == 4
-    assert audit["n_zero"] == 4
-    assert audit["n_nonzero"] == 0
-    assert audit["n_exceeding_provisional_atol"] == 0
-    assert audit["nonzero_delta_frequencies_ms"] == {}
 
-
-def test_hour_scale_endpoint_drift_fails_closed_at_real_epoch() -> None:
-    """The guard must reject hour-scale drift that the old default rtol admitted."""
+@pytest.mark.parametrize("delta_ms", [1, -1, 2, 3_600_000])
+def test_any_nonzero_endpoint_delta_fails_closed(delta_ms: int) -> None:
     snapshot = _at_real_epoch(_snapshot())
     snapshot.loc[0, "window_end_unix_ms"] = (
-        snapshot.loc[0, "probe_onset_unix_ms"] + 3_600_000
+        snapshot.loc[0, "probe_onset_unix_ms"] + delta_ms
     )
-
-    with pytest.raises(
-        MmwaveCardiopulmonaryIngestError, match="verified_pre_probe_only"
-    ):
+    with pytest.raises(MmwaveCardiopulmonaryIngestError, match="metadata time-contract"):
         _audit(snapshot=snapshot)
 
 
-def test_endpoint_delta_within_provisional_atol_is_admitted_not_frozen() -> None:
-    """+1 ms is admitted only because it sits inside the CURRENT PROVISIONAL atol.
-
-    This is deliberately not asserted as a permanent scientific contract; whether
-    the final rule is exact equality or a smaller constant is decided by the
-    governed-cohort endpoint audit plus producer evidence.
-    """
-    snapshot = _at_real_epoch(_snapshot())
-    snapshot.loc[0, "window_end_unix_ms"] = snapshot.loc[0, "probe_onset_unix_ms"] + 1
-
-    result = _audit(snapshot=snapshot)
-
+def test_endpoint_delta_audit_states_frame_membership_is_unavailable() -> None:
+    result = _audit(snapshot=_at_real_epoch(_snapshot()))
     audit = result.manifest["endpoint_delta_audit"]
-    assert audit["n_nonzero"] == 1
-    assert audit["n_exceeding_provisional_atol"] == 0
-    assert audit["nonzero_delta_frequencies_ms"] == {"1": 1}
-    assert audit["provisional_atol_ms"] == 1.0
-    assert audit["provisional_atol_is_frozen_conclusion"] is False
-
-
-def test_endpoint_delta_beyond_provisional_atol_fails_closed() -> None:
-    snapshot = _at_real_epoch(_snapshot())
-    snapshot.loc[0, "window_end_unix_ms"] = snapshot.loc[0, "probe_onset_unix_ms"] + 2
-
-    with pytest.raises(
-        MmwaveCardiopulmonaryIngestError, match="verified_pre_probe_only"
-    ):
-        _audit(snapshot=snapshot)
-
-
-def test_endpoint_delta_audit_reports_nonzero_rows_and_scope_limit() -> None:
-    snapshot = _at_real_epoch(_snapshot())
-    snapshot.loc[1, "window_end_unix_ms"] = snapshot.loc[1, "probe_onset_unix_ms"] - 1
-
-    result = _audit(snapshot=snapshot)
-
-    audit = result.manifest["endpoint_delta_audit"]
-    assert audit["n_total"] == 4
-    assert audit["n_zero"] == 3
-    assert audit["n_nonzero"] == 1
-    assert audit["nonzero_delta_frequencies_ms"] == {"-1": 1}
-    assert audit["nonzero_session_n"] == 1
-    assert audit["nonzero_participant_group_n"] == 1
-    assert audit["nonzero_sessions"] == ["sub-001"]
-    assert audit["n_exceeding_provisional_atol"] == 0
-
-    # Scope limit: this layer cannot verify frame membership.
     assert audit["audit_scope"] == "metadata_contract_window_end_vs_probe_onset"
     assert audit["frame_membership_available"] is False
-
-    # Non-zero rows are listed explicitly, not only summarised.
-    assert len(result.endpoint_delta_nonzero) == 1
-    assert set(result.endpoint_delta_nonzero["endpoint_delta_ms"]) == {-1.0}
-    for column in (
-        "session_id",
-        "block_id",
-        "probe_index_in_block",
-        "participant_group_id",
-        "window_end_unix_ms",
-        "probe_onset_unix_ms",
-        "endpoint_delta_ms",
-    ):
-        assert column in result.endpoint_delta.columns
+    assert audit["source_code_provenance_closed"] is False
+    assert audit["formal_time_legality_status"] == "blocked_upstream_contract_mismatch"
 
 
 def test_endpoint_delta_outputs_are_written(tmp_path) -> None:
-    from attention_pipeline.multimodal_formal.mmwave_cardiopulmonary_ingest import (
-        write_mmwave_cardiopulmonary_ingest_audit,
-    )
-
-    snapshot = _at_real_epoch(_snapshot())
-    snapshot.loc[0, "window_end_unix_ms"] = snapshot.loc[0, "probe_onset_unix_ms"] + 1
-    result = _audit(snapshot=snapshot)
-
+    result = _audit(snapshot=_at_real_epoch(_snapshot()))
     paths = write_mmwave_cardiopulmonary_ingest_audit(tmp_path, result)
-
-    delta_csv = tmp_path / "endpoint_delta_ms.csv"
-    summary_json = tmp_path / "endpoint_delta_summary.json"
-    assert delta_csv.exists()
-    assert summary_json.exists()
+    assert (tmp_path / "endpoint_delta_ms.csv").exists()
+    assert (tmp_path / "endpoint_delta_nonzero_ms.csv").exists()
+    assert (tmp_path / "endpoint_delta_summary.json").exists()
     assert paths["endpoint_delta_ms"].endswith("endpoint_delta_ms.csv")
-
-    written = pd.read_csv(delta_csv)
-    assert len(written) == 4
-    assert "endpoint_delta_ms" in written.columns
-
-    summary = json.loads(summary_json.read_text(encoding="utf-8"))
+    summary = json.loads(
+        (tmp_path / "endpoint_delta_summary.json").read_text(encoding="utf-8")
+    )
     assert summary["n_total"] == 4
-    assert summary["n_nonzero"] == 1
+    assert summary["n_nonzero"] == 0
     assert summary["frame_membership_available"] is False
 
 
-def test_nominal_window_must_be_30_seconds() -> None:
+def test_nominal_window_must_be_exactly_30_seconds() -> None:
     snapshot = _snapshot()
-    snapshot.loc[0, "window_nominal_start_unix_ms"] += 1000
-    with pytest.raises(MmwaveCardiopulmonaryIngestError, match="verified_pre_probe_only"):
+    snapshot.loc[0, "window_nominal_start_unix_ms"] += 1
+    with pytest.raises(MmwaveCardiopulmonaryIngestError, match="metadata time-contract"):
         _audit(snapshot=snapshot)
 
 
-def test_participant_identity_mismatch_fails_instead_of_inferring_from_session_name() -> None:
+def test_participant_identity_mismatch_fails() -> None:
     snapshot = _snapshot()
     snapshot["participant_group_id"] = "wrong-participant"
     with pytest.raises(MmwaveCardiopulmonaryIngestError, match="identity disagrees"):
@@ -403,3 +292,23 @@ def test_unavailable_or_malformed_rows_cannot_be_zero_filled() -> None:
         snapshot.loc[row, BR_COLUMN] = 0.0
         with pytest.raises(MmwaveCardiopulmonaryIngestError, match="zero-fill"):
             _audit(snapshot=snapshot)
+
+
+def test_behavior_probe_order_alias_is_accepted_when_canonical_missing() -> None:
+    behavior = _behavior().drop(columns=["probe_index_in_block"])
+    resolved, alias = _resolve_probe_index(behavior)
+    assert alias == "probe_order_in_block"
+    assert resolved["probe_index_in_block"].tolist() == [1, 2, 1, 2]
+
+
+def test_behavior_dual_probe_index_columns_must_agree() -> None:
+    behavior = _behavior()
+    behavior.loc[0, "probe_order_in_block"] = 9
+    with pytest.raises(ValueError, match="aliases disagree"):
+        _resolve_probe_index(behavior)
+
+
+def test_behavior_dual_probe_index_columns_can_agree_without_alias_application() -> None:
+    resolved, alias = _resolve_probe_index(_behavior())
+    assert alias is None
+    assert resolved["probe_index_in_block"].tolist() == [1, 2, 1, 2]

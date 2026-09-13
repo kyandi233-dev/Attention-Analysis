@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 """Run the canonical mmWave -> Cardiopulmonary ingest audit.
 
-This command never re-runs the mmWave estimator and never trains a supervised model.
-It validates the versioned integration snapshot against the Behavior-authoritative
-probe denominator, writes focused ingest/coverage/provenance outputs, and exercises
-the current comparison-specific analysis-set interface without consuming Q1/Q2.
+This command never re-runs the mmWave estimator and never trains a supervised
+model. It validates the versioned integration snapshot against the
+Behavior-authoritative governed probe denominator and writes engineering audit
+artifacts only.
 """
 from __future__ import annotations
 
@@ -29,30 +29,44 @@ def _read_table(path: Path) -> pd.DataFrame:
     raise ValueError(f"unsupported table format for {path}; expected csv/txt/parquet")
 
 
-# The Behavior science-v3 probe table names the within-block probe ordinal
-# ``probe_order_in_block``, while the canonical mmWave snapshot and this adapter's
-# contract use ``probe_index_in_block``.  On the governed cohort the two were
-# verified row-for-row equivalent (2,320 keys after block-id normalisation, 0 keys
-# present on only one side, 0 participant-group disagreements), so the alias is
-# applied explicitly here instead of loosening the adapter's key contract.
+# Behavior science-v3 uses ``probe_order_in_block`` while the canonical mmWave
+# snapshot/interface key is ``probe_index_in_block``. The alias is explicit and
+# fail-closed: if both columns exist they must agree row-for-row.
 PROBE_INDEX_ALIASES = ("probe_index_in_block", "probe_order_in_block")
 
 
 def _resolve_probe_index(behavior: pd.DataFrame) -> tuple[pd.DataFrame, str | None]:
-    """Return the Behavior authority carrying a canonical probe-index column."""
+    """Return Behavior authority carrying a validated canonical probe-index column."""
+    canonical, alias = PROBE_INDEX_ALIASES
     present = [column for column in PROBE_INDEX_ALIASES if column in behavior.columns]
     if not present:
         raise ValueError(
             "behavior authority has no probe-index column; expected one of "
             f"{list(PROBE_INDEX_ALIASES)}"
         )
-    canonical = PROBE_INDEX_ALIASES[0]
+
+    if canonical in behavior.columns and alias in behavior.columns:
+        canonical_values = pd.to_numeric(behavior[canonical], errors="coerce")
+        alias_values = pd.to_numeric(behavior[alias], errors="coerce")
+        mismatch = (
+            canonical_values.isna()
+            | alias_values.isna()
+            | canonical_values.ne(alias_values)
+        )
+        if bool(mismatch.any()):
+            sample = behavior.loc[mismatch, [canonical, alias]].head(5)
+            raise ValueError(
+                "behavior probe-index aliases disagree; refusing silent precedence; "
+                f"sample={sample.to_dict(orient='records')}"
+            )
+        return behavior, None
+
     if canonical in behavior.columns:
         return behavior, None
-    source = present[0]
+
     resolved = behavior.copy()
-    resolved[canonical] = resolved[source]
-    return resolved, source
+    resolved[canonical] = resolved[alias]
+    return resolved, alias
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -69,7 +83,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--behavior-probes",
         required=True,
         type=Path,
-        help="Behavior-authoritative governed probe table containing canonical keys and participant_group_id.",
+        help=(
+            "Behavior-authoritative governed probe table containing canonical keys "
+            "and participant_group_id."
+        ),
     )
     parser.add_argument(
         "--output-root",
