@@ -133,12 +133,17 @@ def _namespace_tables(
     behavior: pd.DataFrame,
     ocular: pd.DataFrame,
     movement: pd.DataFrame,
+    cardiopulmonary: pd.DataFrame | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Assemble one producer table per source namespace.
 
     ``rgb`` must carry both the blink column (produced in the ocular wide table) and the
     body-motion column (produced in the movement table). They are joined on the canonical
     probe key with a fail-closed check, never concatenated by position.
+
+    ``mmwave`` is the cardiopulmonary source namespace. It is supplied only when the frozen
+    registry actually registers cardiopulmonary features; the caller decides that, and the
+    feature-block step fails closed if a registered feature's namespace has no table.
     """
     behavior_n = _normalize_identity(behavior, "behavior")
     ocular_n = _normalize_identity(ocular, "ocular")
@@ -164,7 +169,14 @@ def _namespace_tables(
         frame["source_present"] = True
         frame["source_readable"] = True
         frame["window_seconds_nominal"] = 30
-    return {"behavior": behavior_n, "nir": ocular_n, "rgb": rgb}
+    tables = {"behavior": behavior_n, "nir": ocular_n, "rgb": rgb}
+    if cardiopulmonary is not None:
+        mmwave_n = _normalize_identity(cardiopulmonary, "cardiopulmonary")
+        mmwave_n["source_present"] = True
+        mmwave_n["source_readable"] = True
+        mmwave_n["window_seconds_nominal"] = 30
+        tables["mmwave"] = mmwave_n
+    return tables
 
 
 def _feature_blocks(
@@ -239,6 +251,16 @@ def analysis_set_groups(plan: Any) -> dict[str, tuple[str, ...]]:
         if model_id.startswith("standalone::")
         and model.modalities == ("movement",)
     )
+    # 心肺是本注册表的第四个科学模态（来源命名空间 mmwave）。它与眼部/动作走完全相同的
+    # 分组模式；缺了这一组，注册表里 modality::cardiopulmonary、
+    # behavior_plus_modality::cardiopulmonary 与逐特征 behavior_plus::cardiopulmonary.*
+    # 就没有任何分析集合覆盖，构造器会 fail-closed 报"planned models are not covered"。
+    cardiopulmonary_feature_ids = tuple(
+        model.feature_ids[0]
+        for model_id, model in models.items()
+        if model_id.startswith("standalone::")
+        and model.modalities == ("cardiopulmonary",)
+    )
 
     groups["AS.behavior_plus_ocular"] = keep(
         lambda m: m.model_id
@@ -256,6 +278,15 @@ def analysis_set_groups(plan: Any) -> dict[str, tuple[str, ...]]:
             "modality::movement",
             "behavior_plus_modality::movement",
             *(f"behavior_plus::{feature_id}" for feature_id in movement_feature_ids),
+        }
+    )
+    groups["AS.behavior_plus_cardiopulmonary"] = keep(
+        lambda m: m.model_id
+        in {
+            "behavior_reference",
+            "modality::cardiopulmonary",
+            "behavior_plus_modality::cardiopulmonary",
+            *(f"behavior_plus::{feature_id}" for feature_id in cardiopulmonary_feature_ids),
         }
     )
     if plan.sensor_joint_model_id:
@@ -315,11 +346,36 @@ def build_supervised_comparison_sets(
     behavior_probes: pd.DataFrame,
     ocular_probes: pd.DataFrame,
     movement_probes: pd.DataFrame,
+    cardiopulmonary_probes: pd.DataFrame | None = None,
     required_outcomes: Sequence[str] = DEFAULT_REQUIRED_OUTCOMES,
 ) -> SupervisedComparisonSetResult:
-    """Audit availability and build every comparison-specific analysis set."""
+    """Audit availability and build every comparison-specific analysis set.
+
+    ``cardiopulmonary_probes`` is required exactly when the registry declares features in the
+    ``mmwave`` source namespace. Supplying it for the three-modality registry would silently add
+    a namespace, and omitting it while cardiopulmonary features are registered would silently
+    drop those predictors, so both directions fail closed.
+    """
+    declared_namespaces = {
+        str(feature.get("source_namespace", "")).strip()
+        for feature in registry_features
+        if str(feature.get("source_namespace", "")).strip()
+    }
+    needs_mmwave = "mmwave" in declared_namespaces
+    if needs_mmwave and cardiopulmonary_probes is None:
+        raise SupervisedComparisonSetError(
+            "the frozen registry registers mmwave-namespace features but no cardiopulmonary "
+            "probe table was supplied; refusing to build analysis sets that would silently "
+            "drop those predictors"
+        )
+    if not needs_mmwave and cardiopulmonary_probes is not None:
+        raise SupervisedComparisonSetError(
+            "a cardiopulmonary probe table was supplied but the frozen registry declares no "
+            "mmwave-namespace feature; refusing to add an undeclared namespace"
+        )
+
     tables = add_finiteness_qc_gates(
-        _namespace_tables(behavior_probes, ocular_probes, movement_probes),
+        _namespace_tables(behavior_probes, ocular_probes, movement_probes, cardiopulmonary_probes),
         registry_features,
     )
     quality = audit_quality(
