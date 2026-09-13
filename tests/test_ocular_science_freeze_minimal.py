@@ -28,4 +28,7 @@ def test_frozen_span_masks_dynamic_values(tmp_path: Path) -> None:
     assert pd.isna(wide.loc[0,"ocular__rseg_hard__rgb_nir_qc__linear_slope_per_sec__2s"])
     assert pd.isna(wide.loc[0,"ocular__rseg_hard__rgb_nir_qc__quadratic_curvature_per_sec2__2s"])
     assert manifest["technical_freeze"]["minimum_temporal_span_sec"] == 20.0
+    assert manifest["temporal_support"]["formal_minimum_span_frozen"] is True
+    assert manifest["temporal_support"]["formal_minimum_span_sec"] == 20.0
+    assert manifest["temporal_support"]["status"] == "evidence_included_threshold_frozen"
     assert manifest["final_feature_registry_mutated"] is False
