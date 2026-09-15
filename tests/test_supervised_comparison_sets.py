@@ -118,9 +118,10 @@ def test_groups_cover_every_planned_model() -> None:
     assert set(seen) == {model.model_id for model in plan.models}
 
     # A shared baseline deliberately appears in more than one set: it is retrained inside
-    # each comparison set so that the pair is evaluated on one common sample. That
-    # multiplicity is the mechanism, not a defect.
-    assert seen.count("behavior_reference") == 3
+    # each comparison set so that the pair is evaluated on one common sample. With the
+    # current four scientific modalities, behavior_reference appears once alone and once
+    # in each Behavior+Ocular, Behavior+Movement, and Behavior+Cardiopulmonary set.
+    assert seen.count("behavior_reference") == 4
     # A per-feature standalone model, by contrast, belongs to exactly one set.
     assert seen.count("standalone::ocular.pupil_level.rseg_hard.rgb_nir_qc.v1") == 1
 
