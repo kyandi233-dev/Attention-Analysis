@@ -18,7 +18,7 @@ paths:
   raw_root: "E:/预实验"
   formal_experiment_root: "D:/aaawork/07-竞赛/厚璨杯/020-Experiment/_AttentionTest"
   legacy_pipeline_root: "D:/aaawork/07-竞赛/厚璨杯/021-analysisplan/NIR-RGB-extraction"
-  output_root: "D:/_AttentionData/output-v2/040-pre-experiment"
+  output_root: "D:/_AttentionData/runs/0813-pre-1.2-11"
   gate1_artifact_root: "finish/gate1-24eyes"
   preview_artifact_root: "finish/preview"
   truth_artifact_root: "artifacts/truth-528"
