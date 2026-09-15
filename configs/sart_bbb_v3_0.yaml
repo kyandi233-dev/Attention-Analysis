@@ -16,7 +16,7 @@ approvals:
 
 paths:
   raw_root: "E:/正式实验"
-  output_root: "D:/_AttentionData/output-v2/050-sart-formal"
+  output_root: "D:/_AttentionData/runs/0816-pre-2-bbb"
 
 subjects:
   include:
