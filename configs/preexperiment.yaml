@@ -26,7 +26,7 @@ paths:
   sequence_artifact_root: "artifacts/sequence-adapter-review"
   historical_benchmark_artifact_root: "artifacts/benchmark-single"
   historical_sequence_artifact_root: "artifacts/sequence-44x121"
-  legacy_crop_root: "D:/_AttentionData/output/040-pre-experiment/040-nir/crops"
+  legacy_crop_root: "D:/_AttentionData/runs/0808-pre-1.1-2+9/预实验-9人/040-nir/crops"
   face_landmarker_model: "D:/aaawork/07-竞赛/厚璨杯/021-analysisplan/NIR/models/face_landmarker.task"
 
 subjects:
