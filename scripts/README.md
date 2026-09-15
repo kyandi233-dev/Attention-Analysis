@@ -1,270 +1,146 @@
-# Scripts
+# Scripts｜当前正式入口索引
 
-`scripts/` 保留当前仍有明确用途的任务入口，以及少量用户明确要求继续保留、可直接重跑的历史分析入口。正式 NIR 推理入口仍在 `runtime/nir-formal/`；正式 NIR **下游分析**入口位于本目录。
+> **状态：CURRENT（当前）**  
+> 最后核验：2026-09-15  
+> 当前科学分析分支：`codex/formal-analysis-v2-portable`
 
-## 当前入口索引
+`scripts/` 同时包含当前正式科学分析、producer（生产端）/工程工具、敏感性与历史复现入口。**文件存在不等于它仍是当前正式主入口。** 本页只负责导航；具体方法以 `FocusWave-Formal-Analysis@main` 为准，具体参数以当前 config（配置）、代码和运行证据为准。
 
-| 脚本 | 定位 | 用途 |
+## 1. 当前正式科学输出
+
+| 脚本 | 科学信息 | 当前作用 |
 |---|---|---|
-| `extract_eye_dataset.py` | 当前 | NIR 眼框数据集抽帧与 provenance |
-| `evaluate_yolo_eye_test.py` | 当前 | YOLO26n frozen test 评估 |
-| `sart_formal_analysis.py` | **当前** | FocusWave v3.1.3 最终 BB 行为分析入口 |
-| `nir_materialize_analysis_ready.py` | **当前 NIR 下游** | production → `10_analysis_ready` |
-| `nir_build_analysis_tables.py` | **当前 NIR 下游** | `10_analysis_ready` + Behavior → `11_analysis_tables` |
-| `nir_formal_pipeline.py` | **当前 NIR 下游统一入口** | 分阶段运行 `materialize / tables / all`；不会调用 YOLO/RITnet |
-| `nir_pipeline_validation.py` | **当前 validation-only** | core diagnostic validation + publication analysis + Figure 1–10；只写 `12_pipeline_validation` |
-| `nir_behavior_alignment.py` | **历史 prototype、可执行** | 旧 production-based NIR × Behavior schema-v2 对齐；不再是当前正式主分析入口 |
-| `build_stimulus_visual_table.py` | **当前** | 重建正式 SART 画面并生成视觉协变量/报告 PNG |
-| `rgb_analysis.py` | **当前，共享 RGB** | RGB audit / timeline / Motion / Pose / Face sampling 与 QC 入口 |
-| `multimodal_pupil_audit.py` | **当前，Issue #22 validation-only** | 只读 NIR–RGB 时间配对、pupil-only/Face+Pose nuisance 审计与身份 provenance 摘要；可通过 `--repeat-registry` 接入外部非 PII 重复被试 registry |
-| `multimodal_pupil_correction_pilot.py` | **当前，Issue #22 validation-only** | 比较 M0–M3 的 NIR YOLO eye-bbox / RGB 几何校正候选；只使用无标签测量学指标，默认 baseline-only fit，不读取 Behavior/Probe/ML outcome |
-| `face_formal_dryrun_sample.py` | **当前，共享 RGB** | timestamp-driven 15 Hz representative Face dry-run sampling |
-| `face_formal_dryrun_directml_v02.py` | **当前，AMD** | direct-AVI + prefetch + RetinaFace B8 + multitask DirectML dry-run runner |
-| `face_derive_tracking_eyelid_v02.py` | **当前，共享 RGB** | window-aware primary tracking + EAR / aperture-iris / eyeBlink derived |
-| `face_qc_visualize_v03.py` | **当前，共享 RGB** | 全脸 mesh + eyes/iris + primary/secondary + metrics QC |
-| `face_compare_pyfeat_runs.py` | 当前辅助 | 两次 Py-Feat raw 输出 parity 比较 |
-| `face_real_directml_pyfeat.py` / `face_real_parity_v03.py` | AMD 验证资产 | real300 DirectML 与 CPU-reference parity 历史可复现入口 |
-| `face_directml_probe.py` / `face_directml_diagnose.py` | AMD 验证资产 | ONNX Runtime DirectML provider / fallback / batch diagnostics |
-| `sart_bbb_v3_0_analysis.py` | **历史、可执行** | 2026-08-16 FocusWave v3.0 BBB 行为分析重跑入口 |
+| `build_behavior_science_output.py` | Behavior（行为） | 物化正式行为科学输出与 feature handoff（特征交接） |
+| `nir_pupil_blink_measurement_audit.py` | Ocular（眼部） | NIR（近红外）瞳孔 × RGB（可见光）眨眼 G1 测量审计 |
+| `nir_ocular_g1_freeze_support.py` | Ocular | G1 表示、时间支持、同步等冻结支持证据 |
+| `build_ocular_science_output_frozen.py` | Ocular | 物化冻结后的眼部 probe（探针）特征、coverage（覆盖）和 handoff |
+| `run_ocular_postfreeze_analysis.py` | Ocular | 冻结后 Q1/Q2、任务进程、近期行为等解释性分析 |
+| `build_movement_science_output.py` | Movement（动作） | 从 RGB 5.5 资产物化正式动作科学输出与 handoff |
+| `build_m1_cardiopulmonary_taskb_source.py` | Cardiopulmonary（心肺） | 从满足 M1 合同的 mmWave（毫米波）来源构建正式下游输入 |
+| `promote_cardiopulmonary_registry.py` | Cardiopulmonary | 将合格心肺特征登记到正式 feature registry（特征登记表） |
 
-## Behavior
+单模态正式结果不是通过重新跑全部原始视频“现场生成”的。已有 producer 资产时，优先消费冻结后的正式表和 manifest（清单）；是否需要重跑 producer 由来源追踪和 QC（质量控制）决定。
 
-当前 BB 行为分析默认配置为 `configs/behavior_formal.yaml`：
+## 2. 当前监督学习主线
 
-```powershell
-$env:PYTHONPATH = "src"
-python scripts/sart_formal_analysis.py --stage all
-```
+| 脚本 | 当前作用 |
+|---|---|
+| `validate_supervised_feature_registry.py` | 校验科学模态、设备依赖、时间合法性、特征角色和注册表合同 |
+| `materialize_supervised_input.py` | 按治理身份和冻结特征物化监督学习输入 |
+| `build_supervised_comparison_sets.py` | 构建比较特异 analysis sets（分析集合），避免用无关缺失缩小比较样本 |
+| `supervised_learning_analysis.py` | Q1 二分类 participant-disjoint supervised learning（参与者互斥监督学习） |
+| `build_probability_diagnostics.py` | 二分类 OOF（折外）概率、Brier（布里尔分数）、校准等诊断 |
+| `build_window_sensitivity_sets.py` | 构建行为窗口长度敏感性分析集合 |
+| `summarise_window_sensitivity.py` | 汇总窗口敏感性结果 |
+| `build_supplementary_cardiopulmonary_sets.py` | 心肺补充/比较集合构建；历史补充角色需结合当前正式 promoter 状态解读 |
 
-正式 Behavior 默认输出：
+Q1 二分类是当前主要预测任务；外层评价按 `participant_group_id` 做 LOSO（留一参与者），不能让同一参与者同时进入训练与测试。
 
-```text
-D:\_AttentionData\Beijing-Behavior\formal-v1
-```
+## 3. Q1 四分类扩展
 
-## NIR 下游层级
+| 脚本 | 当前作用 |
+|---|---|
+| `supervised_learning_analysis_4class.py` | Q1 四分类扩展分析 |
+| `verify_four_class_contract.py` | 校验四分类标签、分析集合、折和输出合同 |
+| `verify_four_class_reuses_binary_sets.py` | 核验四分类与既定比较集合的复用关系 |
+| `summarise_four_class_runs.py` | 汇总四分类各路线运行结果 |
+| `build_probability_diagnostics_multiclass.py` | 多分类 OOF 概率、Brier、类别/校准诊断 |
+| `verify_multiclass_probability_diagnostics.py` | 核验多分类概率诊断产物 |
 
-```text
-NIR production / full-class
-        ↓
-10_analysis_ready
-        ↓
-11_analysis_tables
-        ↓
-12_pipeline_validation      # 当前允许
-        ↓
-20_formal_statistics        # 当前禁止，待正确 NIR 后进入
-```
+四分类脚本进入正式分支只表示分析已经具备正式实现与结果链。科学结论必须同时读取类别分布、balanced accuracy（平衡准确率）、macro F1（宏平均 F1）、macro AUROC（宏平均曲线下面积）、概率损失和预测偏置，不能只报告单一损失改善。
 
-`nir_formal_pipeline.py` 只管理 downstream derived data，不运行 YOLO / RITnet。
+## 4. 正式一致性与交付核验
 
-当前已经确认现阶段 NIR/PIR 数值错误，因此 **不要继续剩余被试的 `11_analysis_tables`，也不要进入 `20_formal_statistics`**。现有 completed subjects 仅用于 validation-only 的代码、模型与绘图验收。
+| 脚本 | 作用 |
+|---|---|
+| `validate_supervised_prediction_archive.py` | 校验预测归档与权威标签/身份全集 |
+| `verify_sensitivity_runs_contract.py` | 校验敏感性运行合同 |
+| `verify_report_number_consistency.py` | 核对结果输出与报告使用数字的一致性 |
+| `run_p5_interface_smoke.py` | 历史 P5 三模态接口 smoke（冒烟测试）；当前主要作为接口追溯证据 |
+| `audit_formal_modality_availability.py` | 审计治理队列与各模态 availability（可用性） |
+| `build_formal_local_manifests.py` | 构建本地正式资产 manifest（清单） |
 
-## `10_analysis_ready` / `11_analysis_tables`
+## 5. Behavior 工程/复现入口
 
-代表性正式构表入口：
+| 脚本 | 当前角色 |
+|---|---|
+| `sart_formal_analysis.py` | 正式 Behavior 底层分析入口；已有正式结果时不因 README 更新而无理由重跑 |
+| `sart_formal_analysis_v2.py` | 后续正式流程相关入口；实际使用前核对当前 config 和调用方 |
+| `sart_formal_redraw.py` | 从正式表重绘 Behavior 图件 |
+| `behavior_supervised_interface.py` | Behavior 监督学习接口历史/基础实现 |
+| `sart_bbb_v3_0_analysis.py` | **HISTORICAL（历史）** v3.0 BBB 可复现入口，不属于当前 BB 正式结果 |
 
-```powershell
-python scripts/nir_formal_pipeline.py `
-  --stage tables `
-  --subjects sub-031
-```
+当前 Behavior 科学结果入口优先看 `build_behavior_science_output.py` 和 `docs/030-behavior/README.md`，不要从历史 BBB 入口反推当前方法。
 
-但在当前 PIR 数值修正前，不应为了 validation 再运行更多 subject。
+## 6. NIR producer / 旧下游验证入口
 
-具体契约：
+以下脚本仍可用于 NIR 工程、诊断和历史复现：
 
 ```text
-docs/020-nir/212-2026-08-27-NIR数据清洗逻辑与正式分析纳入规则.md
-docs/020-nir/213-2026-08-27-NIR-analysis-ready数据契约与物化规范.md
-docs/020-nir/214-2026-08-27-NIR正式下游分析表数据契约.md
-docs/020-nir/215-2026-08-27-NIR正式下游分析管线运行手册.md
+nir_materialize_analysis_ready.py
+nir_build_analysis_tables.py
+nir_formal_pipeline.py
+nir_pipeline_validation.py
+nir_behavior_alignment.py
+nir_behavior_cohort_qc.py
+nir_pir_*.py
+nir_validate_pupil_formal.py
 ```
 
-## 当前完整 `12_pipeline_validation`
+其中旧 `10_analysis_ready → 11_analysis_tables → 12_pipeline_validation` 是历史 NIR/PIR 阶段形成的管线，不再是当前 Ocular 正式科学分析的状态机。当前 Ocular 以 G1 measurement audit（测量审计）、冻结后的 science output（科学输出）和 post-freeze analysis（冻结后分析）为准，见 `docs/020-nir/README.md`。
 
-科学总导航：
+真正需要重新生产 NIR 测量时，入口在 `runtime/nir-formal/`，并按硬件切 `amd-DirectML` 或 `nvidia-cuda-v8`；不要在正式科学分支中把 producer 运行和结果分析混成一步。
+
+## 7. RGB producer / Movement 入口
+
+当前主要相关脚本：
 
 ```text
-docs/020-nir/218-2026-08-27-NIR完整分析管线与统计逻辑总说明.md
+rgb_55_analysis.py                 # RGB 5.5 正式分析表/模型资产
+build_movement_science_output.py   # Movement 科学输出
+rgb_formal_downstream.py
+rgb_formal_motion_pose.py
+rgb_formal_report.py
+rgb_analysis.py                    # producer/工程入口
+run_rgb_formal_subject.ps1         # 单场正式 producer 辅助
+face_*                             # Face/Pose/眼睑等工程与验证资产
 ```
 
-论文级 Figure / 补充分析实现：
+`face_*` 大量脚本保留完整工程历史，但它们不是当前报告的“科学模态”。RGB 眨眼进入 Ocular，身体运动/姿态进入 Movement，曝光和全局画面量进入 QC。需要重新生产视频级资产时切 `rgb-amd` 或 `rgb-nvidia`。
 
-```text
-docs/020-nir/219-2026-08-27-NIR论文级Figure体系与补充分析实现.md
-```
+## 8. 多模态旧入口与当前监督学习的关系
 
-错误 PIR 条件下的解释边界：
+`formal_multimodal_analysis.py`、`multimodal_fusion_analysis.py`、`multimodal_pupil_audit.py`、`multimodal_pupil_correction_pilot.py` 等保存早期多模态整合、瞳孔校正与验证代码。它们仍可作为 provenance（来源追踪）、敏感性或工程诊断使用，但当前正式 Q1 预测和增量比较应走冻结 feature registry、comparison sets（比较集合）和 `supervised_learning_analysis*.py` 主线。
 
-```text
-docs/020-nir/217-2026-08-27-NIR错误值条件下下游分析管线验证方案.md
-```
+不要因为旧脚本名包含 `formal` 或 `multimodal` 就默认它是当前最高权威入口。
 
-运行前同步：
+## 9. 当前执行前的最低检查
+
+在任何正式重跑之前至少确认：
 
 ```powershell
 git status --short --branch
-git fetch origin --prune
-git switch analysis/multimodal-integration
-git pull --ff-only
-
-conda activate "D:\CondaEnvs\nir-amd"
-python -m pip install -e .
+git branch --show-current
+git log -1 --oneline
 ```
 
-完整 validation 测试：
-
-```powershell
-python -m pytest `
-  tests/test_nir_pipeline_validation.py `
-  tests/test_nir_probe_validation.py `
-  tests/test_nir_pipeline_validation_extended.py `
-  tests/test_nir_publication_suite.py `
-  tests/test_nir_formal_analysis.py -q
-```
-
-然后只运行已有 completed subjects：
-
-```powershell
-python scripts/nir_pipeline_validation.py
-```
-
-默认会顺序执行：
+科学分析应处于：
 
 ```text
-core diagnostic validation
-        ↓
-publication validation
-        ↓
-Figure 1–10
+codex/formal-analysis-v2-portable
 ```
 
-也可以单独运行：
+然后核对本轮任务对应 config、paths config（路径配置）、输入 manifest 和 Formal 当前方法裁决。README 中不再维护固定本机盘符作为跨机器“真值”；本地绝对路径只属于对应运行记录或本机配置。
 
-```powershell
-python scripts/nir_pipeline_validation.py --core-only
-python scripts/nir_pipeline_validation.py --publication-only
-```
+## 10. 结果从哪里读取
 
-### 当前完整分析覆盖
-
-**持续状态层**：whole-experiment global PIR、Block1→Block2、1 s time-on-task、Block transition/recovery、个体 slope 与前后半 Block 对照。
-
-**Trial / Behavior 层**：Go RT、RT-CV、ex-Gaussian、d′/c/β、commission、program omission、clean/ambiguous omission、anticipatory/multiple-keypress；同时保留 No-Go 离散 trial-lag precursor。
-
-**真实 continuous event 层**：只读 `10_analysis_ready`，用 `11_analysis_tables` 的 trial/probe onset 对齐，默认按 1 s bin 构造 `-60s→event` 的 No-Go、omission、Probe 连续 PIR trajectory。这里不会绕回 production。
-
-**NIR 动态层**：
+正式科学数字以：
 
 ```text
-median / mean / P10 / P90
-MAD / IQR / SD
-slope_per_sec
-diff_mad
-diff_rate_mad_per_sec
+FocusWave-Formal-Analysis@main
+└─ 国赛报告/
+   ├─ 完整结果/
+   └─ 章节草稿/5.*
 ```
 
-并增加 feature redundancy、within-person correlation、between-person raw-PIR correlation 与 prespecified window-effect stability。
-
-**Probe 层**：`probe_response` raw option、`probe_vigilance`、`probe_rt`、`probe_vigilance_rt`、pre-10/20/30/60 s Behavior + PIR、continuous pre-Probe trajectory、Probe sequential transition。
-
-**QC / robustness / confound 层**：六条 primary/strict/eye track、source-mode、available duration、boundary truncation、internal coverage、max gap、PIR validity、current/previous stimulus luminance/contrast/visible area、raw PIR between-person baseline、individual heterogeneity。
-
-### 论文级 Figure 1–10
-
-论文候选图不再使用零散 `fig03a/fig04b/...` 作为主输出，而固定为：
-
-```text
-Figure01_global_PIR_landscape
-Figure02_Block_time_on_task
-Figure03_trial_behavior_states
-Figure04_error_precursor_trajectories
-Figure05_probe_states_trajectories
-Figure06_visual_PLR_controls
-Figure07_individual_differences
-Figure08_feature_structure_multiscale
-Figure09_data_quality_coverage
-Figure10_robustness_models
-```
-
-全部由 Python/Matplotlib 代码生成，不使用图片生成模型。论文级 Figure 固定 17 cm 整版宽度、A/B/C/D panel、统一 Arial（fallback DejaVu Sans）、字号、线宽、图例、坐标轴和画布边距；PDF/SVG 为矢量，PNG/TIFF 为 600 dpi。旧 diagnostic figures 继续保留工程 provenance，但不再当 manuscript Figure 主候选。
-
-输出：
-
-```text
-D:\_AttentionData\Beijing-NIR\analysis\nir-behavior-v2\cohort-44-exploratory\12_pipeline_validation\
-├── tables\
-│   └── publication_analysis\
-├── figures\
-│   └── publication\
-├── extension_readiness.json
-├── validation_summary.json
-└── publication_suite_summary.json
-```
-
-所有含当前错误 PIR 的图必须带：
-
-```text
-PIPELINE VALIDATION ONLY — CURRENT NIR VALUES KNOWN INVALID
-```
-
-当前可以检查代码、join、真实 event alignment、Figure 版式、coverage/source-mode/visual-covariate 接口；禁止解释任何 PIR 方向、p 值、窗口优劣或据此调整 QC 阈值。
-
-## 正确 NIR 修复后的顺序
-
-```text
-修正 NIR 数值来源
-→ 重建 10_analysis_ready
-→ 重建 11_analysis_tables
-→ 重跑 12_pipeline_validation
-→ 检查 Figure 1–10 / coverage / Probe 语义 / visual controls / sensitivity set
-→ 冻结正式模型与报告顺序
-→ 进入 20_formal_statistics
-```
-
-OAR 必须先扩展 `10_analysis_ready` schema；Questionnaire 在 subject-level 连接；RGB 未来通过 subject / Block / absolute time / trial / probe keys 进入 multimodal table。正式统计不得为了方便绕过这些数据层直接读 production。
-
-## AMD RGB 当前入口
-
-RGB 当前正式化工作位于 AMD DirectML 路线。主 RGB 环境：
-
-```powershell
-conda activate "D:\CondaEnvs\attention-rgb"
-cd "D:\aaawork\07-竞赛\厚璨杯\021-analysisplan\Attention-Analysis-amd-DirectML"
-```
-
-Face DirectML 环境：
-
-```powershell
-conda activate "D:\CondaEnvs\attention-face-directml"
-```
-
-代表性 dry-run 科学流程：
-
-```text
-face_formal_dryrun_sample.py
-→ face_formal_dryrun_directml_v02.py
-→ face_derive_tracking_eyelid_v02.py
-→ face_qc_visualize_v03.py
-```
-
-AMD RGB 输出统一位于：
-
-```text
-D:\_AttentionData\Beijing-RGB
-```
-
-环境/命令细节见 `docs/040-rgb/README.md` 与 `docs/040-rgb/045-RGB开发环境与运行指令.md`。
-
-## 历史 BBB
-
-旧 BBB 继续使用独立配置、包和入口：
-
-```text
-configs/sart_bbb_v3_0.yaml
-src/attention_pipeline/behavior_bbb_v3_0/
-scripts/sart_bbb_v3_0_analysis.py
-```
-
-旧结果和文档继续保留在 `docs/030-behavior/history/BBB-v3.0/`；历史 provenance 不删除、不改写成当前正式版本。
+为当前报告入口。脚本 README 只说明“怎样找到当前代码”，不替代结果总账、真实输出和运行 provenance。

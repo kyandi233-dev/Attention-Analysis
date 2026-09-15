@@ -1,72 +1,135 @@
-# 060 正式分析
+# 060 正式分析｜当前科学分析入口
 
-更新日期：2026-09-12。
+> **状态：CURRENT（当前）**  
+> 最后核验：2026-09-15  
+> 代码权威：`Attention-Analysis@codex/formal-analysis-v2-portable`  
+> 方法、结果与报告权威：`FocusWave-Formal-Analysis@main`
 
-本目录维护 `codex/formal-analysis-v2-portable` 的正式下游分析说明。代码事实以当前分支源码、配置和对应开发 PR 为准；方法决策以 `kyandi233-dev/FocusWave-Formal-Analysis@codex/code-fix-ledger` 为唯一权威。历史文档继续用于 provenance（来源追踪），但与 1.16 系列后出决策冲突时不得覆盖当前方法。
+本目录是 Attention-Analysis 当前正式下游分析的文档入口。旧 1.15、早期 1.16、#40–#44 等 Issue（问题单）记录继续用于 provenance（来源追踪），但它们描述的“待冻结”“待运行”“active issue（活动问题）”阶段已经结束，不能作为当前执行队列。
 
-## 当前 cohort、身份与 availability
+## 1. 当前研究对象与身份合同
 
-当前正式配置已经统一到 **116 sessions（场次）、61 participant groups（参与者组）**。`configs/behavior_formal_v2.yaml` 与 `configs/nir_analysis_ready.yaml` 均声明该拓扑；问卷或单一模态缺失不得反向删除 governed cohort（治理队列）。`participant_group_id` 是正式推断、bootstrap（自助法）与 participant-disjoint prediction（参与者互斥预测）的统一内部统计键。
+当前 governed cohort（治理队列）为 **116 sessions（场次）、61 participant groups（参与者组）、2,320 个 Behavior 权威 probes（思维探针）**。`participant_group_id` 是重复测量推断、participant-cluster bootstrap（参与者簇自助法）和 participant-disjoint validation（参与者互斥验证）的统一参与者键。
 
-当前单模态 availability（可用性）与 governed cohort 分开管理：`011-当前116场输入输出与分析流程整理_20260830.md` 记录 149 场登记、116 场治理队列、61 个匿名参与者组、109 场 current-compatible NIR（当前兼容近红外）与 115 场 RGB（可见光视频）availability。模态缺失只能记录 `source_missing` / `structurally_invalid` / `not_estimable` 等状态，不能改写 participant identity（参与者身份）或 Behavior（行为）队列。
+模态 availability（可用性）独立于 cohort membership（队列成员资格）。NIR（近红外）、RGB（可见光视频）或 mmWave（毫米波）缺失只影响对应分析集合，不得删除治理队列中的 Behavior 场次，也不得改变参与者身份。
 
-不要继续使用历史 `44/38/6` 或先前 `115/61/11` 作为当前代码事实。参与次数分布与重复组细节必须从当前 cohort manifest / repeat registry 重新审计，不写成永久常量。
+## 2. 科学模态与设备来源
 
-## 当前方法入口：1.16 系列优先
+```text
+Behavior（行为）
+  ← SART / 思维探针
 
-Formal 当前优先读取：
+Ocular（眼部）
+  ← NIR 瞳孔
+  ← RGB 眨眼作为眼部特征与瞳孔伪迹辅助信息
 
-1. `分析设计/1.16.1-监督学习心理意义、训练权重与多层评价修订_20260911.md`：Q1 预测的心理学解释、参与者等权训练/预处理/评价、特征级解释及 M0–M7 设备/信息包比较。
-2. `分析设计/1.16.2-瞳孔相关_眨眼联合清洗与探针前动态分析当前决策_20260912.md`：NIR（近红外）瞳孔、RGB（可见光视频）眨眼、联合清洗、线性/二次动态的当前科学决策。
-3. `分析设计/1.16.3-瞳孔与眨眼测量审计及代码修改实施计划_20260912.md`：1.16.2 的代码实现与真实数据 measurement audit（测量审计）合同。
+Movement（动作）
+  ← RGB 身体运动 / 姿态
 
-`1.15.x` 系列保留为方案演变和 A/B/C/D 初始实现来源。若其“唯一 NIR 基础信号”“旧 slope（斜率）”“统一覆盖率门槛”等描述与 1.16 冲突，以 1.16 为准。
+Cardiopulmonary（心肺）
+  ← mmWave 心率 / 呼吸率估计
+```
 
-## 当前监督学习代码状态
+RGB、NIR、mmWave 是设备/来源命名空间；Behavior、Ocular、Movement、Cardiopulmonary 才是正式科学信息类别。设备依赖关系由 feature registry（特征登记表）和 provenance（来源追踪）记录。
 
-- **Task A**：Q1 二分类、nested cross-validation（嵌套交叉验证）等基础实现已存在；Issue #43 继续补参与者等权正式评价、fixed-OOF participant-cluster bootstrap（固定折外参与者簇自助法）、特征级解释与 M0–M7 比较。
-- **Task B**：分析集合、质量状态与 prediction archive（预测归档）基础实现已完成；当前 P0（最高优先级）缺陷由 #40、#41、#42 接续处理。
-- **Task C**：行为监督学习接口与 30 s probe（探针）候选输出已完成；原 Task C issue 已关闭。
-- **Task D / PR #39**：保留为 1.15.7 NIR 接口 draft（草稿）基线。其实现仍以 `pupil_geom_mean_diameter` 与旧 `robust_binned_slope_per_sec` 为中心，不能再视为最终 1.16 NIR 科学合同。
-- **Issue #44 / Draft PR #45**：堆叠在 PR #39 上，实现 pupil×blink（瞳孔×眨眼）measurement audit，包括 `R_seg,hard`、RGB blink mask（眨眼掩码）、candidate buffer（候选缓冲）、probe-locked fixed bins（探针锁定固定时间箱）、linear slope（线性斜率）与 quadratic curvature（二次曲率）。尚未运行 116 场真实数据审计，因此 buffer、bin、趋势时间支持与 `R_seg` QC（质量控制）仍未冻结。
+## 3. 当前正式流程已经完成到哪里
 
-## 当前 active issues
+当前正式代码链已经覆盖：
 
-当前仅保留 5 个开放问题单：
+```text
+治理队列 / 身份键
+        ↓
+单模态测量与科学输出
+        ↓
+Behavior / Ocular / Movement handoff（特征交接）
+        ↓
+mmWave Cardiopulmonary 来源与时间合法性闭环
+        ↓
+冻结 feature registry（特征登记表）
+        ↓
+比较特异 analysis sets（分析集合）
+        ↓
+Q1 二分类 participant-disjoint LOSO
+（参与者互斥留一参与者验证）
+        ↓
+概率诊断 / 增量 / 条件价值 / 设备组合
+        ↓
+Q1 四分类扩展与多分类诊断
+        ↓
+Formal 结果总账与国赛报告
+```
 
-| Issue | 当前职责 | 执行关系 |
+因此，不再使用“只有接口 smoke（冒烟测试），尚未进入正式监督学习”“等待 #40/#43/#44 完成后才能训练”等旧状态描述。
+
+## 4. 当前主要代码入口
+
+### 单模态科学输出
+
+| 科学信息 | 主要入口 | 当前角色 |
 |---|---|---|
-| #41 | A/B/D probe 键统一 | 集成前置；不得把全局 probe 序号直接改名为块内序号 |
-| #42 | prediction archive 回联权威 Q1 标签与期望全集 | 可与 #41 并行 |
-| #44 | 瞳孔×眨眼真实测量审计及 NIR 动态接口 | 可与 #41/#42 并行；参数冻结后回 Formal |
-| #40 | B 消费 NIR 显式可估计状态 | 核心缺陷成立；最终字段映射应等待 #44 冻结后一次性接线 |
-| #43 | 参与者等权正式评价、bootstrap、特征级解释与 M0–M7 | 核心代码可继续开发；正式结果受 #41/#42、#40 与 feature freeze（特征冻结）约束 |
+| Behavior | `scripts/build_behavior_science_output.py` | 构建正式行为科学输出与交接 |
+| Ocular | `scripts/nir_pupil_blink_measurement_audit.py` | 瞳孔×眨眼测量审计 |
+| Ocular | `scripts/nir_ocular_g1_freeze_support.py` | G1 冻结支持证据 |
+| Ocular | `scripts/build_ocular_science_output_frozen.py` | 冻结后眼部科学输出 |
+| Ocular | `scripts/run_ocular_postfreeze_analysis.py` | 冻结后解释性分析 |
+| Movement | `scripts/build_movement_science_output.py` | 动作科学输出与交接 |
 
-旧 #19/#20/#21/#22/#30/#32/#34/#36/#38 已按“历史调研 / 已取代 / 已完成”退出 active 队列；关闭不删除其代码证据、讨论和历史意义。
+### Cardiopulmonary（心肺）正式接入
 
-## 推荐执行顺序
+| 入口 | 作用 |
+|---|---|
+| `scripts/build_m1_cardiopulmonary_taskb_source.py` | 从满足 M1 合同的 mmWave 来源构建正式下游输入 |
+| `scripts/promote_cardiopulmonary_registry.py` | 将符合合同的心肺特征登记到正式 feature registry |
 
-当前可并行推进：
+Cardiopulmonary 已获得正式比较资格，但只关闭 producer provenance（生产端来源追踪）与 pre-probe time-legality（探针前时间合法性）门。毫米波估计心率、呼吸率仍为支持性生理信息，HRV（心率变异性）继续阻塞。
 
-- #41：统一行为权威 probe 表与 A/B/D 键语义；
-- #42：修 prediction archive 的权威标签回联、空归档与期望全集校验；
-- #44：运行真实 pupil×blink measurement audit。
+### 监督学习与诊断
 
-随后：
+| 入口 | 作用 |
+|---|---|
+| `scripts/validate_supervised_feature_registry.py` | 校验冻结特征登记与依赖 |
+| `scripts/materialize_supervised_input.py` | 物化监督学习输入 |
+| `scripts/build_supervised_comparison_sets.py` | 构建比较特异分析集合 |
+| `scripts/supervised_learning_analysis.py` | Q1 二分类正式监督学习 |
+| `scripts/build_probability_diagnostics.py` | 二分类折外概率诊断 |
+| `scripts/supervised_learning_analysis_4class.py` | Q1 四分类扩展分析 |
+| `scripts/summarise_four_class_runs.py` | 四分类运行汇总 |
+| `scripts/build_probability_diagnostics_multiclass.py` | 多分类折外概率与类别诊断 |
+| `scripts/verify_report_number_consistency.py` | 结果与报告数字一致性核验 |
 
-- #44 回 Formal 冻结正式 NIR feature/status contract（特征/状态合同）；
-- #40 按该最终合同接 B，避免只修旧 slope 列名后再次返工；
-- #43 完成正式评价、特征级比较、设备/信息包比较与不确定性；
-- 只有上述接口和科学特征均冻结后，才运行正式 FocusWave 监督学习并形成报告性能结论。
+完整脚本索引见 [`../../scripts/README.md`](../../scripts/README.md)。
 
-## 历史与基础文档
+## 5. 当前监督学习解释合同
 
-1. [`001-正式多模态V2路径与分析契约.md`](001-正式多模态V2路径与分析契约.md)：V2 路径与基础数据合同。
-2. [`002-NIR适配器provenance与merge-key契约.md`](002-NIR适配器provenance与merge-key契约.md)：NIR pupil-only（仅瞳孔）来源、字段与合并主键。
-3. [`003-正式分析V2分支收口与历史分支处置_20260829.md`](003-正式分析V2分支收口与历史分支处置_20260829.md)：历史分支与正式分支关系。
-4. [`006-正式报告方法与结果权威来源_20260830.md`](006-正式报告方法与结果权威来源_20260830.md)：报告代码来源和证据边界。
-5. [`009-正式管线修复后完整复审_20260830.md`](009-正式管线修复后完整复审_20260830.md)：前一阶段完整管线复审，保留为历史基线；当前状态需再结合本 README、active issues 与 1.16 系列。
-6. [`010-新电脑迁移与常见报错检查表_20260830.md`](010-新电脑迁移与常见报错检查表_20260830.md)：迁移与执行 preflight（预检）。
-7. [`011-当前116场输入输出与分析流程整理_20260830.md`](011-当前116场输入输出与分析流程整理_20260830.md)：当前 116 场治理队列及模态 availability 的资产入口。
+Q1 是 attention-content self-report（注意内容自我报告），不是潜在注意状态的“真值”。当前主要预测任务将 Q1 的任务聚焦与其余三类报告进行二分类；四分类作为扩展分析。Q2（困倦/清醒报告）不作为首轮 Q1 预测输入。
 
-任何新 AI 或 Codex 开始正式分析代码工作前，应先读本 README，再读对应 active issue 与 Formal 1.16 文档；不得仅按已关闭的 1.15.7 issue 继续开发。
+正式外层验证按 `participant_group_id` 做 participant-disjoint LOSO（参与者互斥留一参与者验证）；训练内部的模型/参数选择按参与者分组完成。预处理、插补、标准化与训练不得读取外层测试参与者的信息。主要总体评价采用参与者等权汇总，并以固定折外预测进行 participant-cluster bootstrap（参与者簇自助法）不确定性评估。
+
+不同模态往往使用不同可用样本，因此单独模型的原始损失或 AUROC（受试者工作特征曲线下面积）不能跨不同比较集合直接排名。真正的“增加了多少信息”使用同一分析集合内的成对增量或 `Full-x → Full` 条件价值比较。
+
+## 6. 正式结果去哪里看
+
+本目录说明代码和数据合同，不作为最终数字抄录来源。正式结果优先读取：
+
+```text
+FocusWave-Formal-Analysis@main
+└─ 国赛报告/
+   ├─ 完整结果/
+   └─ 章节草稿/5.*
+```
+
+当前第 5 章已经包含 Behavior、Ocular、Movement、Cardiopulmonary，以及 Q1 跨参与者监督学习、多模态增量和设备组合结果。四分类扩展的解释必须同时查看其概率/类别诊断，不能把“代码已运行”写成“已实现可靠四分类识别”。
+
+## 7. 历史文档如何使用
+
+以下内容继续保留，但默认视为历史层：
+
+- `001`–`011` 等早期正式管线与迁移说明；
+- 1.15.x / 早期 1.16 形成过程；
+- 已关闭 Issue 与 PR（拉取请求）讨论；
+- 旧 NIR `10_analysis_ready → 11_analysis_tables → 12_pipeline_validation` 验证阶段；
+- 已删除开发分支的分支名和当时状态。
+
+历史材料可以回答“为什么后来采用当前方案”，不能覆盖当前代码、配置、Formal 后出裁决和真实正式结果。
+
+新 AI、Codex 或本地执行者接手正式分析时，应先读本 README，再按任务读 `FocusWave-Formal-Analysis@main` 对应方法与结果文件；不要从已关闭的旧 Issue 直接继续开发。
