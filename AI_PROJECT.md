@@ -11,8 +11,8 @@
 
 ## Current integration hygiene
 
-For the current 1.16 supervised-analysis integration surface, PR #62 / `codex/1.16-abcd-integration-review` is the single integration hub. PR #64 / `codex/nir-g1-summary-hardening` and PR #68 / `codex/1.16.10-modality-device-separation` are the active child lines. Older Task A/B/C/D, P0 repair, historical NIR validation, and hardware-performance branches remain provenance unless a current task explicitly reactivates one; they are not competing current baselines.
+The current formal downstream analysis authority is the repository default branch `codex/formal-analysis-v2-portable`; the current method, result, and report evidence authority is `FocusWave-Formal-Analysis@main`. The former PR #62 integration hub and PR #64/#68 child lines describe an earlier integration stage and are provenance, not active entrypoints. Task-specific producer branches retain their own explicitly verified roles.
 
-Closing or retaining a historical PR does not by itself change scientific authority. Before any write, verify the current integration-hub/child status in GitHub and the owning Formal handoff.
+Closing or retaining a historical PR does not by itself change scientific authority. Before any write, verify the current branch, remote and owning Formal handoff.
 
 This file is navigation only. Current scientific/engineering truth remains in the active branch/ref, `AGENTS.md`, configs, producer documentation, manifests, tests and generated evidence. Do not infer a producer branch from an old workspace name; verify the task-specific branch/ref before writes.

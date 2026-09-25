@@ -1,7 +1,7 @@
 # AGENTS.md｜Attention-Analysis 仓库规则
 
-> 更新：2026-08-29（Asia/Shanghai）  
-> 本文件是仓库级长期工作约束。涉及正式下游分析时，`analysis/multimodal-integration` 以 `configs/formal_multimodal_v2.yaml` 和 `docs/060-formal-analysis/001-正式多模态V2路径与分析契约.md` 为当前入口；历史 PIR/BBB/validation 资产继续保留，但不得覆盖当前正式口径。
+> 状态核对：2026-09-25（Asia/Shanghai）
+> 本文件是仓库级长期工作约束。正式下游分析以当前默认分支 `codex/formal-analysis-v2-portable` 的根 README、实际配置与代码，以及 `FocusWave-Formal-Analysis@main` 为入口；`configs/formal_multimodal_v2.yaml` 是公共合同，不是当前监督学习完整运行配置。历史 PIR/BBB/validation 资产保留来源追踪价值。
 
 ## 当前事实与权威边界
 
@@ -11,14 +11,14 @@
 - 当前 `fullclass-final` 没有独立虹膜椭圆，因此 PIR（瞳孔/虹膜直径比）和 `iris_outer` 归一化不再是正式主合同。历史 PIR 脚本、旧 analysis-ready 表和旧结果只作 provenance，不删除。
 - `fullclass_ocular_aperture_ratio_median/p90` 若由 producer 明确提供，可作为 NIR eye-opening candidate/QC（眼球开口候选/质量控制）保留；它不是 pupil 指标、不是 EAR、不是 blink event、不是 PERCLOS，也不得从 iris fraction 反推。
 - 当前正式样本边界、重复参与者和各模态可用性必须来自外部 cohort/source manifest；不得把 44、38、39、72 等现场数字写死进程序。
-- session（场次）是采集与时间轴单位，`repeat_participant_id` 才是正式统计推断、重采样和分组交叉验证的身份单位。同一参与者的所有 session 必须同折。
+- session（场次）是采集与时间轴单位；当前正式下游统计推断、重采样和参与者互斥验证统一使用 `participant_group_id`。毫米波生产端的 `repeat_participant_id` 是另一层身份，连接时须显式映射。同一参与者的所有 session 必须同折。
 - 旧 BBB 行为分析是历史版本；当前 BB 行为正式分析必须从当前原始试次重建。旧 BBB 图、p 值和三 Block 结论不得搬成当前正式结果。
 - 毫米波 producer 由其权威仓库维护；本仓库只接收通过字段/QC 门的 merge-ready 表。缺失场次保持 missing，不补零。
 - RGB producer 先冻结主脸、有效观测、眼睑/眨眼与运动 QC；远程 PPG 已退出当前正式路线。
-- 截至当前证据基线，没有正式 44 场行为推断、没有正式多模态融合结果、没有新版正式报告。不得把工程 smoke、算法 success 或历史分析结果描述成正式科学结论。
+- 当前正式总体为 61 个参与者组、116 场、2,320 个探针；已有正式监督学习比较与国赛报告 Markdown。工程 smoke 和历史分析结果仍不得冒充正式科学结论。毫米波估计心率、呼吸率已获正式预测比较资格，但生理效度仍为 `LIMITED_SUPPORTING_ONLY`，HRV 继续阻塞。
 
 当前科学证据仓库：`kyandi233-dev/FocusWave-Formal-Analysis`  
-当前正式分析代码改动必须至少对照证据提交：`171b081f3a3f9d06496c7b8d36915eebd4e2a3bb`
+当前正式分析代码改动须对照 `FocusWave-Formal-Analysis@main` 的现行方法和结果；历史证据提交 `171b081f3a3f9d06496c7b8d36915eebd4e2a3bb` 只作来源追踪。
 
 ## 必读入口
 
@@ -52,9 +52,9 @@
 
 ## cohort、身份与合并规则
 
-正式 cohort manifest 至少包含 `session_id`、`include`、`repeat_participant_id`。所有纳入正式推断的 session 必须有非空 `repeat_participant_id`。追加后续数据时更新 manifest，并重新生成全样本 participant-disjoint folds（参与者互斥分折）。
+正式下游 cohort manifest 至少须保留 `session_id`、纳入状态与 `participant_group_id`，同一参与者跨场次必须映射为同一个统计组。上游生产端如仍使用 `repeat_participant_id`，须在交接时核对映射；不得将它直接替代当前正式推断键。追加后续数据时更新 manifest，并重新生成全样本 participant-disjoint folds（参与者互斥分折）。
 
-跨模态 merge-ready 主键：
+下列 `repeat_participant_id` merge-ready 主键是早期生产端合同；当前正式下游连接和分折须以 `participant_group_id` 及对应 probe/session 键为准：
 
 - trial：`repeat_participant_id, session_id, block_id, trial_id`
 - probe：`repeat_participant_id, session_id, block_id, probe_id, window_name`
@@ -67,19 +67,19 @@
 
 ## Behavior 当前规则
 
-当前路径无关入口：`scripts/sart_formal_analysis_v2.py`
+当前正式行为分析入口：`scripts/sart_formal_analysis.py` 与 `configs/behavior_formal_v2.yaml`。
 
-旧 `scripts/sart_formal_analysis.py` 和 `configs/behavior_formal.yaml` 保留为既有实现/历史兼容，不再作为跨电脑正式 V2 的唯一入口。
+`scripts/sart_formal_analysis_v2.py` 与 `configs/behavior_formal.yaml` 保留历史兼容/来源追踪用途；以当前 README、配置及实际运行记录确定执行入口。
 
 V2 可以在 session 级做原始试次提取与结构验证、Block/cycle/probe 工程指标落盘、repeat group 字段附加以及覆盖/分母/schema 审计。
 
-旧 `behavior_formal/stats.py` 仍以 session/subject 为独立单位，当前 V2 默认阻断其正式推断。不得把这个阻断通过开关绕过后直接写正式报告。正式统计必须另外实现 repeat-participant-safe 的层级/聚类模型。
+旧 `behavior_formal/stats.py` 的 session/subject 独立单位假设属于历史实现，不得绕过其阻断后直接写正式报告。当前正式行为分析和参与者聚类推断以 `scripts/sart_formal_analysis.py`、`configs/behavior_formal_v2.yaml` 及 Formal 结果总账核对。
 
-既有 12 项 probe-window 特征不是完整结局体系。trial、probe、block、session 四尺度的 RT 水平/离散/CV/slope、commission、omission、d′、c、β、Q1/Q2 必须按机会数和覆盖门分别处理。
+历史 12 项 probe-window 特征不是当前冻结预测注册表。trial、probe、block、session 四尺度的行为指标须按各自机会数和覆盖门处理；当前实际采用的预测变量以冻结注册表及 Formal 方法记录为准。
 
 ## NIR 当前规则
 
-当前路径无关正式下游入口：`scripts/formal_multimodal_analysis.py`
+`scripts/formal_multimodal_analysis.py` 只保留 legacy adapter / merge-audit 接口，不是当前正式监督学习一键运行入口。实际监督学习入口以当前 README、`configs/supervised_learning_v3_cardiopulmonary.yaml` 和对应运行记录为准。
 
 NIR source manifest 每个 session 只能选择一个 current authoritative `fullclass-final` 来源，并记录 schema/source commit/reason。v6/v7 必须按字段名适配，不能按列位置拼接。
 

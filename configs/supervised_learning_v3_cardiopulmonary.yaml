@@ -2,7 +2,7 @@ pipeline:
   name: focuswave-supervised-learning-v3-cardiopulmonary
   version: 3.0.0
   evidence_repo: kyandi233-dev/FocusWave-Formal-Analysis
-  evidence_branch: codex/code-fix-ledger
+  evidence_branch: main
   evidence_method_entry: 分析设计/1.16.10-监督学习模态与设备定义修订及代码迁移计划_20260912.md
   evidence_interface_entry: 分析设计/1.16.11-监督学习特征文件接口与运行前闸门_20260913.md
   inherited_training_evaluation_entry: 分析设计/1.16.1-监督学习心理意义、训练权重与多层评价修订_20260911.md
@@ -487,21 +487,25 @@ feature_registry:
     frozen producer handoff.
   supplementary_extension:
     declared_at: '2026-09-13'
+    status: historical_pre_promotion_provenance
     scientific_modality: cardiopulmonary
     feature_ids:
     - cardiopulmonary.hr.fused.v1
     - cardiopulmonary.br.v1
     purpose: Let the report answer whether millimetre-wave cardiopulmonary estimates add predictive information,
       without asserting a qualification they do not hold.
-    why_not_formal: modality_model_eligible is simultaneously a prediction-eligibility request and is fail-closed
-      for every status other than verified_pre_probe_only. Cardiopulmonary holds physiology_qualification=LIMITED_SUPPORTING_ONLY
-      and time_legality_status=blocked_upstream_contract_mismatch, so registering it formally would require asserting
-      verified_pre_probe_only, which is not true today.
+    why_not_formal_at_declaration: At the time of the post-hoc supplementary run, the M1 producer contract and
+      source-code provenance gate had not yet been closed on the canonical mmWave main branch; the features then
+      carried time_legality_status=blocked_upstream_contract_mismatch and could not request formal prediction
+      eligibility. That historical restriction was lifted after the M1 closure. Both features now have
+      time_legality_status=verified_pre_probe_only and formal prediction/device-package eligibility in this v3
+      registry. Physiology qualification remains LIMITED_SUPPORTING_ONLY; prediction eligibility is not
+      physiological validation.
     declaration: post_hoc_declared_after_primary_results_observed
     non_effects:
-    - does not modify the frozen 11-feature registry or configs/supervised_learning_v1.yaml
-    - grants no formal prediction eligibility and no device-package eligibility
-    - does not change unavailable_modalities or unavailable_device_packages for the formal line
+    - the historical supplementary run did not modify the then-frozen registry or configs/supervised_learning_v1.yaml
+    - the historical supplementary run itself granted no formal prediction or device-package eligibility
+    - the historical run did not change unavailable_modalities or unavailable_device_packages; the later v3 promotion did
 feature_schemes:
   status: interface_only_pending_task_c_d
   model_families: {}

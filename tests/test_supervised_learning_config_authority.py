@@ -38,3 +38,19 @@ def test_supervised_config_freezes_reporting_provenance_and_comparability_flags(
     assert "scientific modality" in note
     assert "source_namespace" in note
     assert "required_devices" in note
+
+
+def test_cardiopulmonary_v3_separates_prediction_from_physiology() -> None:
+    config_path = Path(__file__).resolve().parents[1] / "configs" / "supervised_learning_v3_cardiopulmonary.yaml"
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+
+    assert config["pipeline"]["evidence_branch"] == "main"
+    registry = config["feature_registry"]
+    assert registry["supplementary_extension"]["status"] == "historical_pre_promotion_provenance"
+    for feature in registry["features"]:
+        if feature["modality"] != "cardiopulmonary":
+            continue
+        assert feature["time_legality_status"] == "verified_pre_probe_only"
+        assert feature["modality_model_eligible"] is True
+        assert feature["supplementary_model_eligible"] is False
+        assert feature["physiology_qualification"] == "LIMITED_SUPPORTING_ONLY"
