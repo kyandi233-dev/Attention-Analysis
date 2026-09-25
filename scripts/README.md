@@ -29,6 +29,10 @@
 | `materialize_supervised_input.py` | 按治理身份和冻结特征物化监督学习输入 |
 | `build_supervised_comparison_sets.py` | 构建比较特异 analysis sets（分析集合），避免用无关缺失缩小比较样本 |
 | `supervised_learning_analysis.py` | Q1 二分类 participant-disjoint supervised learning（参与者互斥监督学习） |
+| `supervised_predefined_reduced_nested.py` | Q1 二分类预定义精简候选的嵌套留一参与者验证；完整模型保持独立冻结基准 |
+| `verify_predefined_reduced_run.py` | 核对精简模型运行的同 probe 复现、外层/内层参与者互斥、候选范围和失败折 |
+| `behavior_window_paired_2030.py` | 在共同有效探针上分别重训 20 秒与 30 秒行为参照模型并估计参与者配对损失差 |
+| `verify_behavior_window_paired_2030.py` | 独立核对两臂探针、内外层折、失败状态、差值与参与者簇区间 |
 | `build_probability_diagnostics.py` | 二分类 OOF（折外）概率、Brier（布里尔分数）、校准等诊断 |
 | `build_window_sensitivity_sets.py` | 构建行为窗口长度敏感性分析集合 |
 | `summarise_window_sensitivity.py` | 汇总窗口敏感性结果 |

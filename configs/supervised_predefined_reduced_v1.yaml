@@ -1,0 +1,73 @@
+pipeline:
+  name: focuswave-predefined-reduced-nested-loso-v1
+  version: 1.0.0
+  status: frozen_secondary_analysis
+  analysis_role: secondary_nested_simplification_validation
+  base_supervised_config: configs/supervised_learning_v1.yaml
+  random_seed: 20260910
+
+method:
+  outer_validation: leave_one_participant_out
+  outer_group_column: participant_group_id
+  inner_validation: grouped_k_fold
+  inner_splits: 5
+  selection_metric: participant_macro_log_loss
+  candidate_and_c_selection_inside_outer_training_only: true
+  benchmark_is_not_modified: true
+  interpretation: "The frozen full model remains the confirmatory benchmark. This secondary analysis selects only among the three prespecified candidates inside each outer-training partition."
+
+input_contract:
+  analysis_set_id: AS.full
+  membership_type: included_missing_aware
+  expected_rows: 1775
+  expected_participant_groups: 60
+  expected_sha256: 1779091afe7bc4d818979cade431014fad7028fc3518cbe47c5165c728e5fbdc
+  frozen_full_model_id: full
+  frozen_full_participant_macro_log_loss: 0.6180333219583619
+  reproduction_absolute_tolerance: 1.0e-12
+
+models:
+  benchmark_model_id: frozen_full_benchmark
+  selected_model_id: predefined_reduced_nested
+  candidates:
+    - feature_set_id: full_11
+      label: Full
+      feature_ids:
+        - behavior.rt_level.median.v1
+        - behavior.rt_variability.cv.v1
+        - behavior.rt_trend.theilsen.v1
+        - behavior.go_omission.raw.v1
+        - behavior.nogo_commission.raw.v1
+        - ocular.pupil_level.rseg_hard.rgb_nir_qc.v1
+        - ocular.pupil_variability.rseg_hard.rgb_nir_qc.v1
+        - ocular.pupil_linear_trend.rseg_hard.rgb_nir_qc.v1
+        - ocular.pupil_quadratic_curvature.rseg_hard.rgb_nir_qc.v1
+        - ocular.blink_rate.rgb_event_rate.pre30s.v1
+        - movement.body_motion_energy.median.pre30s.v1
+    - feature_set_id: behavior_core
+      label: Behavior-core
+      feature_ids:
+        - behavior.nogo_commission.raw.v1
+        - behavior.rt_level.median.v1
+    - feature_set_id: behavior_core_plus_ocular
+      label: Behavior-core + Ocular
+      feature_ids:
+        - behavior.nogo_commission.raw.v1
+        - behavior.rt_level.median.v1
+        - ocular.pupil_level.rseg_hard.rgb_nir_qc.v1
+        - ocular.pupil_variability.rseg_hard.rgb_nir_qc.v1
+        - ocular.pupil_linear_trend.rseg_hard.rgb_nir_qc.v1
+        - ocular.pupil_quadratic_curvature.rseg_hard.rgb_nir_qc.v1
+        - ocular.blink_rate.rgb_event_rate.pre30s.v1
+
+comparison:
+  comparison_type: analysis_procedure_comparison
+  feature_id: selection_procedure.predefined_reduced_nested.v1
+  increment_definition: frozen_full_log_loss_minus_nested_selected_log_loss
+  positive_increment_interpretation: nested_selected_model_has_lower_loss
+  confidence_interval: participant_cluster_bootstrap_95_percent
+  paired_same_probe_required: true
+  common_core_feature_ids:
+    - behavior.nogo_commission.raw.v1
+    - behavior.rt_level.median.v1
+

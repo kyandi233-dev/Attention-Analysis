@@ -91,6 +91,7 @@ Cardiopulmonary 已获得正式比较资格，但只关闭 producer provenance�
 | `scripts/materialize_supervised_input.py` | 物化监督学习输入 |
 | `scripts/build_supervised_comparison_sets.py` | 构建比较特异分析集合 |
 | `scripts/supervised_learning_analysis.py` | Q1 二分类正式监督学习 |
+| `scripts/supervised_predefined_reduced_nested.py` | Q1 二分类预定义精简模型的训练内选择与同样本外层留一参与者对照 |
 | `scripts/build_probability_diagnostics.py` | 二分类折外概率诊断 |
 | `scripts/supervised_learning_analysis_4class.py` | Q1 四分类扩展分析 |
 | `scripts/summarise_four_class_runs.py` | 四分类运行汇总 |
@@ -98,6 +99,8 @@ Cardiopulmonary 已获得正式比较资格，但只关闭 producer provenance�
 | `scripts/verify_report_number_consistency.py` | 结果与报告数字一致性核验 |
 
 完整脚本索引见 [`../../scripts/README.md`](../../scripts/README.md)。
+
+预定义精简模型的冻结候选、运行入口、核验合同与解释边界见 [`predefined-reduced-nested-loso-v1.md`](predefined-reduced-nested-loso-v1.md)。
 
 ## 5. 当前监督学习解释合同
 
