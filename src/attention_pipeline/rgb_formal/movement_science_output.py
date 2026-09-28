@@ -52,7 +52,9 @@ MOVEMENT_CANDIDATES = (
         "candidate_representation_id": "movement.body_motion_energy.median.pre30s.v1",
         "predictor": "body_motion_energy_median",
         "display_name": "身体动作能量（30秒中位数）",
-        "unit": "dimensionless_motion_energy",
+        # The frozen 115-session source uses global_motion_energy_per_sec.
+        # The unscaled global_motion_energy field is a separate QC quantity.
+        "unit": "normalized_motion_energy_per_sec",
         "role": "primary_candidate",
         "registry_ready": False,
         "redundancy_relation": "first_round_primary_representation",

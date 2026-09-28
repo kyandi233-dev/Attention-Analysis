@@ -59,6 +59,8 @@ def test_movement_builder_reclassifies_rgb_without_registry_mutation(tmp_path: P
     assert set(handoff["scientific_modality"]) == {"movement"}
     assert set(handoff["source_namespace"]) == {"rgb"}
     assert "body_motion_energy_median" in set(handoff["predictor_column"])
+    body = handoff[handoff["predictor_column"].eq("body_motion_energy_median")].iloc[0]
+    assert body["unit"] == "normalized_motion_energy_per_sec"
     assert "blink_event_rate_per_min" not in set(handoff["predictor_column"])
     assert not handoff["registry_ready"].astype(bool).any()
     assert handoff["researcher_freeze_required"].astype(bool).all()
