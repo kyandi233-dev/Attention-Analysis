@@ -1,5 +1,9 @@
 # 060 正式分析｜当前科学分析入口
 
+## 2026-09-29 国赛报告 v13 重点与分页复核
+
+`scripts/repair_report_emphasis_v10.py`、`verify_report_emphasis_v10.py`、`repair_report_layout_v13.py`、`verify_report_layout_v13.py` 和 `audit_report_page_density_v13.py` 完成全文重点层级与页面留白复核。当前交付 103 页，39 图居中且图像段落无文字，86 条原生题注及全部图表数值不变。正式记录：`运行记录与证据/09-29-7-国赛报告全文重点与分页复核.md`；模型重训为 0。
+
 ## 2026-09-29 国赛报告 v9 研究主线衔接
 
 `scripts/revise_report_research_story_v9.py` 与 `scripts/verify_report_research_story_v9.py` 仅改五个正文衔接段落并验收原版式。全部 39 图、47 表及 86 条原生题注完整保留，模型重训为 0。正式报告仓库记录：`运行记录与证据/09-29-6-国赛报告研究主线衔接与原版式保留.md`。
