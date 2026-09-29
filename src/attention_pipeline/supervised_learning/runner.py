@@ -16,7 +16,7 @@ import pandas as pd
 from .feature_schemes import FeatureScheme, require_scheme_columns, validate_mainline_feature_scheme
 from .models import ModelSelectionError, refit_logistic_and_predict, select_logistic_model
 from .preprocessing import PreprocessingContractError
-from .task import Q1_BINARY_SPEC, SupervisedLearningContractError, encode_q1_binary
+from .task import BinaryTaskSpec, Q1_BINARY_SPEC, SupervisedLearningContractError, encode_q1_binary
 
 
 DEFAULT_GROUP_COLUMN = "participant_group_id"
@@ -168,8 +168,18 @@ def _validate_frame(
     model_feature_schemes: Mapping[str, Sequence[FeatureScheme]],
     *,
     group_col: str,
+    task_spec: BinaryTaskSpec = Q1_BINARY_SPEC,
 ) -> tuple[pd.DataFrame, list[str]]:
-    required = {group_col, Q1_BINARY_SPEC.source_column, *REQUIRED_PROBE_LOCATORS}
+    if task_spec.source_column != Q1_BINARY_SPEC.source_column:
+        raise SupervisedLearningContractError("Q1 runner requires the original nominal Q1 source column")
+    if (task_spec.positive_label, task_spec.negative_label) != (1, 0):
+        raise SupervisedLearningContractError("Q1 runner requires positive/negative labels 1/0")
+    positive, negative = set(task_spec.positive_values), set(task_spec.negative_values)
+    if not positive or not negative or positive & negative or positive | negative != {1, 2, 3, 4}:
+        raise SupervisedLearningContractError("Q1 task must partition all four original categories without overlap")
+    if task_spec != Q1_BINARY_SPEC and task_spec.positive_probability_name == Q1_BINARY_SPEC.positive_probability_name:
+        raise SupervisedLearningContractError("Alternative Q1 targets require a distinct probability column")
+    required = {group_col, task_spec.source_column, *REQUIRED_PROBE_LOCATORS}
     missing = sorted(required - set(frame.columns))
     if missing:
         raise SupervisedLearningContractError(f"supervised analysis frame missing required columns: {missing}")
@@ -194,7 +204,7 @@ def _validate_frame(
             validate_mainline_feature_scheme(scheme)
             require_scheme_columns(frame, scheme)
 
-    encoded = encode_q1_binary(frame[Q1_BINARY_SPEC.source_column])
+    encoded = encode_q1_binary(frame[task_spec.source_column], spec=task_spec)
     if encoded.isna().any():
         raise SupervisedLearningContractError(
             "analysis frame contains probes with missing Q1; B-layer analysis set must resolve this before Task A"
@@ -221,9 +231,10 @@ def run_nested_loso(
     run_id: str = "task-a-in-memory",
     analysis_set_id: str | None = None,
     membership_type: str | None = None,
+    task_spec: BinaryTaskSpec = Q1_BINARY_SPEC,
 ) -> SupervisedRunResult:
     """Run one full participant-disjoint LOSO analysis on one explicit membership."""
-    data, archive_columns = _validate_frame(frame, model_feature_schemes, group_col=group_col)
+    data, archive_columns = _validate_frame(frame, model_feature_schemes, group_col=group_col, task_spec=task_spec)
     resolved_analysis_set = _resolve_analysis_set_id(data, analysis_set_id)
     resolved_membership = _resolve_membership_type(data, membership_type)
     _validate_complete_membership(
@@ -260,7 +271,7 @@ def run_nested_loso(
         for model_index, (model_id, schemes) in enumerate(model_items):
             fold_seed = int(seed) + outer_index * 10000 + model_index * 1000
             base_prediction = outer_test[
-                archive_columns + [group_col, Q1_BINARY_SPEC.source_column, "q1_binary"]
+                archive_columns + [group_col, task_spec.source_column, "q1_binary"]
             ].copy()
             base_prediction["run_id"] = str(run_id)
             base_prediction["analysis_set_id"] = resolved_analysis_set
@@ -296,7 +307,7 @@ def run_nested_loso(
 
                 base_prediction["feature_set_id"] = selection.feature_scheme.feature_set_id
                 base_prediction["selected_c"] = float(selection.selected_c)
-                base_prediction[Q1_BINARY_SPEC.positive_probability_name] = np.asarray(fitted["p_positive"], dtype=float)
+                base_prediction[task_spec.positive_probability_name] = np.asarray(fitted["p_positive"], dtype=float)
                 base_prediction["predicted_q1_binary"] = np.asarray(fitted["predicted_label"], dtype=int)
                 base_prediction["model_failed"] = False
                 base_prediction["failure_reason"] = ""
@@ -326,7 +337,7 @@ def run_nested_loso(
                 reason = f"{type(exc).__name__}: {exc}"
                 base_prediction["feature_set_id"] = None
                 base_prediction["selected_c"] = np.nan
-                base_prediction[Q1_BINARY_SPEC.positive_probability_name] = np.nan
+                base_prediction[task_spec.positive_probability_name] = np.nan
                 base_prediction["predicted_q1_binary"] = pd.NA
                 base_prediction["model_failed"] = True
                 base_prediction["failure_reason"] = reason
@@ -367,8 +378,10 @@ def run_nested_loso(
         "run_id": str(run_id),
         "analysis_set_id": resolved_analysis_set,
         MEMBERSHIP_COLUMN: resolved_membership,
-        "task": Q1_BINARY_SPEC.name,
-        "positive_probability_name": Q1_BINARY_SPEC.positive_probability_name,
+        "task": task_spec.name,
+        "positive_probability_name": task_spec.positive_probability_name,
+        "positive_values": list(task_spec.positive_values),
+        "negative_values": list(task_spec.negative_values),
         "n_input_rows": int(len(data)),
         "n_participant_groups": int(len(groups)),
         "participant_groups": groups,

@@ -1,0 +1,15 @@
+name: q1_12_vs_34_sensitivity_20260929
+status: user_requested_post_hoc_supplement
+base_config: configs/supervised_learning_v3_cardiopulmonary.yaml
+task:
+  name: q1_1_2_vs_3_4
+  source_column: q1_nominal_4class
+  positive_values: [1, 2]
+  negative_values: [3, 4]
+  positive_probability_name: p_q1_in_1_2
+expected_analysis_sets: 25
+expected_model_rows: 56
+expected_pairs: 28
+preserve_primary_target: true
+bootstrap_replicates: 1000
+bootstrap_seed: 20260830

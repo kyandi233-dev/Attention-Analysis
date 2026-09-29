@@ -8,6 +8,35 @@ import attention_pipeline.supervised_learning.runner as supervised_runner
 from attention_pipeline.supervised_learning.feature_schemes import FeatureScheme
 from attention_pipeline.supervised_learning.runner import run_nested_loso
 from attention_pipeline.supervised_learning.task import SupervisedLearningContractError
+from attention_pipeline.supervised_learning.task import BinaryTaskSpec, Q1_BINARY_SPEC
+
+
+def test_alternative_q1_target_preserves_raw_labels_and_default_task():
+    frame = _probe_frame()
+    before = frame.copy(deep=True)
+    alt = BinaryTaskSpec('q1_12_vs_34', 'q1_nominal_4class', (1, 2), (3, 4),
+                         positive_probability_name='p_q1_in_1_2')
+    kwargs = dict(model_feature_schemes=_schemes(), inner_splits=3, c_candidates=[0.1])
+    default = run_nested_loso(frame, **kwargs)
+    changed = run_nested_loso(frame, task_spec=alt, **kwargs)
+    repeated = run_nested_loso(frame, **kwargs)
+    pd.testing.assert_frame_equal(frame, before)
+    pd.testing.assert_frame_equal(default.predictions, repeated.predictions)
+    p = changed.predictions
+    assert changed.failures.empty
+    assert 'p_q1_in_1_2' in p and 'p_q1_equals_1' not in p
+    assert (p.q1_binary == p.q1_nominal_4class.isin([1, 2]).astype(int)).all()
+    assert (default.predictions.q1_binary == default.predictions.q1_nominal_4class.eq(1).astype(int)).all()
+    assert changed.metadata['positive_values'] == [1, 2]
+    for fold in changed.fold_audits:
+        assert set(fold['outer_train_group_ids']).isdisjoint(fold['outer_test_group_ids'])
+
+
+@pytest.mark.parametrize('positive,negative,probability', [((1,2),(2,3,4),'p_alt'),((1,2),(3,),'p_alt'),((1,2),(3,4),'p_q1_equals_1')])
+def test_alternative_target_rejects_ambiguous_contract(positive, negative, probability):
+    spec=BinaryTaskSpec('bad', 'q1_nominal_4class', positive, negative, positive_probability_name=probability)
+    with pytest.raises(SupervisedLearningContractError):
+        run_nested_loso(_probe_frame(), model_feature_schemes=_schemes(), task_spec=spec)
 
 
 def _probe_frame(seed: int = 13) -> pd.DataFrame:
