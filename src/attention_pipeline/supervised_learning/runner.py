@@ -232,6 +232,7 @@ def run_nested_loso(
     analysis_set_id: str | None = None,
     membership_type: str | None = None,
     task_spec: BinaryTaskSpec = Q1_BINARY_SPEC,
+    outer_group_subset: Sequence[str] | None = None,
 ) -> SupervisedRunResult:
     """Run one full participant-disjoint LOSO analysis on one explicit membership."""
     data, archive_columns = _validate_frame(frame, model_feature_schemes, group_col=group_col, task_spec=task_spec)
@@ -249,6 +250,9 @@ def run_nested_loso(
         raise SupervisedLearningContractError(
             f"after holding out one participant, inner CV needs {inner_splits} training groups; only {len(groups) - 1} remain"
         )
+    evaluated_groups = groups if outer_group_subset is None else [str(g) for g in outer_group_subset]
+    if not evaluated_groups or len(set(evaluated_groups)) != len(evaluated_groups) or not set(evaluated_groups).issubset(groups):
+        raise SupervisedLearningContractError("outer_group_subset must be a nonempty unique subset of input participant groups")
 
     prediction_frames: list[pd.DataFrame] = []
     fold_audits: list[dict[str, object]] = []
@@ -256,6 +260,9 @@ def run_nested_loso(
     model_items = [(str(name), list(schemes)) for name, schemes in model_feature_schemes.items()]
 
     for outer_index, held_out_group in enumerate(groups):
+        # Index over the FULL group list so a parallel chunk keeps identical seeds.
+        if held_out_group not in evaluated_groups:
+            continue
         test_mask = data[group_col].astype(str).eq(held_out_group)
         outer_train = data.loc[~test_mask].copy()
         outer_test = data.loc[test_mask].copy()
@@ -385,6 +392,8 @@ def run_nested_loso(
         "n_input_rows": int(len(data)),
         "n_participant_groups": int(len(groups)),
         "participant_groups": groups,
+        "evaluated_participant_groups": sorted(evaluated_groups),
+        "partial_outer_run": len(evaluated_groups) != len(groups),
         "n_models": int(len(model_items)),
         "model_ids": [name for name, _ in model_items],
         "inner_splits": int(inner_splits),

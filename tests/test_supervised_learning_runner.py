@@ -39,6 +39,17 @@ def test_alternative_target_rejects_ambiguous_contract(positive, negative, proba
         run_nested_loso(_probe_frame(), model_feature_schemes=_schemes(), task_spec=spec)
 
 
+def test_outer_chunks_keep_predictions_audits_and_seeds_identical():
+    frame=_probe_frame();groups=sorted(frame.participant_group_id.unique())
+    spec=BinaryTaskSpec('q1_12_vs_34','q1_nominal_4class',(1,2),(3,4),positive_probability_name='p_q1_in_1_2')
+    kwargs=dict(model_feature_schemes=_schemes(),inner_splits=3,c_candidates=[.1,1.],task_spec=spec)
+    whole=run_nested_loso(frame,**kwargs)
+    chunks=[run_nested_loso(frame,outer_group_subset=g,**kwargs) for g in [groups[:3],groups[3:]]]
+    pd.testing.assert_frame_equal(whole.predictions,pd.concat([c.predictions for c in chunks],ignore_index=True))
+    assert whole.fold_audits==[f for c in chunks for f in c.fold_audits]
+    assert all(c.metadata['partial_outer_run'] for c in chunks)
+
+
 def _probe_frame(seed: int = 13) -> pd.DataFrame:
     rng = np.random.default_rng(seed)
     rows: list[dict[str, object]] = []

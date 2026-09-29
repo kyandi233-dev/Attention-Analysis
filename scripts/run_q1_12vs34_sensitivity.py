@@ -3,6 +3,7 @@
 Private inputs and predictions remain outside Git. Never recode the original Q1.
 """
 import argparse,hashlib,json,subprocess,sys,time
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -19,6 +20,8 @@ KEYS=['participant_group_id','session_id','block_id','probe_event_id']
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def dump(p,value):p.write_text(json.dumps(value,ensure_ascii=False,indent=2,default=str),encoding='utf-8')
 def read(p):return pd.read_csv(p,low_memory=False)
+def fit_chunk(frame,chosen,spec,sid,groups):
+    return run_nested_loso(frame,model_feature_schemes=chosen,task_spec=spec,run_id=sid+'__q1_12vs34',analysis_set_id=sid,outer_group_subset=groups)
 def ci(values):
     values=np.asarray(values,float);values=values[np.isfinite(values)]
     if not len(values):return (np.nan,np.nan,np.nan)
@@ -72,17 +75,29 @@ def audit(result,frame,oldpred,oldfolds,models):
     return {'outer_folds':len(result.fold_audits),'inner_folds':inner_count,'failures':0,'raw_labels_keys_and_splits_match_primary':True}
 
 def main():
-    ap=argparse.ArgumentParser();ap.add_argument('--repair-root',type=Path,required=True);ap.add_argument('--output-root',type=Path,required=True);ap.add_argument('--config',type=Path,default=Path('configs/supervised_learning_q1_12vs34_sensitivity.yaml'));a=ap.parse_args()
+    ap=argparse.ArgumentParser();ap.add_argument('--repair-root',type=Path,required=True);ap.add_argument('--output-root',type=Path,required=True);ap.add_argument('--config',type=Path,default=Path('configs/supervised_learning_q1_12vs34_sensitivity.yaml'));ap.add_argument('--workers',type=int,default=4);ap.add_argument('--resume',action='store_true');a=ap.parse_args()
     plan=yaml.safe_load(a.config.read_text(encoding='utf-8'));base=load_config(plan['base_config']);_require_frozen_runtime_contract(base.data);legality=_runtime_time_legality_audit(base.data);families,_=_resolve_model_plan(base.data);spec=BinaryTaskSpec(**{**plan['task'],'positive_values':tuple(plan['task']['positive_values']),'negative_values':tuple(plan['task']['negative_values'])})
-    out=a.output_root;out.mkdir(exist_ok=False,parents=True)
+    out=a.output_root;out.mkdir(exist_ok=a.resume,parents=True)
     lineage=read(a.repair_root/'report_results/result_lineage.csv');pairplan=read(a.repair_root/'report_results/paired_results.csv')
     priorities=['AS.behavior_reference','AS.sensor_only_joint','AS.behavior_plus_ocular','AS.behavior_plus_movement','AS.behavior_plus_cardiopulmonary','AS.full']
     lineage=lineage.iloc[sorted(range(len(lineage)),key=lambda i:(priorities.index(lineage.iloc[i].analysis_set_id) if lineage.iloc[i].analysis_set_id in priorities else 99,str(lineage.iloc[i].analysis_set_id)))]
     code=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip();dirty=subprocess.check_output(['git','status','--porcelain'],text=True)
-    manifest={'status':'RUNNING','task':plan,'code_sha':code,'working_tree_dirty':bool(dirty.strip()),'config_sha256':sha(a.config),'runner_sha256':sha('src/attention_pipeline/supervised_learning/runner.py'),'script_sha256':sha(__file__),'python':sys.version,'time_legality':legality,'completed_sets':[]};dump(out/'manifest.json',manifest)
-    allnew=[];allold=[];allpairs=[];t0=time.time()
+    execution={'code_sha':code,'working_tree_dirty':bool(dirty.strip()),'runner_sha256':sha('src/attention_pipeline/supervised_learning/runner.py'),'script_sha256':sha(__file__),'workers':a.workers}
+    if a.resume:
+        manifest=json.loads((out/'manifest.json').read_text(encoding='utf-8'));assert manifest['config_sha256']==sha(a.config) and manifest['task']==plan
+        allnew=read(out/'model_results.csv').to_dict('records');allold=read(out/'primary_target_results.csv').to_dict('records');allpairs=read(out/'paired_results.csv').to_dict('records') if (out/'paired_results.csv').stat().st_size>5 else []
+        for completed in manifest['completed_sets']:
+            assert sha(out/completed['analysis_set_id']/'probe_predictions.csv')==completed['prediction_sha256']
+        manifest.setdefault('resumed_executions',[]).append(execution)
+    else:
+        manifest={'status':'RUNNING','task':plan,**execution,'config_sha256':sha(a.config),'python':sys.version,'time_legality':legality,'completed_sets':[]};allnew=[];allold=[];allpairs=[]
+    manifest['status']='RUNNING';dump(out/'manifest.json',manifest);t0=time.time();pool=ProcessPoolExecutor(max_workers=a.workers)
+    finished={v['analysis_set_id'] for v in manifest['completed_sets']}
     for _,line in lineage.iterrows():
         sid=line.analysis_set_id;inp=a.repair_root/'inputs'/f'{sid}.csv';frame=read(inp);models=_require_comparison_models(frame);chosen={k:families[k] for k in models};_,predictors=_validate_analysis_set_feature_scope(frame,chosen,analysis_set_id=sid)
+        if sid in finished:
+            assert sha(inp)==next(v['input_sha256'] for v in manifest['completed_sets'] if v['analysis_set_id']==sid)
+            print('REUSE completed audited set '+sid,flush=True);continue
         oldrun=Path(line.source_run);assert sha(oldrun/'probe_predictions.csv')==line.prediction_sha256
         oldmanifest=json.loads((oldrun/'run_manifest.json').read_text(encoding='utf-8-sig'));oldinput=Path(oldmanifest['provenance']['input_table'])
         assert sha(oldinput)==oldmanifest['provenance']['input_sha256']
@@ -90,7 +105,9 @@ def main():
         pd.testing.assert_frame_equal(frame[columns].sort_values(KEYS).reset_index(drop=True),read(oldinput)[columns].sort_values(KEYS).reset_index(drop=True),check_dtype=False,check_exact=False,atol=1e-12,rtol=0)
         oldpred=read(oldrun/'probe_predictions.csv');oldfolds=json.loads((oldrun/'fold_audits.json').read_text(encoding='utf-8-sig'))
         print(f'START {sid}: {len(frame)} probes, {len(models)} models',flush=True)
-        run=run_nested_loso(frame,model_feature_schemes=chosen,task_spec=spec,run_id=sid+'__q1_12vs34',analysis_set_id=sid)
+        groups=sorted(frame.participant_group_id.astype(str).unique());chunks=[list(v) for v in np.array_split(groups,min(a.workers,len(groups)))]
+        futures=[pool.submit(fit_chunk,frame,chosen,spec,sid,g) for g in chunks];parts=[f.result() for f in futures]
+        run=parts[0];run.predictions=pd.concat([p.predictions for p in parts],ignore_index=True);run.fold_audits=[f for p in parts for f in p.fold_audits];run.failures=pd.concat([p.failures for p in parts],ignore_index=True);run.metadata.update({'partial_outer_run':False,'evaluated_participant_groups':groups,'execution':execution})
         check=audit(run,frame,oldpred,oldfolds,models);dest=out/sid;dest.mkdir();run.predictions.to_csv(dest/'probe_predictions.csv',index=False,encoding='utf-8-sig');dump(dest/'fold_audits.json',run.fold_audits);dump(dest/'run_metadata.json',run.metadata)
         new,pt=summarize(run.predictions,'p_q1_in_1_2','12_vs_34');old,_=summarize(oldpred,'p_q1_equals_1','1_vs_234');allnew+=new;allold+=old
         for _,pair in pairplan[pairplan.analysis_set_id==sid].iterrows():
@@ -100,7 +117,7 @@ def main():
         for name,records in [('model_results',allnew),('primary_target_results',allold),('paired_results',allpairs)]:pd.DataFrame(records).to_csv(out/(name+'.csv'),index=False,encoding='utf-8-sig')
         check.update({'analysis_set_id':sid,'models':len(models),'input_sha256':sha(inp),'prediction_sha256':sha(dest/'probe_predictions.csv'),'old_prediction_sha256':line.prediction_sha256,'elapsed_seconds_total':time.time()-t0});manifest['completed_sets'].append(check);dump(out/'manifest.json',manifest)
         print(f'DONE {sid}: {check["outer_folds"]} outer folds; elapsed {time.time()-t0:.1f}s',flush=True)
-    assert len(allnew)==plan['expected_model_rows'] and len(lineage)==plan['expected_analysis_sets'] and len(allpairs)==plan['expected_pairs']
+    pool.shutdown();assert len(allnew)==plan['expected_model_rows'] and len(lineage)==plan['expected_analysis_sets'] and len(allpairs)==plan['expected_pairs']
     manifest.update({'status':'PASS','model_rows':len(allnew),'paired_rows':len(allpairs),'outer_folds':sum(v['outer_folds'] for v in manifest['completed_sets']),'inner_folds':sum(v['inner_folds'] for v in manifest['completed_sets']),'elapsed_seconds':time.time()-t0});dump(out/'manifest.json',manifest);print('ALL PASS',flush=True)
 
 if __name__=='__main__':main()
