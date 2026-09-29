@@ -1,5 +1,9 @@
 # 060 正式分析｜当前科学分析入口
 
+## 2026-09-29 国赛报告 v9 研究主线衔接
+
+`scripts/revise_report_research_story_v9.py` 与 `scripts/verify_report_research_story_v9.py` 仅改五个正文衔接段落并验收原版式。全部 39 图、47 表及 86 条原生题注完整保留，模型重训为 0。正式报告仓库记录：`运行记录与证据/09-29-6-国赛报告研究主线衔接与原版式保留.md`。
+
 ## 2026-09-29 国赛报告 v8 题注恢复
 
 `scripts/restore_report_caption_style_v8.py` 与 `scripts/verify_report_caption_v8.py`：按原 v6 样式恢复 39 图、47 表的原生 Word 题注，并核查图表一一对应、媒体和表值不变。正式报告仓库 `运行记录与证据/09-29-5-国赛报告题注恢复与参赛经验改进方案.md` 登记副本、验收及后续写作方案。模型重训为 0。
