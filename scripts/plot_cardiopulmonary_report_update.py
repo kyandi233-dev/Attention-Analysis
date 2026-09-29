@@ -16,14 +16,17 @@ MOD={'behavior':'行为','ocular':'眼部','movement':'动作','cardiopulmonary'
 DEVICE={'M0':'无传感设备','M2':'毫米波','M3':'可见光','M5':'近红外＋可见光','M6':'毫米波＋可见光','M7':'三类设备'}
 
 def main():
-    p=argparse.ArgumentParser();p.add_argument('--results',type=Path,required=True);args=p.parse_args();r=args.results
-    out=r/'figures';out.mkdir(exist_ok=True)
+    p=argparse.ArgumentParser();p.add_argument('--results',type=Path,required=True)
+    p.add_argument('--output-dir',type=Path);p.add_argument('--payload-output',type=Path)
+    p.add_argument('--no-highlight-border',action='store_true');args=p.parse_args();r=args.results
+    out=args.output_dir or r/'figures';out.mkdir(exist_ok=True)
     font_manager.fontManager.addfont('C:/Windows/Fonts/simsun.ttc');plt.rcParams.update({'font.family':'SimSun','font.size':8,'axes.unicode_minus':False,'axes.spines.top':False,'axes.spines.right':False,'savefig.dpi':240})
     models=pd.read_csv(r/'model_results.csv');diag=pd.read_csv(r/'probability_diagnostics.csv');pairs=pd.read_csv(r/'paired_results.csv');base=pd.read_csv(r/'constant_baselines.csv');bins=pd.read_csv(r/'calibration_bins.csv')
     merged=models.merge(diag,on=['analysis_set_id','model_id','membership_type','n_probes','n_participants'],suffixes=('','_diagnostic')).merge(base,on=['analysis_set_id','model_id'])
     def row(sid,mid):return merged[(merged.analysis_set_id==sid)&(merged.model_id==mid)].iloc[0]
     def save(fig,name):
-        fig.patch.set_edgecolor('#ffff00');fig.patch.set_linewidth(5);fig.savefig(out/(name+'.png'),facecolor='white');plt.close(fig)
+        if not args.no_highlight_border:fig.patch.set_edgecolor('#ffff00');fig.patch.set_linewidth(5)
+        fig.savefig(out/(name+'.png'),facecolor='white');plt.close(fig)
     def performances(rows,labels,name,ratio):
         fig,axs=plt.subplots(1,2,figsize=(6.27,6.27*ratio),gridspec_kw={'wspace':.38});ys=np.arange(len(rows))
         for ax in axs: ax.set_yticks(ys);ax.invert_yaxis();ax.grid(axis='x',color='#eeeeee',lw=.5)
@@ -54,6 +57,6 @@ def main():
     for yy,n in zip(y,standalone.n_probes):ax.text(n/2320+.015,yy,f'{n:,}',va='center',fontsize=7)
     fig.subplots_adjust(left=.26,right=.99,bottom=.17,top=.98);save(fig,'fig16')
     payload={'models':merged.replace({np.nan:None}).to_dict('records'),'pairs':pairs.replace({np.nan:None}).to_dict('records'),'sessions':pd.read_csv(r/'session_results.csv').replace({np.nan:None}).to_dict('records'),'labels':LABELS,'devices':DEVICE,'independent':independent}
-    (r/'report_payload.json').write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding='utf-8')
+    (args.payload_output or r/'report_payload.json').write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding='utf-8')
 
 if __name__=='__main__':main()
