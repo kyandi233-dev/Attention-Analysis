@@ -17,6 +17,7 @@ from attention_pipeline.supervised_learning.runner import run_nested_loso
 from attention_pipeline.supervised_learning.task import BinaryTaskSpec
 
 KEYS=['participant_group_id','session_id','block_id','probe_event_id']
+def safe_name(sid):return str(sid).replace(':','_')
 def sha(p):return hashlib.sha256(Path(p).read_bytes()).hexdigest()
 def dump(p,value):p.write_text(json.dumps(value,ensure_ascii=False,indent=2,default=str),encoding='utf-8')
 def read(p):return pd.read_csv(p,low_memory=False)
@@ -87,14 +88,14 @@ def main():
         manifest=json.loads((out/'manifest.json').read_text(encoding='utf-8'));assert manifest['config_sha256']==sha(a.config) and manifest['task']==plan
         allnew=read(out/'model_results.csv').to_dict('records');allold=read(out/'primary_target_results.csv').to_dict('records');allpairs=read(out/'paired_results.csv').to_dict('records') if (out/'paired_results.csv').stat().st_size>5 else []
         for completed in manifest['completed_sets']:
-            assert sha(out/completed['analysis_set_id']/'probe_predictions.csv')==completed['prediction_sha256']
+            assert sha(out/safe_name(completed['analysis_set_id'])/'probe_predictions.csv')==completed['prediction_sha256']
         manifest.setdefault('resumed_executions',[]).append(execution)
     else:
         manifest={'status':'RUNNING','task':plan,**execution,'config_sha256':sha(a.config),'python':sys.version,'time_legality':legality,'completed_sets':[]};allnew=[];allold=[];allpairs=[]
     manifest['status']='RUNNING';dump(out/'manifest.json',manifest);t0=time.time();pool=ProcessPoolExecutor(max_workers=a.workers)
     finished={v['analysis_set_id'] for v in manifest['completed_sets']}
     for _,line in lineage.iterrows():
-        sid=line.analysis_set_id;inp=a.repair_root/'inputs'/f'{sid}.csv';frame=read(inp);models=_require_comparison_models(frame);chosen={k:families[k] for k in models};_,predictors=_validate_analysis_set_feature_scope(frame,chosen,analysis_set_id=sid)
+        sid=line.analysis_set_id;inp=a.repair_root/'inputs'/f'{safe_name(sid)}.csv';frame=read(inp);models=_require_comparison_models(frame);chosen={k:families[k] for k in models};_,predictors=_validate_analysis_set_feature_scope(frame,chosen,analysis_set_id=sid)
         if sid in finished:
             assert sha(inp)==next(v['input_sha256'] for v in manifest['completed_sets'] if v['analysis_set_id']==sid)
             print('REUSE completed audited set '+sid,flush=True);continue
@@ -108,7 +109,7 @@ def main():
         groups=sorted(frame.participant_group_id.astype(str).unique());chunks=[list(v) for v in np.array_split(groups,min(a.workers,len(groups)))]
         futures=[pool.submit(fit_chunk,frame,chosen,spec,sid,g) for g in chunks];parts=[f.result() for f in futures]
         run=parts[0];run.predictions=pd.concat([p.predictions for p in parts],ignore_index=True);run.fold_audits=[f for p in parts for f in p.fold_audits];run.failures=pd.concat([p.failures for p in parts],ignore_index=True);run.metadata.update({'partial_outer_run':False,'evaluated_participant_groups':groups,'execution':execution})
-        check=audit(run,frame,oldpred,oldfolds,models);dest=out/sid;dest.mkdir();run.predictions.to_csv(dest/'probe_predictions.csv',index=False,encoding='utf-8-sig');dump(dest/'fold_audits.json',run.fold_audits);dump(dest/'run_metadata.json',run.metadata)
+        check=audit(run,frame,oldpred,oldfolds,models);dest=out/safe_name(sid);dest.mkdir();run.predictions.to_csv(dest/'probe_predictions.csv',index=False,encoding='utf-8-sig');dump(dest/'fold_audits.json',run.fold_audits);dump(dest/'run_metadata.json',run.metadata)
         new,pt=summarize(run.predictions,'p_q1_in_1_2','12_vs_34');old,_=summarize(oldpred,'p_q1_equals_1','1_vs_234');allnew+=new;allold+=old
         for _,pair in pairplan[pairplan.analysis_set_id==sid].iterrows():
             b=pt[pair.baseline_model_id].set_index('participant_group_id').loss;c=pt[pair.added_model_id].set_index('participant_group_id').loss
